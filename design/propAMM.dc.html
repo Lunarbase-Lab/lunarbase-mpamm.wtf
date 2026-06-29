@@ -1,0 +1,850 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: #08090B; }
+  ::-webkit-scrollbar { width: 9px; height: 9px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: rgba(255,255,255,.1); border-radius: 5px; }
+  @keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: .25; } }
+  @keyframes flashIn { 0% { background: rgba(131,110,249,.16); } 100% { background: transparent; } }
+</style>
+</helmet>
+
+<div style="background:#08090B; min-height:100vh; font-family:'JetBrains Mono','SF Mono',monospace; color:#E6E7EA; font-feature-settings:'tnum' 1; padding-bottom:40px">
+
+  <!-- ===================== TOP BAR ===================== -->
+  <div style="display:flex; align-items:center; gap:16px; height:42px; padding:0 16px; border-bottom:1px solid rgba(255,255,255,.08); position:sticky; top:0; z-index:50; background:#08090B">
+    <div style="display:flex; align-items:center; gap:9px">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="10.5" stroke="#836EF9" stroke-width="1.3"/><polygon points="12,6 18,12 12,18 6,12" stroke="#836EF9" stroke-width="1.3" fill="none"/><circle cx="12" cy="12" r="1.7" fill="#836EF9"/></svg>
+      <span style="font-weight:700; font-size:13px; letter-spacing:.01em; font-family:'Space Grotesk',sans-serif">propAMM</span>
+      <span style="font-size:8.5px; color:#9A88FF; border:1px solid rgba(131,110,249,.4); border-radius:3px; padding:2px 6px; letter-spacing:.08em">MONAD MAINNET</span>
+    </div>
+    <div style="display:flex; gap:1px; margin-left:8px">
+      <sc-for list="{{ tabs }}" as="tab" hint-placeholder-count="4">
+        <div onClick="{{ tab.onClick }}" style="{{ tab.style }}">[{{ tab.num }}] {{ tab.label }}</div>
+      </sc-for>
+      <div style="font-size:11px; padding:6px 12px; color:#5e6068; cursor:default">[5] DOCS &#8599;</div>
+    </div>
+    <div style="margin-left:auto; display:flex; align-items:center; gap:15px; font-size:10px; color:#6b6d76">
+      <span style="display:flex; align-items:center; gap:5px; color:#35D0A0"><span style="width:6px; height:6px; border-radius:50%; background:#35D0A0; animation:blink 1.6s infinite"></span>live</span>
+      <span>MON <span style="color:#E6E7EA">${{ monPx }}</span></span>
+      <span>BLOCK <span style="color:#E6E7EA">{{ block }}</span></span>
+      <span>UTC <span style="color:#E6E7EA">{{ clock }}</span></span>
+    </div>
+  </div>
+
+  <!-- ===================== EXECUTION TAB ===================== -->
+  <sc-if value="{{ isExec }}" hint-placeholder-val="{{ true }}">
+  <div>
+    <div style="padding:18px 18px 10px">
+      <div style="font-size:14px; font-weight:600; letter-spacing:.06em; color:#E6E7EA">REALTIME EXECUTION COMPARISON</div>
+      <div style="font-size:11px; color:#7a7c84; margin-top:6px; line-height:1.55; max-width:880px">Last 60s of quotes for the selected pair at the chosen notional. Spreads are quoted vs the Bybit <span style="color:#B9BCC6">MONUSDT</span> BBO mid. <span style="color:#B9BCC6">Bybit (taker)</span> walks the live book for the requested size and overlays the configured taker fee ({{ taker }} bps each side) &mdash; realized-vs-realized, the only honest comparison for size-sensitive flow.</div>
+    </div>
+
+    <!-- controls -->
+    <div style="display:flex; align-items:center; gap:22px; flex-wrap:wrap; padding:6px 18px 16px">
+      <div style="display:flex; align-items:center; gap:8px">
+        <span style="font-size:9px; color:#5e6068; letter-spacing:.08em">ASSET</span>
+        <div style="display:flex; gap:4px">
+          <sc-for list="{{ pairs }}" as="p" hint-placeholder-count="4"><div onClick="{{ p.onClick }}" style="{{ p.style }}">{{ p.name }}</div></sc-for>
+        </div>
+      </div>
+      <div style="display:flex; align-items:center; gap:8px">
+        <span style="font-size:9px; color:#5e6068; letter-spacing:.08em">SIZE</span>
+        <div style="display:flex; gap:4px">
+          <sc-for list="{{ sizes }}" as="s" hint-placeholder-count="4"><div onClick="{{ s.onClick }}" style="{{ s.style }}">{{ s.label }}</div></sc-for>
+        </div>
+      </div>
+      <div style="display:flex; align-items:center; gap:8px; margin-left:auto">
+        <span style="font-size:9px; color:#5e6068; letter-spacing:.08em">VENUES</span>
+        <div style="display:flex; gap:4px">
+          <sc-for list="{{ venues }}" as="v" hint-placeholder-count="4"><div onClick="{{ v.onClick }}" style="{{ v.style }}"><span style="{{ v.dot }}"></span>{{ v.label }}</div></sc-for>
+        </div>
+      </div>
+    </div>
+
+    <!-- QUOTE panel -->
+    <div style="position:relative; border:1px solid rgba(255,255,255,.07); background:#0A0C10; margin:0 18px 14px">
+      <div style="position:absolute; top:-1px; left:-1px; width:8px; height:8px; border-top:1px solid #836EF9; border-left:1px solid #836EF9"></div>
+      <div style="position:absolute; bottom:-1px; right:-1px; width:8px; height:8px; border-bottom:1px solid #836EF9; border-right:1px solid #836EF9"></div>
+      <div style="display:flex; align-items:center; justify-content:space-between; padding:9px 12px; border-bottom:1px solid rgba(255,255,255,.06)">
+        <div style="font-size:11px; letter-spacing:.03em"><span style="color:#836EF9">~</span> <span style="color:#E6E7EA; font-weight:600">QUOTE</span> <span style="color:#6b6d76">{{ pairSel }} &middot; {{ sizeLabelSel }} &middot; last 60s</span></div>
+        <div style="font-size:9px; color:#5e6068">solid = ask &middot; dashed = bid &middot; &#9733; = tightest spread</div>
+      </div>
+      <div style="position:relative; padding:8px 8px 4px">
+        <canvas ref="{{ setCanvas }}" style="display:block; width:100%; height:360px"></canvas>
+        <!-- legend overlay -->
+        <div style="position:absolute; top:14px; right:16px; background:rgba(10,12,16,.82); border:1px solid rgba(255,255,255,.1); padding:8px 10px; min-width:248px; backdrop-filter:blur(3px)">
+          <div style="display:grid; grid-template-columns:1fr 54px 50px 50px; gap:2px 8px; font-size:8.5px; color:#5e6068; letter-spacing:.05em; padding-bottom:5px; border-bottom:1px solid rgba(255,255,255,.07)">
+            <div>VENUE</div><div style="text-align:right">SPREAD</div><div style="text-align:right">BID</div><div style="text-align:right">ASK</div>
+          </div>
+          <sc-for list="{{ legend }}" as="r" hint-placeholder-count="4">
+            <div style="display:grid; grid-template-columns:1fr 54px 50px 50px; gap:2px 8px; font-size:11px; padding:4px 0; align-items:center">
+              <div style="display:flex; align-items:center; gap:6px"><span style="width:8px; height:8px; border-radius:2px; background:{{ r.color }}"></span><span style="color:#cdcfd6">{{ r.name }}</span><span style="{{ r.starcss }}">&#9733;</span></div>
+              <div style="text-align:right; {{ r.spreadcss }}">{{ r.spread }}</div>
+              <div style="text-align:right; color:#F2566A">{{ r.bid }}</div>
+              <div style="text-align:right; color:#35D0A0">{{ r.ask }}</div>
+            </div>
+          </sc-for>
+        </div>
+      </div>
+    </div>
+
+    <!-- BID_ASK_DEPTH panel -->
+    <div style="position:relative; border:1px solid rgba(255,255,255,.07); background:#0A0C10; margin:0 18px 14px">
+      <div style="position:absolute; top:-1px; left:-1px; width:8px; height:8px; border-top:1px solid #836EF9; border-left:1px solid #836EF9"></div>
+      <div style="position:absolute; bottom:-1px; right:-1px; width:8px; height:8px; border-bottom:1px solid #836EF9; border-right:1px solid #836EF9"></div>
+      <div style="padding:9px 12px; border-bottom:1px solid rgba(255,255,255,.06); font-size:11px; letter-spacing:.03em"><span style="color:#836EF9">&#8801;</span> <span style="color:#E6E7EA; font-weight:600">BID_ASK_DEPTH</span> <span style="color:#6b6d76">{{ pairSel }} &middot; spread vs Bybit mid (bps) by trade size</span></div>
+      <div style="padding:16px 18px 8px">
+        <div style="display:flex; padding-left:64px; margin-bottom:10px">
+          <div style="flex:1; text-align:center; font-size:9px; color:#5e6068; letter-spacing:.1em">BIDS &mdash; below mid</div>
+          <div style="flex:1; text-align:center; font-size:9px; color:#5e6068; letter-spacing:.1em">ASKS &mdash; above mid</div>
+        </div>
+        <sc-for list="{{ depth }}" as="row" hint-placeholder-count="4">
+          <div style="display:flex; align-items:center; gap:10px; height:34px; {{ row.rowcss }}">
+            <div style="width:54px; text-align:right; font-size:11px; color:#9a9ba3">{{ row.label }}</div>
+            <div style="position:relative; flex:1; height:20px">
+              <div style="position:absolute; left:50%; top:-3px; bottom:-3px; width:1px; background:rgba(53,208,160,.55); z-index:5"></div>
+              <sc-for list="{{ row.segsBid }}" as="seg" hint-placeholder-count="3"><div style="{{ seg.style }}"></div></sc-for>
+              <sc-for list="{{ row.segsAsk }}" as="seg" hint-placeholder-count="3"><div style="{{ seg.style }}"></div></sc-for>
+            </div>
+          </div>
+        </sc-for>
+        <div style="display:flex; gap:10px; margin-top:6px">
+          <div style="width:54px"></div>
+          <div style="position:relative; flex:1; height:16px">
+            <sc-for list="{{ ticks }}" as="t" hint-placeholder-count="9"><div style="{{ t.style }}">{{ t.label }}</div></sc-for>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ROLLING_STATS panel -->
+    <div style="position:relative; border:1px solid rgba(255,255,255,.07); background:#0A0C10; margin:0 18px 14px">
+      <div style="position:absolute; top:-1px; left:-1px; width:8px; height:8px; border-top:1px solid #836EF9; border-left:1px solid #836EF9"></div>
+      <div style="position:absolute; bottom:-1px; right:-1px; width:8px; height:8px; border-bottom:1px solid #836EF9; border-right:1px solid #836EF9"></div>
+      <div style="padding:9px 12px; border-bottom:1px solid rgba(255,255,255,.06); font-size:11px; letter-spacing:.03em"><span style="color:#836EF9">#</span> <span style="color:#E6E7EA; font-weight:600">ROLLING_STATS</span> <span style="color:#6b6d76">last 5m &middot; spread distribution by venue &middot; {{ sizeLabelSel }} &middot; {{ pairSel }}</span></div>
+      <div style="padding:6px 14px 12px">
+        <div style="display:grid; grid-template-columns:1.4fr repeat(7, 1fr) 0.8fr; gap:6px; padding:9px 6px; font-size:9px; color:#5e6068; letter-spacing:.05em; border-bottom:1px solid rgba(255,255,255,.07)">
+          <div>VENUE</div><div style="text-align:right">P5</div><div style="text-align:right">P25</div><div style="text-align:right">P50</div><div style="text-align:right">P75</div><div style="text-align:right">P95</div><div style="text-align:right">AVG</div><div style="text-align:right">&#963;</div><div style="text-align:right">N</div>
+        </div>
+        <sc-for list="{{ statRows }}" as="r" hint-placeholder-count="4">
+          <div style="display:grid; grid-template-columns:1.4fr repeat(7, 1fr) 0.8fr; gap:6px; padding:8px 6px; font-size:11.5px; border-bottom:1px solid rgba(255,255,255,.04); align-items:center">
+            <div style="display:flex; align-items:center; gap:7px"><span style="width:8px; height:8px; border-radius:2px; background:{{ r.color }}"></span><span style="color:#cdcfd6">{{ r.name }}</span><span style="{{ r.starcss }}">&#9733;</span></div>
+            <div style="text-align:right; color:#9a9ba3">{{ r.p5 }}</div>
+            <div style="text-align:right; color:#9a9ba3">{{ r.p25 }}</div>
+            <div style="text-align:right; {{ r.p50css }}">{{ r.p50 }}</div>
+            <div style="text-align:right; color:#9a9ba3">{{ r.p75 }}</div>
+            <div style="text-align:right; color:#9a9ba3">{{ r.p95 }}</div>
+            <div style="text-align:right; color:#7a7c84">{{ r.avg }}</div>
+            <div style="text-align:right; color:#7a7c84">{{ r.sd }}</div>
+            <div style="text-align:right; color:#5e6068">{{ r.n }}</div>
+          </div>
+        </sc-for>
+        <div style="font-size:9px; color:#4a4c54; margin-top:9px">p50 = median spread (bps vs same-source mid) &middot; &#963; = spread stdev &middot; &#9733; = tightest p50 in window</div>
+      </div>
+    </div>
+  </div>
+  </sc-if>
+
+  <!-- ===================== STUB TABS (built next) ===================== -->
+  <sc-if value="{{ isVol }}" hint-placeholder-val="{{ false }}">
+  <div>
+    <div style="display:flex; align-items:flex-start; justify-content:space-between; padding:18px 18px 14px">
+      <div>
+        <div style="font-size:14px; font-weight:600; letter-spacing:.06em; color:#E6E7EA">PROPAMM VOLUME</div>
+        <div style="font-size:11px; color:#7a7c84; margin-top:6px; line-height:1.55; max-width:760px">All-time daily notional traded on tracked propAMM pools, split by protocol. Volume is the USD-stable quote leg of each landed swap; buckets are UTC days and today's bucket is partial. Vault = Clober's oracle-vault (propAMM) cut.</div>
+      </div>
+      <div style="display:flex; align-items:center; gap:8px; font-size:10px; color:#7a7c84">
+        <span style="color:#5e6068; letter-spacing:.06em">CLOBER SCOPE</span>
+        <div style="display:flex; gap:3px"><sc-for list="{{ clScopePills }}" as="p" hint-placeholder-count="2"><div onClick="{{ p.onClick }}" style="{{ p.style }}">{{ p.label }}</div></sc-for></div>
+      </div>
+    </div>
+
+    <!-- KPI row -->
+    <div style="display:grid; grid-template-columns:repeat(5,1fr); gap:0; border:1px solid rgba(255,255,255,.07); margin:0 18px 14px">
+      <div style="padding:14px 16px; border-right:1px solid rgba(255,255,255,.06)">
+        <div style="font-size:9px; color:#5e6068; letter-spacing:.06em">ALL-TIME VOLUME</div>
+        <div style="font-size:22px; font-weight:600; margin-top:8px; color:#E6E7EA">{{ kAll }}</div>
+        <div style="font-size:10px; color:#5e6068; margin-top:6px">since 2026-05-13</div>
+      </div>
+      <div style="padding:14px 16px; border-right:1px solid rgba(255,255,255,.06)">
+        <div style="font-size:9px; color:#5e6068; letter-spacing:.06em">7D VOLUME</div>
+        <div style="font-size:22px; font-weight:600; margin-top:8px; color:#E6E7EA">{{ k7 }}</div>
+        <div style="font-size:10px; margin-top:6px; {{ k7css }}">{{ k7chg }} <span style="color:#5e6068">vs prior 7d</span></div>
+      </div>
+      <div style="padding:14px 16px; border-right:1px solid rgba(255,255,255,.06)">
+        <div style="font-size:9px; color:#5e6068; letter-spacing:.06em">TOTAL SWAPS</div>
+        <div style="font-size:22px; font-weight:600; margin-top:8px; color:#E6E7EA">{{ kSwaps }}</div>
+        <div style="font-size:10px; color:#5e6068; margin-top:6px">both venues</div>
+      </div>
+      <div style="padding:14px 16px; border-right:1px solid rgba(255,255,255,.06)">
+        <div style="font-size:9px; color:#5e6068; letter-spacing:.06em">PEAK DAY</div>
+        <div style="font-size:22px; font-weight:600; margin-top:8px; color:#E6E7EA">{{ kPeak }}</div>
+        <div style="font-size:10px; color:#5e6068; margin-top:6px">{{ kPeakDay }}</div>
+      </div>
+      <div style="padding:14px 16px">
+        <div style="font-size:9px; color:#5e6068; letter-spacing:.06em">TODAY (PARTIAL)</div>
+        <div style="font-size:22px; font-weight:600; margin-top:8px; color:#E6E7EA">{{ kToday }}</div>
+        <div style="font-size:10px; margin-top:6px; {{ kTodaycss }}">{{ kTodayChg }} <span style="color:#5e6068">vs prev day</span></div>
+      </div>
+    </div>
+
+    <!-- DAILY_VOLUME -->
+    <div style="position:relative; border:1px solid rgba(255,255,255,.07); background:#0A0C10; margin:0 18px 14px">
+      <div style="position:absolute; top:-1px; left:-1px; width:8px; height:8px; border-top:1px solid #836EF9; border-left:1px solid #836EF9"></div>
+      <div style="position:absolute; bottom:-1px; right:-1px; width:8px; height:8px; border-bottom:1px solid #836EF9; border-right:1px solid #836EF9"></div>
+      <div style="padding:9px 12px; border-bottom:1px solid rgba(255,255,255,.06); font-size:11px; letter-spacing:.03em"><span style="color:#836EF9">~</span> <span style="color:#E6E7EA; font-weight:600">DAILY_VOLUME</span> <span style="color:#6b6d76">USD notional by protocol &middot; UTC days &middot; {{ volScopeNote }}</span></div>
+      <div style="position:relative; padding:16px 18px 8px">
+        <div style="position:absolute; top:14px; left:18px; font-size:8.5px; color:#5e6068">{{ volMaxLabel }}</div>
+        <div style="position:absolute; top:88px; left:18px; font-size:8.5px; color:#5e6068">{{ volMidLabel }}</div>
+        <div style="display:flex; align-items:flex-end; gap:1.5px; height:150px; padding-left:42px; border-bottom:1px solid rgba(255,255,255,.1)">
+          <sc-for list="{{ volBars }}" as="b" hint-placeholder-count="47">
+            <div style="display:flex; flex-direction:column-reverse; flex:1; gap:1px; opacity:{{ b.op }}">
+              <sc-for list="{{ b.segs }}" as="s" hint-placeholder-count="2"><div style="height:{{ s.h }}px; background:{{ s.color }}"></div></sc-for>
+            </div>
+          </sc-for>
+        </div>
+        <div style="position:relative; height:14px; margin-top:4px; margin-left:42px">
+          <sc-for list="{{ volAxis }}" as="a" hint-placeholder-count="5"><div style="position:absolute; left:{{ a.left }}; transform:translateX(-50%); font-size:8.5px; color:#5e6068">{{ a.label }}</div></sc-for>
+        </div>
+        <!-- legend box -->
+        <div style="position:absolute; top:14px; right:16px; background:rgba(10,12,16,.82); border:1px solid rgba(255,255,255,.1); padding:8px 10px; min-width:200px">
+          <div style="display:grid; grid-template-columns:1fr 70px 44px; gap:3px 8px; font-size:8.5px; color:#5e6068; letter-spacing:.05em; padding-bottom:5px; border-bottom:1px solid rgba(255,255,255,.07)"><div>PROTOCOL</div><div style="text-align:right">ALL-TIME</div><div style="text-align:right">SHARE</div></div>
+          <sc-for list="{{ legRows }}" as="r" hint-placeholder-count="3">
+            <div style="display:grid; grid-template-columns:1fr 70px 44px; gap:3px 8px; font-size:10.5px; padding:4px 0; align-items:center"><div style="display:flex; align-items:center; gap:6px"><span style="width:8px;height:8px;border-radius:2px;background:{{ r.color }}"></span><span style="color:#cdcfd6">{{ r.name }}</span></div><div style="text-align:right; color:#E6E7EA">{{ r.vol }}</div><div style="text-align:right; color:#9a9ba3">{{ r.share }}</div></div>
+          </sc-for>
+          <div style="display:grid; grid-template-columns:1fr 70px 44px; gap:3px 8px; font-size:10.5px; padding-top:6px; margin-top:3px; border-top:1px solid rgba(255,255,255,.07)"><div style="color:#7a7c84">TOTAL</div><div style="text-align:right; color:#E6E7EA; font-weight:600">{{ legTotal }}</div><div style="text-align:right; color:#9a9ba3">100%</div></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- CUMULATIVE + MARKET SHARE -->
+    <div style="display:grid; grid-template-columns:1fr 1fr; gap:14px; margin:0 18px 14px">
+      <div style="position:relative; border:1px solid rgba(255,255,255,.07); background:#0A0C10">
+        <div style="position:absolute; top:-1px; left:-1px; width:8px; height:8px; border-top:1px solid #836EF9; border-left:1px solid #836EF9"></div>
+        <div style="padding:9px 12px; border-bottom:1px solid rgba(255,255,255,.06); font-size:11px; letter-spacing:.03em"><span style="color:#836EF9">&#9632;</span> <span style="color:#E6E7EA; font-weight:600">CUMULATIVE_VOLUME</span></div>
+        <div style="position:relative; padding:14px 14px 10px">
+          <svg viewBox="0 0 1000 260" preserveAspectRatio="none" style="display:block; width:100%; height:230px">
+            <defs><linearGradient id="cumg" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#836EF9" stop-opacity="0.32"/><stop offset="100%" stop-color="#836EF9" stop-opacity="0.02"/></linearGradient></defs>
+            <path d="{{ cumArea }}" fill="url(#cumg)"></path>
+            <path d="{{ cumLine }}" fill="none" stroke="#9A88FF" stroke-width="2" vector-effect="non-scaling-stroke"></path>
+          </svg>
+          <div style="position:absolute; top:14px; right:16px; font-size:11px; color:#9A88FF">&#931; {{ cumSigma }}</div>
+        </div>
+      </div>
+      <div style="position:relative; border:1px solid rgba(255,255,255,.07); background:#0A0C10">
+        <div style="position:absolute; top:-1px; left:-1px; width:8px; height:8px; border-top:1px solid #836EF9; border-left:1px solid #836EF9"></div>
+        <div style="padding:9px 12px; border-bottom:1px solid rgba(255,255,255,.06); font-size:11px; letter-spacing:.03em"><span style="color:#836EF9">&#9670;</span> <span style="color:#E6E7EA; font-weight:600">MARKET_SHARE</span> <span style="color:#6b6d76">% of daily volume</span></div>
+        <div style="position:relative; padding:14px 14px 10px">
+          <svg viewBox="0 0 1000 260" preserveAspectRatio="none" style="display:block; width:100%; height:230px">
+            <sc-for list="{{ msBands }}" as="band" hint-placeholder-count="2"><path d="{{ band.path }}" fill="{{ band.color }}" fill-opacity="0.82"></path></sc-for>
+          </svg>
+          <div style="position:absolute; top:18px; right:16px; font-size:9px; color:#9A88FF">{{ msTopName }} {{ msTopPct }}</div>
+          <div style="position:absolute; bottom:34px; right:16px; font-size:9px; color:#cdd3ff">{{ msBotName }} {{ msBotPct }}</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- PROTOCOL_BREAKDOWN -->
+    <div style="position:relative; border:1px solid rgba(255,255,255,.07); background:#0A0C10; margin:0 18px 14px">
+      <div style="position:absolute; top:-1px; left:-1px; width:8px; height:8px; border-top:1px solid #836EF9; border-left:1px solid #836EF9"></div>
+      <div style="position:absolute; bottom:-1px; right:-1px; width:8px; height:8px; border-bottom:1px solid #836EF9; border-right:1px solid #836EF9"></div>
+      <div style="padding:9px 12px; border-bottom:1px solid rgba(255,255,255,.06); font-size:11px; letter-spacing:.03em"><span style="color:#836EF9">#</span> <span style="color:#E6E7EA; font-weight:600">PROTOCOL_BREAKDOWN</span></div>
+      <div style="padding:6px 14px 12px">
+        <div style="display:grid; grid-template-columns:1.4fr 1fr 1.4fr 1fr 1.2fr 1fr; gap:8px; padding:9px 6px; font-size:9px; color:#5e6068; letter-spacing:.05em; border-bottom:1px solid rgba(255,255,255,.07)"><div>PROTOCOL</div><div style="text-align:right">ALL-TIME VOL</div><div>SHARE</div><div style="text-align:right">SWAPS</div><div style="text-align:right">PEAK DAY</div><div style="text-align:right">FIRST ACTIVE</div></div>
+        <sc-for list="{{ brk }}" as="r" hint-placeholder-count="3">
+          <div style="display:grid; grid-template-columns:1.4fr 1fr 1.4fr 1fr 1.2fr 1fr; gap:8px; padding:10px 6px; font-size:11.5px; border-bottom:1px solid rgba(255,255,255,.04); align-items:center">
+            <div style="display:flex; align-items:center; gap:7px"><span style="width:8px;height:8px;border-radius:2px;background:{{ r.color }}"></span><span style="color:#cdcfd6">{{ r.name }}</span></div>
+            <div style="text-align:right; color:#E6E7EA">{{ r.vol }}</div>
+            <div style="display:flex; align-items:center; gap:8px"><div style="flex:1; height:5px; background:rgba(255,255,255,.06); border-radius:3px; overflow:hidden"><div style="height:100%; width:{{ r.shareW }}%; background:{{ r.color }}"></div></div><span style="color:#9a9ba3; width:40px; text-align:right">{{ r.share }}</span></div>
+            <div style="text-align:right; color:#9a9ba3">{{ r.swaps }}</div>
+            <div style="text-align:right; color:#9a9ba3">{{ r.peakV }} <span style="color:#5e6068">{{ r.peakDay }}</span></div>
+            <div style="text-align:right; color:#7a7c84">{{ r.first }}</div>
+          </div>
+        </sc-for>
+        <div style="display:grid; grid-template-columns:1.4fr 1fr 1.4fr 1fr 1.2fr 1fr; gap:8px; padding:10px 6px; font-size:11.5px; align-items:center"><div style="color:#7a7c84">TOTAL</div><div style="text-align:right; color:#E6E7EA; font-weight:600">{{ brkTotalVol }}</div><div style="color:#9a9ba3">100%</div><div style="text-align:right; color:#9a9ba3">{{ brkTotalSwaps }}</div><div style="text-align:right; color:#5e6068">&mdash;</div><div style="text-align:right; color:#7a7c84">2026-05-13</div></div>
+      </div>
+    </div>
+  </div>
+</sc-if>
+  <sc-if value="{{ isMk }}" hint-placeholder-val="{{ false }}">
+  <div>
+    <div style="padding:18px 18px 14px">
+      <div style="font-size:14px; font-weight:600; letter-spacing:.06em; color:#E6E7EA">SWAP MARKOUTS</div>
+      <div style="font-size:11px; color:#7a7c84; margin-top:6px; line-height:1.55; max-width:880px">On-chain swaps joined to the Bybit <span style="color:#B9BCC6">MONUSDT</span> reference BBO for markouts at 0 / 5 / 10 / 30 / 60 seconds. <span style="color:#35D0A0">Positive bps</span> = the taker got a favorable fill vs the CEX reference; <span style="color:#F2566A">negative</span> = adverse. Later horizons fill in as each swap ages past them.</div>
+    </div>
+
+    <!-- SWAP_TAPE -->
+    <div style="position:relative; border:1px solid rgba(255,255,255,.07); background:#0A0C10; margin:0 18px 14px">
+      <div style="position:absolute; top:-1px; left:-1px; width:8px; height:8px; border-top:1px solid #836EF9; border-left:1px solid #836EF9"></div>
+      <div style="position:absolute; bottom:-1px; right:-1px; width:8px; height:8px; border-bottom:1px solid #836EF9; border-right:1px solid #836EF9"></div>
+      <div style="display:flex; align-items:center; justify-content:space-between; gap:14px; flex-wrap:wrap; padding:9px 12px; border-bottom:1px solid rgba(255,255,255,.06)">
+        <div style="font-size:11px; letter-spacing:.03em"><span style="color:#836EF9">&gt;</span> <span style="color:#E6E7EA; font-weight:600">SWAP_TAPE</span></div>
+        <div style="display:flex; align-items:center; gap:12px; flex-wrap:wrap">
+          <div style="display:flex; gap:3px"><sc-for list="{{ mkProtoPills }}" as="p" hint-placeholder-count="4"><div onClick="{{ p.onClick }}" style="{{ p.style }}">{{ p.label }}</div></sc-for></div>
+          <div style="display:flex; gap:3px"><sc-for list="{{ mkSidePills }}" as="p" hint-placeholder-count="3"><div onClick="{{ p.onClick }}" style="{{ p.style }}">{{ p.label }}</div></sc-for></div>
+          <div style="display:flex; gap:3px"><sc-for list="{{ mkSizePills }}" as="p" hint-placeholder-count="4"><div onClick="{{ p.onClick }}" style="{{ p.style }}">{{ p.label }}</div></sc-for></div>
+          <div style="display:flex; align-items:center; gap:5px"><span style="font-size:9px; color:#5e6068; letter-spacing:.04em">CLOBER</span><div style="display:flex; gap:3px"><sc-for list="{{ clScopePills }}" as="p" hint-placeholder-count="2"><div onClick="{{ p.onClick }}" style="{{ p.style }}">{{ p.label }}</div></sc-for></div></div>
+          <div onClick="{{ togglePause }}" style="{{ mkPauseStyle }}">{{ mkPauseLabel }}</div>
+        </div>
+      </div>
+      <div style="display:grid; grid-template-columns:78px 78px 84px 84px 64px 64px 80px 88px 46px 80px 80px 52px 52px 52px 52px 52px; gap:0 6px; padding:9px 14px; font-size:8.5px; color:#5e6068; letter-spacing:.04em; border-bottom:1px solid rgba(255,255,255,.07)">
+        <div>TS UTC</div><div>BLOCK</div><div>TX</div><div>TO</div><div>CATEGORY</div><div>PROTOCOL</div><div>PAIR</div><div>POOL</div><div>SIDE</div><div style="text-align:right">SIZE USD</div><div style="text-align:right">EXEC PX</div><div style="text-align:right">MK-0S</div><div style="text-align:right">MK-5S</div><div style="text-align:right">MK-10S</div><div style="text-align:right">MK-30S</div><div style="text-align:right">MK-60S</div>
+      </div>
+      <div style="max-height:454px; overflow-y:auto">
+        <sc-for list="{{ mkRows }}" as="f" hint-placeholder-count="20">
+          <div style="display:grid; grid-template-columns:78px 78px 84px 84px 64px 64px 80px 88px 46px 80px 80px 52px 52px 52px 52px 52px; gap:0 6px; padding:6px 14px; font-size:10.5px; border-bottom:1px solid rgba(255,255,255,.035); align-items:center">
+            <div style="color:#6b6d76">{{ f.ts }}</div>
+            <div style="color:#7a7c84">{{ f.block }}</div>
+            <div style="color:#6E8BFF">{{ f.tx }}</div>
+            <div style="color:#5e6068">{{ f.to }}</div>
+            <div style="{{ f.catStyle }}; font-size:9px">{{ f.cat }}</div>
+            <div style="{{ f.protoStyle }}; font-weight:600">{{ f.proto }}</div>
+            <div style="color:#cdcfd6">{{ f.pair }}</div>
+            <div style="color:#5e6068">{{ f.pool }}</div>
+            <div><span style="{{ f.sideStyle }}">{{ f.side }}</span></div>
+            <div style="text-align:right; color:#E6E7EA">{{ f.usd }}</div>
+            <div style="text-align:right; color:#9a9ba3">{{ f.exec }}</div>
+            <sc-for list="{{ f.cells }}" as="c" hint-placeholder-count="5"><div style="{{ c.css }}">{{ c.val }}</div></sc-for>
+          </div>
+        </sc-for>
+      </div>
+      <div style="display:flex; justify-content:space-between; padding:8px 14px; border-top:1px solid rgba(255,255,255,.06); font-size:9px; color:#5e6068">
+        <span>showing {{ mkCount }} rows</span><span>last refresh {{ mkRefresh }}</span>
+      </div>
+    </div>
+
+    <!-- OUTLIER_FEED -->
+    <div style="position:relative; border:1px solid rgba(255,255,255,.07); background:#0A0C10; margin:0 18px 14px">
+      <div style="position:absolute; top:-1px; left:-1px; width:8px; height:8px; border-top:1px solid #836EF9; border-left:1px solid #836EF9"></div>
+      <div style="position:absolute; bottom:-1px; right:-1px; width:8px; height:8px; border-bottom:1px solid #836EF9; border-right:1px solid #836EF9"></div>
+      <div style="padding:9px 12px; border-bottom:1px solid rgba(255,255,255,.06); font-size:11px; letter-spacing:.03em"><span style="color:#F2566A">!</span> <span style="color:#E6E7EA; font-weight:600">OUTLIER_FEED</span> <span style="color:#6b6d76">sorted by |mk-0s P&amp;L| desc &middot; last 24h</span></div>
+      <div style="display:grid; grid-template-columns:84px 88px 96px 56px 100px 110px 120px 1fr 1fr; gap:0 8px; padding:9px 14px; font-size:8.5px; color:#5e6068; letter-spacing:.04em; border-bottom:1px solid rgba(255,255,255,.07)">
+        <div>WHEN</div><div>BLOCK</div><div>PAIR</div><div>SIDE</div><div style="text-align:right">USD</div><div style="text-align:right">MK-0S (BPS)</div><div style="text-align:right">MK-0S P&amp;L</div><div>TX</div><div>TO</div>
+      </div>
+      <sc-for list="{{ outRows }}" as="o" hint-placeholder-count="12">
+        <div style="display:grid; grid-template-columns:84px 88px 96px 56px 100px 110px 120px 1fr 1fr; gap:0 8px; padding:7px 14px; font-size:10.5px; border-bottom:1px solid rgba(255,255,255,.035); align-items:center">
+          <div style="color:#6b6d76">{{ o.when }}</div>
+          <div style="color:#7a7c84">{{ o.block }}</div>
+          <div style="color:#cdcfd6">{{ o.pair }}</div>
+          <div><span style="{{ o.sideStyle }}">{{ o.side }}</span></div>
+          <div style="text-align:right; color:#E6E7EA">{{ o.usd }}</div>
+          <div style="{{ o.mk0Style }}">{{ o.mk0 }}</div>
+          <div style="{{ o.pnlStyle }}; font-weight:600">{{ o.pnl }}</div>
+          <div style="color:#6E8BFF">{{ o.tx }}</div>
+          <div style="color:#5e6068">{{ o.to }}</div>
+        </div>
+      </sc-for>
+    </div>
+  </div>
+</sc-if>
+  <sc-if value="{{ isLb }}" hint-placeholder-val="{{ false }}">
+  <div>
+    <div style="display:flex; align-items:flex-start; justify-content:space-between; padding:18px 18px 12px">
+      <div>
+        <div style="font-size:14px; font-weight:600; letter-spacing:.06em; color:#E6E7EA">MARKOUT LEADERBOARD</div>
+        <div style="font-size:11px; color:#7a7c84; margin-top:6px; line-height:1.55; max-width:760px">Percentile distribution of markouts and the biggest single-swap winners / losers, per group, over the selected window. Markouts vs Bybit MONUSDT BBO mid; pool PnL = &#931;(markout_bps &times; size_usd / 10000).</div>
+      </div>
+      <div style="display:flex; gap:3px"><sc-for list="{{ lbWinPills }}" as="p" hint-placeholder-count="3"><div onClick="{{ p.onClick }}" style="{{ p.style }}">{{ p.label }}</div></sc-for></div>
+    </div>
+
+    <!-- controls -->
+    <div style="display:flex; align-items:center; gap:18px; flex-wrap:wrap; padding:2px 18px 16px; font-size:9px; color:#5e6068">
+      <div style="display:flex; align-items:center; gap:7px"><span style="letter-spacing:.06em">SHOW</span><div style="display:flex; gap:3px"><sc-for list="{{ lbShowPills }}" as="p" hint-placeholder-count="2"><div onClick="{{ p.onClick }}" style="{{ p.style }}">{{ p.label }}</div></sc-for></div></div>
+      <div style="display:flex; align-items:center; gap:7px"><span style="letter-spacing:.06em">GROUP BY</span><div style="display:flex; gap:3px"><sc-for list="{{ lbGroupPills }}" as="p" hint-placeholder-count="4"><div onClick="{{ p.onClick }}" style="{{ p.style }}">{{ p.label }}</div></sc-for></div></div>
+      <div style="display:flex; align-items:center; gap:7px"><span style="letter-spacing:.06em">HORIZON</span><div style="display:flex; gap:3px"><sc-for list="{{ lbHzPills }}" as="p" hint-placeholder-count="4"><div onClick="{{ p.onClick }}" style="{{ p.style }}">{{ p.label }}</div></sc-for></div></div>
+      <div style="display:flex; align-items:center; gap:7px"><span style="letter-spacing:.06em">MARKOUTS</span><div style="display:flex; gap:3px"><sc-for list="{{ lbMkPills }}" as="p" hint-placeholder-count="2"><div onClick="{{ p.onClick }}" style="{{ p.style }}">{{ p.label }}</div></sc-for></div></div>
+      <div onClick="{{ lbReset }}" style="margin-left:auto; padding:3px 9px; border:1px solid rgba(255,255,255,.13); border-radius:4px; cursor:pointer; font-size:10px; color:#8b8c95">RESET FILTERS</div>
+    </div>
+
+    <!-- PROTOCOL_LEADERBOARD -->
+    <div style="position:relative; border:1px solid rgba(255,255,255,.07); background:#0A0C10; margin:0 18px 14px">
+      <div style="position:absolute; top:-1px; left:-1px; width:8px; height:8px; border-top:1px solid #836EF9; border-left:1px solid #836EF9"></div>
+      <div style="position:absolute; bottom:-1px; right:-1px; width:8px; height:8px; border-bottom:1px solid #836EF9; border-right:1px solid #836EF9"></div>
+      <div style="padding:9px 12px; border-bottom:1px solid rgba(255,255,255,.06); font-size:11px; letter-spacing:.03em"><span style="color:#836EF9">$</span> <span style="color:#E6E7EA; font-weight:600">LEADERBOARD_{{ lbWinLbl }}</span> <span style="color:#6b6d76">grouped by {{ lbGroupLbl }} &middot; markout {{ lbHzLbl }}</span></div>
+      <div style="padding:4px 14px 12px; overflow-x:auto">
+        <div style="display:grid; grid-template-columns:34px 1.7fr 96px 64px 58px 58px 58px 58px 58px 1.5fr; gap:0 8px; padding:9px 6px; font-size:9px; color:#5e6068; letter-spacing:.04em; border-bottom:1px solid rgba(255,255,255,.07); min-width:980px">
+          <div>#</div><div>{{ lbColHdr }}</div><div style="text-align:right">VOLUME</div><div style="text-align:right">SWAPS</div><div style="text-align:right">P5</div><div style="text-align:right">P25</div><div style="text-align:right">P50</div><div style="text-align:right">P75</div><div style="text-align:right">P95</div><div style="text-align:right">POOL PNL</div>
+        </div>
+        <sc-for list="{{ lbRows }}" as="g" hint-placeholder-count="8">
+          <div style="display:grid; grid-template-columns:34px 1.7fr 96px 64px 58px 58px 58px 58px 58px 1.5fr; gap:0 8px; padding:11px 6px; font-size:11.5px; border-bottom:1px solid rgba(255,255,255,.04); align-items:center; min-width:980px">
+            <div style="color:#5e6068">{{ g.rank }}</div>
+            <div style="display:flex; align-items:center; gap:8px; overflow:hidden"><span style="width:9px; height:9px; border-radius:2px; background:{{ g.color }}; flex:none"></span><span style="color:#E6E7EA; white-space:nowrap; overflow:hidden; text-overflow:ellipsis">{{ g.name }}</span></div>
+            <div style="text-align:right; color:#E6E7EA">{{ g.vol }}</div>
+            <div style="text-align:right; color:#9a9ba3">{{ g.swaps }}</div>
+            <div style="{{ g.p5css }}">{{ g.p5 }}</div>
+            <div style="{{ g.p25css }}">{{ g.p25 }}</div>
+            <div style="{{ g.p50css }}">{{ g.p50 }}</div>
+            <div style="{{ g.p75css }}">{{ g.p75 }}</div>
+            <div style="{{ g.p95css }}">{{ g.p95 }}</div>
+            <div style="display:flex; align-items:center; justify-content:flex-end; gap:10px"><span style="{{ g.pnlStyle }}">{{ g.pnl }}</span><svg width="130" height="26" viewBox="0 0 130 26" preserveAspectRatio="none" style="flex:none"><path d="{{ g.spark }}" fill="none" stroke="{{ g.sparkColor }}" stroke-width="1.4" vector-effect="non-scaling-stroke"></path></svg></div>
+          </div>
+        </sc-for>
+      </div>
+    </div>
+
+    <!-- TOP_SWAPS -->
+    <div style="position:relative; border:1px solid rgba(255,255,255,.07); background:#0A0C10; margin:0 18px 14px">
+      <div style="position:absolute; top:-1px; left:-1px; width:8px; height:8px; border-top:1px solid #836EF9; border-left:1px solid #836EF9"></div>
+      <div style="position:absolute; bottom:-1px; right:-1px; width:8px; height:8px; border-bottom:1px solid #836EF9; border-right:1px solid #836EF9"></div>
+      <div style="display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; padding:9px 12px; border-bottom:1px solid rgba(255,255,255,.06)">
+        <div style="font-size:11px; letter-spacing:.03em"><span style="color:#836EF9">&minus;</span> <span style="color:#E6E7EA; font-weight:600">TOP_SWAPS_BY_MARKOUT_USD</span> <span style="color:#6b6d76">{{ lbHzLbl }} markout &middot; {{ lbWinLbl }} window</span></div>
+        <div style="display:flex; gap:10px">
+          <div style="display:flex; gap:3px"><div onClick="{{ lbWinnersOn }}" style="{{ lbWinnersStyle }}">WINNERS</div><div onClick="{{ lbLosersOn }}" style="{{ lbLosersStyle }}">LOSERS</div></div>
+          <div style="display:flex; gap:3px"><sc-for list="{{ lbTopPills }}" as="p" hint-placeholder-count="3"><div onClick="{{ p.onClick }}" style="{{ p.style }}">{{ p.label }}</div></sc-for></div>
+        </div>
+      </div>
+      <div style="padding:0 14px 12px; overflow-x:auto">
+        <div style="display:grid; grid-template-columns:30px 76px 64px 82px 1.3fr 64px 88px 46px 1fr 1fr 76px 56px 80px; gap:0 8px; padding:9px 6px; font-size:8.5px; color:#5e6068; letter-spacing:.04em; border-bottom:1px solid rgba(255,255,255,.07); min-width:1140px">
+          <div>#</div><div>BLOCK</div><div>AGE</div><div>TX</div><div>TO</div><div>CATEGORY</div><div>POOL</div><div>SIDE</div><div style="text-align:right">IN</div><div style="text-align:right">OUT</div><div style="text-align:right">EXEC PX</div><div style="text-align:right">MK BPS</div><div style="text-align:right">MK $</div>
+        </div>
+        <sc-for list="{{ topRows }}" as="r" hint-placeholder-count="14">
+          <div style="display:grid; grid-template-columns:30px 76px 64px 82px 1.3fr 64px 88px 46px 1fr 1fr 76px 56px 80px; gap:0 8px; padding:8px 6px; font-size:10.5px; border-bottom:1px solid rgba(255,255,255,.035); align-items:center; min-width:1140px">
+            <div style="color:#5e6068">{{ r.rank }}</div>
+            <div style="color:#7a7c84">{{ r.block }}</div>
+            <div style="color:#5e6068">{{ r.age }}</div>
+            <div style="color:#6E8BFF">{{ r.tx }}</div>
+            <div style="color:#7a7c84; white-space:nowrap; overflow:hidden; text-overflow:ellipsis">{{ r.to }}</div>
+            <div style="{{ r.catStyle }}; font-size:9px">{{ r.cat }}</div>
+            <div style="color:#5e6068; white-space:nowrap; overflow:hidden; text-overflow:ellipsis">{{ r.pool }}</div>
+            <div><span style="{{ r.sideStyle }}">{{ r.side }}</span></div>
+            <div style="text-align:right; color:#9a9ba3">{{ r.inAmt }}</div>
+            <div style="text-align:right; color:#9a9ba3">{{ r.outAmt }}</div>
+            <div style="text-align:right; color:#cdcfd6">{{ r.exec }}</div>
+            <div style="{{ r.mkStyle }}">{{ r.mk }}</div>
+            <div style="{{ r.pnlStyle }}">{{ r.pnl }}</div>
+          </div>
+        </sc-for>
+      </div>
+    </div>
+  </div>
+</sc-if>
+
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;:{&quot;width&quot;:1280,&quot;height&quot;:860}}">
+class Component extends DCLogic {
+  PAIRS = ['MON/USDC', 'MON/USDT0', 'MON/AUSD', 'MON/USD1'];
+  SIZES = [100, 1000, 10000, 100000];
+  VEN = ['LFJ', 'Clober', 'Vault', 'Bybit'];
+  COL = { LFJ: '#6E8BFF', Clober: '#45C8E8', Vault: '#9A88FF', Bybit: '#B9BCC6' };
+  base = 0.01928;
+  takerBps = 10;
+  N = 120;
+  slip = { LFJ: 2.0, Clober: 3.6, Vault: 1.0, Bybit: 0.3 };
+  pairMult = { 'MON/USDC': 1.0, 'MON/USDT0': 1.15, 'MON/AUSD': 1.4, 'MON/USD1': 1.6 };
+
+  state = { tab: 'exec', pair: 'MON/USDC', size: 1000, frame: 0, ven: { LFJ: true, Clober: true, Vault: true, Bybit: true }, mkProto: 'ALL', mkSide: 'ALL', mkSize: 'ANY', mkPaused: false, clScope: 'venue', lbWin: '24H', lbShow: 'PROPAMM', lbGroup: 'PROTOCOL', lbHz: 'T+0S', lbMk: 'TAKER', lbWinners: true, lbTop: 25 };
+
+  setCanvas = (el) => { this.canvas = el; };
+  setSel = (k, v) => { if (k === 'pair') this.pairSel = v; if (k === 'size') this.sizeSel = v; this.setState({ [k]: v }); this.reseedQuotes(); };
+  toggleVen = (v) => { this.setState(s => ({ ven: { ...s.ven, [v]: !s.ven[v] } })); };
+
+  componentDidMount() {
+    this.mon = this.base;
+    this.block = 47128560;
+    this.off = { LFJ: -1.0, Clober: -1.6, Vault: -0.2, Bybit: 0 };
+    this.hs = { LFJ: 1.8, Clober: 2.4, Vault: 1.0, Bybit: 0.15 };
+    this.series = {}; this.samples = {};
+    this.VEN.forEach(v => { this.series[v] = { bid: [], ask: [] }; this.samples[v] = []; });
+    this.pairSel = this.state.pair; this.sizeSel = this.state.size;
+    this.simT = 0;
+    this.initEntities();
+    for (let i = 0; i < 220; i++) { this.mutate(); this.pushQuote(); }
+    this.seedHistory();
+    this.seedFills();
+    this.timer = setInterval(() => this.tick(), 500);
+    this.raf = requestAnimationFrame(() => this.draw());
+  }
+  componentWillUnmount() { clearInterval(this.timer); cancelAnimationFrame(this.raf); }
+
+  rnd() { return Math.random() * 2 - 1; }
+  sizeStep(sz) { return Math.log10(sz / 100); }
+  pct(arr, p) { if (!arr.length) return 0; const s = [...arr].sort((a, b) => a - b); const i = (s.length - 1) * p; const lo = Math.floor(i), hi = Math.ceil(i); return s[lo] + (s[hi] - s[lo]) * (i - lo); }
+  std(arr) { if (arr.length < 2) return 0; const m = arr.reduce((a, b) => a + b, 0) / arr.length; return Math.sqrt(arr.reduce((a, b) => a + (b - m) ** 2, 0) / arr.length); }
+  sgn(x) { return (x >= 0 ? '+' : '') + x.toFixed(2); }
+  sizeLabel(s) { return s >= 1000 ? '$' + (s / 1000) + 'k' : '$' + s; }
+  hex(c, a) { const n = parseInt(c.slice(1), 16); return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`; }
+
+  quoteAt(v, pair, size) {
+    const pm = this.pairMult[pair] || 1;
+    const hsz = this.hs[v] * pm + this.slip[v] * this.sizeStep(size) + (v === 'Bybit' ? this.takerBps : 0);
+    const o = this.off[v];
+    const bid = o - hsz, ask = o + hsz;
+    return { bidBps: bid, askBps: ask, spread: ask - bid, bidPx: this.mon * (1 + bid / 1e4), askPx: this.mon * (1 + ask / 1e4) };
+  }
+
+  mutate() {
+    this.mon *= (1 + this.rnd() * 0.0006);
+    this.mon = Math.max(this.base * 0.95, Math.min(this.base * 1.05, this.mon));
+    ['LFJ', 'Clober', 'Vault'].forEach(v => {
+      this.off[v] += this.rnd() * 0.15; this.hs[v] += this.rnd() * 0.08;
+      if (Math.random() < 0.05) { this.hs[v] += this.rnd() * 0.8; this.off[v] += this.rnd() * 0.6; }
+      this.off[v] = Math.max(-6, Math.min(6, this.off[v]));
+      this.hs[v] = Math.max(0.5, Math.min(13, this.hs[v]));
+    });
+    this.hs.Bybit = 0.12 + Math.random() * 0.08;
+  }
+  pushQuote() {
+    this.VEN.forEach(v => {
+      const q = this.quoteAt(v, this.pairSel, this.sizeSel);
+      const S = this.series[v]; S.bid.push(q.bidPx); S.ask.push(q.askPx);
+      if (S.bid.length > this.N) { S.bid.shift(); S.ask.shift(); }
+      const smp = this.samples[v]; smp.push(q.spread); if (smp.length > 600) smp.shift();
+    });
+  }
+  reseedQuotes() {
+    this.VEN.forEach(v => {
+      const S = this.series[v]; S.bid = []; S.ask = [];
+      const q = this.quoteAt(v, this.pairSel, this.sizeSel);
+      for (let i = 0; i < this.N; i++) { const j = 1 + this.rnd() * 0.0008; S.bid.push(q.bidPx * j); S.ask.push(q.askPx * j); }
+    });
+  }
+  tick() { this.simT += 0.5; this.mutate(); this.pushQuote(); this.bumpVolume(); this.spawnFill(); this.block += 2; this.setState(s => ({ frame: s.frame + 1 })); }
+
+  setMk = (k, v) => this.setState({ [k]: v });
+  togglePause = () => this.setState(s => ({ mkPaused: !s.mkPaused }));
+  rhex(n) { let s = ''; const c = '0123456789abcdef'; for (let i = 0; i < n; i++) s += c[Math.floor(Math.random() * 16)]; return s; }
+  txS() { return '0x' + this.rhex(4) + '\u2026' + this.rhex(4); }
+  clockAt(a) { return new Date(Date.now() - a * 1000).toISOString().slice(11, 23); }
+  fmtUsd(x) { return x >= 1e6 ? '$' + (x / 1e6).toFixed(2) + 'M' : x >= 1e3 ? '$' + (x / 1e3).toFixed(1) + 'k' : '$' + x.toFixed(2); }
+  protoCol(p) { return p === 'LFJ' ? '#6E8BFF' : p === 'Clober' ? '#45C8E8' : '#9A88FF'; }
+  catCol(c) { return c === 'ROUTER' ? '#E0A33E' : c === 'CEX/DEX' ? '#45C8E8' : c === 'AGG' ? '#9A88FF' : '#5e6068'; }
+  wpick(a, w) { const r = Math.random() * w.reduce((x, y) => x + y, 0); let c = 0; for (let i = 0; i < a.length; i++) { c += w[i]; if (r < c) return a[i]; } return a[a.length - 1]; }
+  makeFill(ageT, big) {
+    const pair = this.PAIRS[Math.floor(Math.random() * this.PAIRS.length)];
+    const side = Math.random() < 0.5 ? 'BUY' : 'SELL';
+    const proto = this.wpick(['LFJ', 'Clober', 'Vault'], [0.5, 0.32, 0.18]);
+    let cat = '\u2014'; const cr = Math.random();
+    if (proto === 'Vault') cat = cr < 0.45 ? 'CEX/DEX' : '\u2014'; else cat = cr < 0.16 ? 'ROUTER' : cr < 0.24 ? 'AGG' : '\u2014';
+    const usd = big ? (60000 + Math.random() * 640000) : (Math.random() < 0.72 ? 50 + Math.random() * 9000 : 9000 + Math.random() * 90000);
+    const execPx = this.mon * (1 + (Math.random() * 2 - 1) * 0.0009);
+    const e0 = (proto === 'Vault' ? 0.9 : proto === 'LFJ' ? 0.1 : -0.5) + (Math.random() * 2 - 1) * 1.6;
+    const ss = side === 'BUY' ? 1 : -1; let d = 0; const mk = [e0];
+    [5, 10, 30, 60].forEach(h => { d += (Math.random() * 2 - 1) * Math.sqrt(h) * 1.05; mk.push(e0 + ss * d); });
+    const pool = (this.pools && this.pools[proto + pair]) || this.txS();
+    const to = (cat === 'ROUTER' || cat === 'AGG') ? (this.routers ? this.routers[Math.floor(Math.random() * this.routers.length)] : this.txS()) : ((this.addrs && Math.random() < 0.85) ? this.addrs[Math.floor(Math.random() * this.addrs.length)] : this.txS());
+    return { pair, side, proto, cat, usd, execPx, mk, ageT, bornT: this.simT - ageT, block: Math.max(1, this.block - Math.round(ageT / 0.4)), tx: this.txS(), to, pool, ts: this.clockAt(ageT) };
+  }
+  seedFills() {
+    this.fills24 = [];
+    for (let i = 0; i < 260; i++) this.fills24.push(this.makeFill(Math.random() * 86400, Math.random() < 0.18));
+    const recent = [];
+    for (let i = 0; i < 48; i++) recent.push(this.makeFill(Math.random() * 85, Math.random() < 0.12));
+    recent.sort((a, b) => b.bornT - a.bornT);
+    this.tape = recent;
+    this.fills24.push(...recent);
+  }
+  spawnFill() {
+    if (this.state.mkPaused) return;
+    if (Math.random() < 0.55) {
+      const f = this.makeFill(0, Math.random() < 0.14);
+      this.tape.unshift(f); if (this.tape.length > 60) this.tape.pop();
+      this.fills24.push(f); if (this.fills24.length > 320) this.fills24.shift();
+    }
+  }
+  initEntities() {
+    this.pools = {};
+    ['LFJ', 'Clober', 'Vault'].forEach(p => this.PAIRS.forEach(pr => { this.pools[p + pr] = this.txS(); }));
+    this.addrs = Array.from({ length: 14 }, () => this.txS());
+    this.routers = ['Uniswap Universal Router', 'KyberSwap: Meta Aggregation', 'Relay: Approval Proxy V3', '1inch v6 Router', 'Odos Router v2'];
+  }
+  humanAge(a) { return a < 60 ? Math.round(a) + 's ago' : a < 3600 ? Math.round(a / 60) + 'm ago' : Math.round(a / 3600) + 'h ago'; }
+  fmtAmt(x) { return x >= 1e6 ? (x / 1e6).toFixed(2) + 'M' : x >= 1e3 ? (x / 1e3).toFixed(2) + 'k' : x.toFixed(4); }
+  pnlFmt(x) { return (x >= 0 ? '+' : '\u2212') + this.fmtUsd(Math.abs(x)); }
+  sparkPath(arr, w, h) { if (!arr || arr.length < 2) return ''; const mn = Math.min(...arr), mx = Math.max(...arr), rg = (mx - mn) || 1; return 'M' + arr.map((v, i) => (i / (arr.length - 1) * w).toFixed(1) + ',' + (h - (v - mn) / rg * h).toFixed(1)).join(' L'); }
+  lbReset = () => this.setState({ lbWin: '24H', lbShow: 'PROPAMM', lbGroup: 'PROTOCOL', lbHz: 'T+0S', lbMk: 'TAKER', lbWinners: true, lbTop: 25 });
+  lbVals() {
+    if (!this.fills24) return {};
+    const st = this.state;
+    const on = 'background:#836EF9;color:#fff;border:1px solid #836EF9;padding:3px 8px;border-radius:4px;cursor:pointer;font-size:10px;white-space:nowrap';
+    const off = 'background:transparent;color:#8b8c95;border:1px solid rgba(255,255,255,.13);padding:3px 8px;border-radius:4px;cursor:pointer;font-size:10px;white-space:nowrap';
+    const pills = (key, opts, vals) => opts.map((o, i) => ({ label: o, onClick: () => this.setMk(key, vals ? vals[i] : o), style: st[key] === (vals ? vals[i] : o) ? on : off }));
+    const hzIdx = { 'T+0S': 0, 'T+10S': 2, 'T+30S': 3, 'T+60S': 4 }[st.lbHz];
+    const winF = { '24H': 1, '7D': 5.6, '30D': 22 }[st.lbWin];
+    const sign = st.lbMk === 'MAKER' ? -1 : 1;
+    const keyFn = st.lbGroup === 'PROTOCOL' ? (f => f.proto) : st.lbGroup === 'CATEGORY' ? (f => f.cat === '\u2014' ? 'direct' : f.cat) : st.lbGroup === 'POOL' ? (f => f.pool) : (f => f.to);
+    const colorFor = n => st.lbGroup === 'PROTOCOL' ? this.protoCol(n) : st.lbGroup === 'CATEGORY' ? this.catCol(n === 'direct' ? '\u2014' : n) : '#9A88FF';
+    const groups = {};
+    this.fills24.forEach(f => { const k = keyFn(f); (groups[k] = groups[k] || []).push(f); });
+    let arr = Object.entries(groups).map(([k, fs]) => {
+      const vol = fs.reduce((a, f) => a + f.usd, 0) * winF;
+      const mks = fs.map(f => sign * f.mk[hzIdx]);
+      const pnl = fs.reduce((a, f) => a + sign * f.mk[hzIdx] / 1e4 * f.usd, 0) * winF;
+      const ord = [...fs].sort((a, b) => a.bornT - b.bornT); let c = 0; const sp = ord.map(f => { c += sign * f.mk[hzIdx] / 1e4 * f.usd; return c; });
+      return { name: k, color: colorFor(k), vol, swaps: Math.round(fs.length * winF), p5: this.pct(mks, .05), p25: this.pct(mks, .25), p50: this.pct(mks, .5), p75: this.pct(mks, .75), p95: this.pct(mks, .95), pnl, sp };
+    });
+    arr.sort((a, b) => b.vol - a.vol); arr = arr.slice(0, 12);
+    const pcell = v => ({ v: (v >= 0 ? '+' : '') + v.toFixed(2), css: 'text-align:right;color:' + (v > 0.02 ? '#35D0A0' : v < -0.02 ? '#F2566A' : '#9a9ba3') });
+    const lbRows = arr.map((g, i) => ({
+      rank: String(i + 1).padStart(2, '0'), name: g.name, color: g.color,
+      vol: this.fmtUsd(g.vol), swaps: g.swaps.toLocaleString(),
+      p5: pcell(g.p5).v, p5css: pcell(g.p5).css, p25: pcell(g.p25).v, p25css: pcell(g.p25).css, p50: pcell(g.p50).v, p50css: pcell(g.p50).css, p75: pcell(g.p75).v, p75css: pcell(g.p75).css, p95: pcell(g.p95).v, p95css: pcell(g.p95).css,
+      pnl: this.pnlFmt(g.pnl), pnlStyle: 'color:' + (g.pnl >= 0 ? '#35D0A0' : '#F2566A') + ';font-weight:600', spark: this.sparkPath(g.sp, 130, 26), sparkColor: g.pnl >= 0 ? '#35D0A0' : '#F2566A'
+    }));
+    let tsw = this.fills24.map(f => { const mk = sign * f.mk[hzIdx]; return { f, mk, pnl: mk / 1e4 * f.usd }; });
+    tsw = st.lbWinners ? tsw.filter(x => x.pnl > 0).sort((a, b) => b.pnl - a.pnl) : tsw.filter(x => x.pnl < 0).sort((a, b) => a.pnl - b.pnl);
+    const sideStyle = s => 'font-size:9px;font-weight:600;padding:1px 5px;border-radius:3px;border:1px solid ' + (s === 'BUY' ? 'rgba(53,208,160,.5)' : 'rgba(242,86,106,.5)') + ';color:' + (s === 'BUY' ? '#35D0A0' : '#F2566A');
+    const topRows = tsw.slice(0, st.lbTop).map((x, i) => {
+      const f = x.f, base = f.usd / f.execPx, stable = f.pair.split('/')[1];
+      return {
+        rank: String(i + 1).padStart(2, '0'), block: f.block.toLocaleString(), age: this.humanAge(f.ageT), tx: f.tx, to: f.to, cat: f.cat, catStyle: 'color:' + this.catCol(f.cat), pool: f.pool, pair: f.pair, side: f.side, sideStyle: sideStyle(f.side),
+        inAmt: f.side === 'BUY' ? this.fmtAmt(f.usd) + ' ' + stable : this.fmtAmt(base) + ' MON',
+        outAmt: f.side === 'BUY' ? this.fmtAmt(base) + ' MON' : this.fmtAmt(f.usd) + ' ' + stable,
+        exec: f.execPx.toFixed(5), mk: (x.mk >= 0 ? '+' : '') + x.mk.toFixed(2), mkStyle: 'text-align:right;color:' + (x.mk >= 0 ? '#35D0A0' : '#F2566A'),
+        pnl: this.pnlFmt(x.pnl), pnlStyle: 'text-align:right;color:' + (x.pnl >= 0 ? '#35D0A0' : '#F2566A') + ';font-weight:600'
+      };
+    });
+    const wlBtn = (active, color) => 'padding:3px 10px;border-radius:4px;cursor:pointer;font-size:10px;border:1px solid ' + (active ? color + '88' : 'rgba(255,255,255,.13)') + ';background:' + (active ? color + '22' : 'transparent') + ';color:' + (active ? color : '#8b8c95');
+    return {
+      lbRows, topRows, lbCount: arr.length, lbColHdr: st.lbGroup, lbWinLbl: st.lbWin, lbGroupLbl: st.lbGroup.toLowerCase(), lbHzLbl: st.lbHz,
+      lbWinPills: pills('lbWin', ['24H', '7D', '30D']), lbShowPills: pills('lbShow', ['PROPAMM', 'ALL AMMS']),
+      lbGroupPills: pills('lbGroup', ['PROTOCOL', 'POOL', 'TO ADDRESS', 'CATEGORY']), lbHzPills: pills('lbHz', ['T+0S', 'T+10S', 'T+30S', 'T+60S']),
+      lbMkPills: pills('lbMk', ['TAKER', 'MAKER']), lbReset: this.lbReset,
+      lbWinnersOn: () => this.setMk('lbWinners', true), lbLosersOn: () => this.setMk('lbWinners', false),
+      lbWinnersStyle: wlBtn(st.lbWinners, '#35D0A0'), lbLosersStyle: wlBtn(!st.lbWinners, '#F2566A'),
+      lbTopPills: [10, 25, 50].map(n => ({ label: 'TOP ' + n, onClick: () => this.setMk('lbTop', n), style: st.lbTop === n ? on : off })),
+    };
+  }
+  mkVals() {
+    if (!this.tape) return {};
+    const st = this.state, H = [0, 5, 10, 30, 60];
+    const on = 'background:#836EF9;color:#fff;border:1px solid #836EF9;padding:3px 8px;border-radius:4px;cursor:pointer;font-size:10px;white-space:nowrap';
+    const off = 'background:transparent;color:#8b8c95;border:1px solid rgba(255,255,255,.13);padding:3px 8px;border-radius:4px;cursor:pointer;font-size:10px;white-space:nowrap';
+    const pills = (key, opts) => opts.map(o => ({ label: o, onClick: () => this.setMk(key, o), style: st[key] === o ? on : off }));
+    const sideStyle = s => 'font-size:9px;font-weight:600;padding:1px 5px;border-radius:3px;border:1px solid ' + (s === 'BUY' ? 'rgba(53,208,160,.5)' : 'rgba(242,86,106,.5)') + ';color:' + (s === 'BUY' ? '#35D0A0' : '#F2566A');
+    const flt = f => {
+      if (st.mkSide === 'BUYS' && f.side !== 'BUY') return false;
+      if (st.mkSide === 'SELLS' && f.side !== 'SELL') return false;
+      if (st.mkProto !== 'ALL' && f.proto.toUpperCase() !== st.mkProto) return false;
+      if (st.mkSize === '\u226510K' && f.usd < 10000) return false;
+      if (st.mkSize === '\u2265100K' && f.usd < 100000) return false;
+      if (st.mkSize === '\u2265500K' && f.usd < 500000) return false;
+      if (st.clScope === 'vault' && f.proto === 'Clober') return false;
+      return true;
+    };
+    const all = this.tape.filter(flt);
+    const mkRows = all.slice(0, 52).map(f => {
+      const age = this.simT - f.bornT;
+      const cells = H.map((h, i) => { if (age < h) return { val: '\u00b7', css: 'text-align:right;color:#3a3c44' }; const v = f.mk[i]; return { val: (v >= 0 ? '+' : '') + v.toFixed(2), css: 'text-align:right;color:' + (v >= 0 ? '#35D0A0' : '#F2566A') }; });
+      return { ts: f.ts, block: f.block.toLocaleString(), tx: f.tx, to: f.to, cat: f.cat, catStyle: 'color:' + this.catCol(f.cat), proto: f.proto.toUpperCase(), protoStyle: 'color:' + this.protoCol(f.proto), pair: f.pair, pool: f.pool, side: f.side, sideStyle: sideStyle(f.side), usd: this.fmtUsd(f.usd), exec: f.execPx.toFixed(5), cells };
+    });
+    const out = this.fills24.map(f => ({ f, pnl: f.mk[0] / 1e4 * f.usd })).sort((a, b) => Math.abs(b.pnl) - Math.abs(a.pnl)).slice(0, 18).map(({ f, pnl }) => ({
+      when: f.ts.slice(0, 8), block: f.block.toLocaleString(), pair: f.pair, side: f.side, sideStyle: sideStyle(f.side), usd: this.fmtUsd(f.usd),
+      mk0: (f.mk[0] >= 0 ? '+' : '') + f.mk[0].toFixed(2), mk0Style: 'text-align:right;color:' + (f.mk[0] >= 0 ? '#35D0A0' : '#F2566A'),
+      pnl: (pnl >= 0 ? '+$' : '\u2212$') + Math.abs(pnl).toFixed(2), pnlStyle: 'text-align:right;color:' + (pnl >= 0 ? '#35D0A0' : '#F2566A'), tx: f.tx, to: f.to
+    }));
+    return {
+      mkRows, outRows: out, mkCount: all.length, mkRefresh: new Date().toISOString().slice(11, 19),
+      mkProtoPills: pills('mkProto', ['ALL', 'LFJ', 'CLOBER', 'VAULT']),
+      mkSidePills: pills('mkSide', ['ALL', 'BUYS', 'SELLS']),
+      mkSizePills: pills('mkSize', ['ANY', '\u226510K', '\u2265100K', '\u2265500K']),
+      mkPauseStyle: (st.mkPaused ? 'background:rgba(242,86,106,.16);border:1px solid rgba(242,86,106,.5);color:#F2566A' : 'background:transparent;border:1px solid rgba(255,255,255,.13);color:#8b8c95') + ';padding:3px 9px;border-radius:4px;cursor:pointer;font-size:10px',
+      mkPauseLabel: st.mkPaused ? '\u25B6 RESUME' : '\u23F8 PAUSE', togglePause: this.togglePause,
+    };
+  }
+
+  seedHistory() {
+    const n = 47, start = Date.UTC(2026, 4, 13);
+    const days = [];
+    let swaps = 0;
+    for (let i = 0; i < n; i++) {
+      const dt = new Date(start + i * 86400000);
+      const mmdd = ('0' + (dt.getUTCMonth() + 1)).slice(-2) + '-' + ('0' + dt.getUTCDate()).slice(-2);
+      const ramp = Math.min(1, i / 20);
+      let total = (0.06 + ramp * ramp * (3.2 + Math.random() * 1.8));
+      if (Math.random() < 0.13) total *= (1.5 + Math.random() * 1.5);
+      const partial = i === n - 1;
+      if (partial) total *= 0.42;
+      const sv = 0.09 + 0.16 * (i / n) + Math.random() * 0.04;
+      const sc = 0.24 + Math.random() * 0.06;
+      const vault = total * sv, clob = total * sc, lfj = total - vault - clob;
+      const sw = Math.round(total * (95 + Math.random() * 45));
+      swaps += sw;
+      days.push({ mmdd, total, lfj, clob, vault, sw, partial });
+    }
+    this.vol = { days, swaps };
+  }
+  bumpVolume() {
+    if (!this.vol) return;
+    const d = this.vol.days[this.vol.days.length - 1];
+    const add = 0.004 + Math.random() * 0.02;
+    const v = add * (0.14 + Math.random() * 0.12), c = add * (0.24 + Math.random() * 0.06), l = add - v - c;
+    d.vault += v; d.clob += c; d.lfj += l; d.total += add; d.sw += Math.round(1 + Math.random() * 2);
+    this.vol.swaps += Math.round(1 + Math.random() * 2);
+  }
+  f$(m) { return m >= 1 ? '$' + m.toFixed(2) + 'M' : '$' + (m * 1000).toFixed(0) + 'k'; }
+  volVals() {
+    if (!this.vol) return {};
+    const days = this.vol.days, nd = days.length;
+    const scope = this.state.clScope || 'venue';
+    const series = scope === 'vault'
+      ? [{ name: 'LFJ', color: '#6E8BFF', val: d => d.lfj }, { name: 'Clober \u00b7 Vault', color: '#9A88FF', val: d => d.vault }]
+      : [{ name: 'LFJ', color: '#6E8BFF', val: d => d.lfj }, { name: 'Clober', color: '#45C8E8', val: d => d.clob + d.vault }];
+    const dayTotal = d => series.reduce((a, s) => a + s.val(d), 0);
+    const grand = days.reduce((a, d) => a + d.lfj + d.clob + d.vault, 0);
+    const maxT = Math.max(...days.map(dayTotal));
+    const H = 150;
+    const volBars = days.map(d => ({ op: d.partial ? 0.5 : 1, segs: series.map(s => ({ h: (s.val(d) / maxT * H).toFixed(1), color: s.color })) }));
+    const f = m => this.f$(m);
+    const totals = series.map(s => ({ name: s.name, color: s.color, tot: days.reduce((a, d) => a + s.val(d), 0) }));
+    const allTot = totals.reduce((a, t) => a + t.tot, 0);
+    const share = x => (x / allTot * 100).toFixed(1) + '%';
+    const dTot = days.map(dayTotal);
+    const last7 = dTot.slice(-7).reduce((a, b) => a + b, 0), prev7 = dTot.slice(-14, -7).reduce((a, b) => a + b, 0);
+    const chg7 = prev7 ? (last7 - prev7) / prev7 * 100 : 0;
+    let peakV = -1, peakDay = ''; days.forEach((d, i) => { if (dTot[i] > peakV) { peakV = dTot[i]; peakDay = d.mmdd; } });
+    const todayT = dTot[nd - 1], prevT = dTot[nd - 2];
+    const todayChg = prevT ? (todayT - prevT) / prevT * 100 : 0;
+    const swaps = Math.round(this.vol.swaps * allTot / grand);
+    const W = 1000, HC = 260;
+    let cum = 0; const pts = days.map((d, i) => { cum += dTot[i]; return [i / (nd - 1) * W, cum]; });
+    const cy = y => HC - y / cum * HC;
+    const cumLine = 'M' + pts.map(p => p[0].toFixed(1) + ',' + cy(p[1]).toFixed(1)).join(' L');
+    const cumArea = cumLine + ' L' + W + ',' + HC + ' L0,' + HC + ' Z';
+    const xs = i => i / (nd - 1) * W;
+    const bands = series.map(() => ({ top: [], bot: [] }));
+    days.forEach((d, i) => { const t = dTot[i] || 1; let below = 0; for (let k = 0; k < series.length; k++) { const fr = series[k].val(d) / t; bands[k].bot.push([xs(i), HC * (1 - below)]); bands[k].top.push([xs(i), HC * (1 - below - fr)]); below += fr; } });
+    const band = (t, b) => 'M' + t.map(p => p[0].toFixed(1) + ',' + p[1].toFixed(1)).join(' L') + ' L' + b.slice().reverse().map(p => p[0].toFixed(1) + ',' + p[1].toFixed(1)).join(' L') + ' Z';
+    const msBands = series.map((s, k) => ({ path: band(bands[k].top, bands[k].bot), color: s.color }));
+    const lt = dTot[nd - 1] || 1;
+    const pPeak = s => { let pv = -1, pd = ''; days.forEach(d => { const v = s.val(d); if (v > pv) { pv = v; pd = d.mmdd; } }); return { v: f(pv), day: pd }; };
+    const brk = series.map(s => { const tot = days.reduce((a, d) => a + s.val(d), 0); const pk = pPeak(s); return { name: s.name, color: s.color, vol: f(tot), share: share(tot), shareW: (tot / allTot * 100).toFixed(1), swaps: Math.round(swaps * tot / allTot).toLocaleString(), peakV: pk.v, peakDay: pk.day, first: s.name.indexOf('Vault') >= 0 ? '2026-05-15' : '2026-05-13' }; });
+    const axis = [0, Math.floor(nd * 0.25), Math.floor(nd * 0.5), Math.floor(nd * 0.75), nd - 1].map(i => ({ label: days[i].mmdd, left: (i / (nd - 1) * 100).toFixed(1) + '%' }));
+    return {
+      volBars, volMaxLabel: f(maxT), volMidLabel: f(maxT / 2), volAxis: axis,
+      kAll: f(allTot), k7: f(last7), k7chg: (chg7 >= 0 ? '\u25B2 ' : '\u25BC ') + Math.abs(chg7).toFixed(0) + '%', k7css: 'color:' + (chg7 >= 0 ? '#35D0A0' : '#F2566A'),
+      kSwaps: swaps.toLocaleString(), kPeak: f(peakV), kPeakDay: peakDay,
+      kToday: f(todayT), kTodayChg: (todayChg >= 0 ? '\u25B2 ' : '\u25BC ') + Math.abs(todayChg).toFixed(0) + '%', kTodaycss: 'color:' + (todayChg >= 0 ? '#35D0A0' : '#F2566A'),
+      legRows: totals.map(t => ({ name: t.name, color: t.color, vol: f(t.tot), share: share(t.tot) })),
+      legTotal: f(allTot), cumLine, cumArea, cumSigma: f(allTot),
+      msBands, msTopName: series[series.length - 1].name, msTopPct: (series[series.length - 1].val(days[nd - 1]) / lt * 100).toFixed(1) + '%',
+      msBotName: series[0].name, msBotPct: (series[0].val(days[nd - 1]) / lt * 100).toFixed(1) + '%',
+      brk, brkTotalVol: f(allTot), brkTotalSwaps: swaps.toLocaleString(),
+      volScopeNote: scope === 'vault' ? 'Clober = vault (propAMM) cut' : 'Clober = whole-venue',
+    };
+  }
+
+  stepPath(ctx, arr, X, Y) { ctx.beginPath(); arr.forEach((p, i) => { const x = X(i), y = Y(p); if (!i) ctx.moveTo(x, y); else { ctx.lineTo(x, Y(arr[i - 1])); ctx.lineTo(x, y); } }); }
+  draw() {
+    this.raf = requestAnimationFrame(() => this.draw());
+    const cv = this.canvas; if (!cv) return;
+    const dpr = window.devicePixelRatio || 1;
+    const w = cv.clientWidth, h = cv.clientHeight; if (!w || !h) return;
+    if (cv.width !== Math.round(w * dpr) || cv.height !== Math.round(h * dpr)) { cv.width = Math.round(w * dpr); cv.height = Math.round(h * dpr); }
+    const ctx = cv.getContext('2d'); ctx.setTransform(dpr, 0, 0, dpr, 0, 0); ctx.clearRect(0, 0, w, h);
+    const padL = 58, padR = 10, padT = 12, padB = 22;
+    const active = this.VEN.filter(v => this.state.ven[v]);
+    if (!active.length) return;
+    let mn = Infinity, mx = -Infinity;
+    active.forEach(v => { const S = this.series[v]; S.bid.forEach(p => { mn = Math.min(mn, p); mx = Math.max(mx, p); }); S.ask.forEach(p => { mn = Math.min(mn, p); mx = Math.max(mx, p); }); });
+    if (!isFinite(mn) || mn === mx) return;
+    const pad = (mx - mn) * 0.12; mn -= pad; mx += pad;
+    const N = this.N;
+    const X = i => padL + (i / (N - 1)) * (w - padL - padR);
+    const Y = p => padT + (1 - (p - mn) / (mx - mn)) * (h - padT - padB);
+    ctx.font = '9px "JetBrains Mono", monospace';
+    ctx.lineWidth = 1;
+    for (let g = 0; g <= 4; g++) { const p = mn + (mx - mn) * g / 4; const y = Y(p); ctx.strokeStyle = 'rgba(255,255,255,0.05)'; ctx.beginPath(); ctx.moveTo(padL, y); ctx.lineTo(w - padR, y); ctx.stroke(); ctx.fillStyle = '#6b6d76'; ctx.textAlign = 'right'; ctx.fillText(p.toFixed(5), padL - 6, y + 3); }
+    ctx.textAlign = 'center';
+    for (let s = 0; s <= 60; s += 10) { const i = (1 - s / 60) * (N - 1); const x = X(i); ctx.strokeStyle = 'rgba(255,255,255,0.035)'; ctx.beginPath(); ctx.moveTo(x, padT); ctx.lineTo(x, h - padB); ctx.stroke(); ctx.fillStyle = '#5e6068'; ctx.fillText('-' + s + 's', x, h - 7); }
+    active.forEach(v => {
+      const c = this.COL[v], S = this.series[v];
+      ctx.beginPath(); S.ask.forEach((p, i) => { const x = X(i), y = Y(p); i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); });
+      for (let i = S.bid.length - 1; i >= 0; i--) ctx.lineTo(X(i), Y(S.bid[i]));
+      ctx.closePath(); ctx.fillStyle = this.hex(c, 0.05); ctx.fill();
+      ctx.lineWidth = 1.3; ctx.strokeStyle = c; ctx.setLineDash([]); this.stepPath(ctx, S.ask, X, Y); ctx.stroke();
+      ctx.lineWidth = 1; ctx.setLineDash([3, 3]); this.stepPath(ctx, S.bid, X, Y); ctx.stroke(); ctx.setLineDash([]);
+    });
+  }
+
+  renderVals() {
+    const st = this.state;
+    const pillOn = 'background:#836EF9;color:#fff;border:1px solid #836EF9;padding:4px 9px;border-radius:4px;cursor:pointer;font-size:11px;white-space:nowrap';
+    const pillOff = 'background:transparent;color:#8b8c95;border:1px solid rgba(255,255,255,.13);padding:4px 9px;border-radius:4px;cursor:pointer;font-size:11px;white-space:nowrap';
+
+    const tabs = [['exec', 'EXECUTION'], ['volume', 'VOLUME'], ['markouts', 'MARKOUTS'], ['leaderboard', 'LEADERBOARD']].map((t, i) => ({
+      id: t[0], label: t[1], num: i + 1, onClick: () => this.setState({ tab: t[0] }),
+      style: 'font-size:11px;padding:6px 12px;cursor:pointer;border-bottom:2px solid ' + (st.tab === t[0] ? '#836EF9' : 'transparent') + ';color:' + (st.tab === t[0] ? '#fff' : '#6b6d76')
+    }));
+    const pairs = this.PAIRS.map(p => ({ name: p, onClick: () => this.setSel('pair', p), style: st.pair === p ? pillOn : pillOff }));
+    const sizes = this.SIZES.map(s => ({ label: this.sizeLabel(s), onClick: () => this.setSel('size', s), style: st.size === s ? pillOn : pillOff }));
+    const venues = this.VEN.map(v => ({
+      label: v === 'Bybit' ? 'BYBIT (taker)' : v.toUpperCase(), onClick: () => this.toggleVen(v),
+      style: 'display:flex;align-items:center;gap:6px;padding:4px 9px;border-radius:4px;cursor:pointer;font-size:11px;white-space:nowrap;border:1px solid ' + (st.ven[v] ? this.hex(this.COL[v], 0.5) : 'rgba(255,255,255,.1)') + ';color:' + (st.ven[v] ? '#E6E7EA' : '#5e6068') + ';background:' + (st.ven[v] ? this.hex(this.COL[v], 0.12) : 'transparent'),
+      dot: 'width:7px;height:7px;border-radius:50%;background:' + (st.ven[v] ? this.COL[v] : '#3a3c44')
+    }));
+    const scOn = 'background:#836EF9;color:#fff;border:1px solid #836EF9;padding:3px 8px;border-radius:4px;cursor:pointer;font-size:10px;white-space:nowrap';
+    const scOff = 'background:transparent;color:#8b8c95;border:1px solid rgba(255,255,255,.13);padding:3px 8px;border-radius:4px;cursor:pointer;font-size:10px;white-space:nowrap';
+    const clScopePills = [['venue', 'WHOLE-VENUE'], ['vault', 'VAULT']].map(o => ({ label: o[1], onClick: () => this.setMk('clScope', o[0]), style: (st.clScope || 'venue') === o[0] ? scOn : scOff }));
+
+    let legend = [], depth = [], ticks = [], statRows = [];
+    if (st.tab === 'exec' && this.hs) {
+    const act = this.VEN.filter(v => st.ven[v]);
+    let leg = act.map(v => { const q = this.quoteAt(v, this.pairSel, this.sizeSel); return { name: v, color: this.COL[v], spread: q.spread, bid: q.bidBps, ask: q.askBps }; });
+    leg.sort((a, b) => a.spread - b.spread);
+    const tight = leg.length ? leg[0].name : null;
+    legend = leg.map(r => ({
+      name: r.name, color: r.color, spread: r.spread.toFixed(2), bid: this.sgn(r.bid), ask: this.sgn(r.ask),
+      starcss: 'font-size:9px;color:' + (r.name === tight ? '#35D0A0' : 'transparent'),
+      spreadcss: 'color:' + (r.name === tight ? '#35D0A0' : '#E6E7EA') + ';font-weight:600'
+    }));
+
+    const AX = 22;
+    depth = this.SIZES.map(sz => {
+      const segsBid = [], segsAsk = [];
+      act.forEach(v => {
+        const q = this.quoteAt(v, this.pairSel, sz);
+        const wb = Math.min(50, Math.abs(Math.min(0, q.bidBps)) / AX * 50);
+        const wa = Math.min(50, Math.max(0, q.askBps) / AX * 50);
+        segsBid.push({ w: wb, color: this.COL[v] });
+        segsAsk.push({ w: wa, color: this.COL[v] });
+      });
+      segsBid.sort((a, b) => b.w - a.w); segsAsk.sort((a, b) => b.w - a.w);
+      return {
+        label: this.sizeLabel(sz), rowcss: sz === this.sizeSel ? 'background:rgba(131,110,249,.06)' : '',
+        segsBid: segsBid.map(s => ({ style: 'position:absolute;top:2px;height:16px;right:50%;width:' + s.w.toFixed(2) + '%;background:' + this.hex(s.color, 0.9) + ';border-radius:2px 0 0 2px' })),
+        segsAsk: segsAsk.map(s => ({ style: 'position:absolute;top:2px;height:16px;left:50%;width:' + s.w.toFixed(2) + '%;background:' + this.hex(s.color, 0.9) + ';border-radius:0 2px 2px 0' }))
+      };
+    });
+    ticks = [-20, -15, -10, -5, 0, 5, 10, 15, 20].map(t => ({ label: (t > 0 ? '+' : '') + t, style: 'position:absolute;top:0;left:' + (50 + t / AX * 50) + '%;transform:translateX(-50%);font-size:8.5px;color:' + (t === 0 ? '#35D0A0' : '#5e6068') }));
+
+    let stats = act.map(v => { const a = this.samples[v]; return { name: v, color: this.COL[v], p5: this.pct(a, .05), p25: this.pct(a, .25), p50: this.pct(a, .5), p75: this.pct(a, .75), p95: this.pct(a, .95), avg: a.length ? a.reduce((x, y) => x + y, 0) / a.length : 0, sd: this.std(a), n: a.length }; });
+    const tstat = stats.length ? stats.reduce((m, r) => r.p50 < m.p50 ? r : m, stats[0]).name : null;
+    statRows = stats.map(r => ({
+      name: r.name, color: r.color, p5: r.p5.toFixed(3), p25: r.p25.toFixed(3), p50: r.p50.toFixed(3), p75: r.p75.toFixed(3), p95: r.p95.toFixed(3), avg: r.avg.toFixed(3), sd: r.sd.toFixed(4), n: r.n,
+      starcss: 'font-size:9px;color:' + (r.name === tstat ? '#35D0A0' : 'transparent'),
+      p50css: 'color:' + (r.name === tstat ? '#35D0A0' : '#E6E7EA') + ';font-weight:600'
+    }));
+    }
+
+    return {
+      ...(st.tab === 'volume' ? this.volVals() : {}),
+      ...(st.tab === 'markouts' ? this.mkVals() : {}),
+      ...(st.tab === 'leaderboard' ? this.lbVals() : {}),
+      tabs, pairs, sizes, venues, clScopePills, legend, depth, ticks, statRows, setCanvas: this.setCanvas,
+      block: this.block ? this.block.toLocaleString() : '\u2014',
+      clock: new Date().toISOString().slice(11, 19),
+      monPx: this.mon ? this.mon.toFixed(5) : '\u2014',
+      taker: this.takerBps.toFixed(1),
+      pairSel: this.pairSel || st.pair, sizeLabelSel: this.sizeLabel(this.sizeSel || st.size),
+      isExec: st.tab === 'exec', isVol: st.tab === 'volume', isMk: st.tab === 'markouts', isLb: st.tab === 'leaderboard',
+    };
+  }
+}
+</script>
+</body>
+</html>

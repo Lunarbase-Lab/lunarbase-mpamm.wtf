@@ -1,0 +1,10 @@
+node_modules/
+dist/
+*.log
+.env
+.env.local
+**/data/
+*.db
+*.db-*
+.DS_Store
+.vite/

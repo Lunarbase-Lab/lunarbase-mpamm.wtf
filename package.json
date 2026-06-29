@@ -1,0 +1,23 @@
+{
+  "name": "mpamm.wtf",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Real-time dashboard for prop AMMs on Monad mainnet (LFJ Liquidity Book v2.2 + Clober V2), benchmarked vs Bybit MONUSDT.",
+  "packageManager": "npm@11.6.2",
+  "workspaces": [
+    "shared",
+    "server",
+    "web"
+  ],
+  "scripts": {
+    "dev": "concurrently -n server,web -c blue,magenta \"npm:dev:server\" \"npm:dev:web\"",
+    "dev:server": "npm -w server run dev",
+    "dev:web": "npm -w web run dev",
+    "build": "npm -w web run build",
+    "typecheck": "npm -w server run typecheck && npm -w web run typecheck",
+    "start": "npm -w server run start"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.0"
+  }
+}
