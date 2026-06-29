@@ -1,0 +1,16 @@
+* { box-sizing: border-box; }
+html, body { margin: 0; background: #08090B; }
+#root {
+  background: #08090B;
+  min-height: 100vh;
+  font-family: 'JetBrains Mono', 'SF Mono', monospace;
+  color: #E6E7EA;
+  font-feature-settings: 'tnum' 1;
+  padding-bottom: 40px;
+}
+::-webkit-scrollbar { width: 9px; height: 9px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: rgba(255,255,255,.1); border-radius: 5px; }
+@keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: .25; } }
+@keyframes flashIn { 0% { background: rgba(131,110,249,.16); } 100% { background: transparent; } }
+.flash { animation: flashIn 1s ease-out; }

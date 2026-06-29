@@ -1,0 +1,186 @@
+import { useEffect, useMemo, useRef, useState } from 'react';
+import type { Fill } from '@shared';
+import { useDashboard } from '../store';
+import { C } from '../theme';
+import { Pills, SideTag } from '../components/ui';
+import { fmtUsd, clockMs, clockSec, fmtInt } from '../lib/format';
+
+const H = [0, 5, 10, 30, 60];
+const TAPE_GRID = '78px 78px 84px 84px 64px 64px 80px 88px 46px 80px 80px 52px 52px 52px 52px 52px';
+const OUT_GRID = '84px 88px 96px 56px 100px 110px 120px 1fr 1fr';
+
+/** displayProto: vault scope wins, else the protocol upper-cased. */
+function displayProto(f: Fill): string {
+  return f.scope === 'vault' ? 'VAULT' : f.protocol.toUpperCase();
+}
+function protoColor(p: string): string {
+  return p === 'LFJ' ? C.blue : p === 'CLOBER' ? C.cyan : C.purpleL;
+}
+function catColor(c: string): string {
+  return c === 'ROUTER' ? C.amber : c === 'CEX/DEX' ? C.cyan : c === 'AGG' ? C.purpleL : C.faint2;
+}
+/** category display — DIRECT renders as an em dash. */
+function catLabel(c: string): string {
+  return c === 'DIRECT' ? '—' : c;
+}
+
+export function MarkoutsTab() {
+  const d = useDashboard();
+
+  // local 1s tick so age-based markout reveal advances even when no new fills land.
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    const id = setInterval(() => setTick((t) => t + 1), 1000);
+    return () => clearInterval(id);
+  }, []);
+
+  // filtered + sorted tape (DCLogic mkVals flt), newest first, top 52.
+  const tape = useMemo(() => {
+    const flt = (f: Fill): boolean => {
+      const dp = displayProto(f);
+      if (d.mkSide === 'BUYS' && f.side !== 'buy') return false;
+      if (d.mkSide === 'SELLS' && f.side !== 'sell') return false;
+      if (d.mkProto !== 'ALL' && dp !== d.mkProto) return false;
+      if (d.mkSize === '≥10K' && f.usd < 10000) return false;
+      if (d.mkSize === '≥100K' && f.usd < 100000) return false;
+      if (d.mkSize === '≥500K' && f.usd < 500000) return false;
+      // CLOBER vault-scope toggle hides whole-venue Clober flow.
+      if (d.clScope === 'vault' && f.protocol === 'Clober' && f.scope !== 'vault') return false;
+      return true;
+    };
+    return d.fills.filter(flt).sort((a, b) => b.ts - a.ts).slice(0, 52);
+  }, [d.fills, d.mkSide, d.mkProto, d.mkSize, d.clScope]);
+
+  // freeze the displayed tape while paused: snapshot the rows when pause flips on.
+  const frozenRef = useRef<Fill[] | null>(null);
+  if (d.mkPaused) {
+    if (frozenRef.current === null) frozenRef.current = tape;
+  } else if (frozenRef.current !== null) {
+    frozenRef.current = null;
+  }
+  const rows = d.mkPaused && frozenRef.current ? frozenRef.current : tape;
+
+  // outlier feed — all fills by |mk-0s P&L| desc, top 18.
+  const outliers = useMemo(() => {
+    return d.fills
+      .map((f) => ({ f, pnl: ((f.markoutsBps[0] ?? 0) / 1e4) * f.usd }))
+      .sort((a, b) => Math.abs(b.pnl) - Math.abs(a.pnl))
+      .slice(0, 18);
+  }, [d.fills]);
+
+  return (
+    <div>
+      <div style={{ padding: '18px 18px 14px' }}>
+        <div style={{ fontSize: 14, fontWeight: 600, letterSpacing: '.06em', color: C.text }}>SWAP MARKOUTS</div>
+        <div style={{ fontSize: 11, color: C.dim3, marginTop: 6, lineHeight: 1.55, maxWidth: 880 }}>
+          On-chain swaps joined to the Bybit <span style={{ color: C.bybit }}>MONUSDT</span> reference BBO for markouts at 0 / 5 / 10 / 30 / 60 seconds.{' '}
+          <span style={{ color: C.green }}>Positive bps</span> = the taker got a favorable fill vs the CEX reference; <span style={{ color: C.red }}>negative</span> = adverse. Later horizons fill in as each swap ages past them.
+        </div>
+      </div>
+
+      {/* SWAP_TAPE */}
+      <div style={{ position: 'relative', border: `1px solid ${C.line}`, background: C.panel, margin: '0 18px 14px' }}>
+        <i style={{ position: 'absolute', top: -1, left: -1, width: 8, height: 8, borderTop: `1px solid ${C.purple}`, borderLeft: `1px solid ${C.purple}` }} />
+        <i style={{ position: 'absolute', bottom: -1, right: -1, width: 8, height: 8, borderBottom: `1px solid ${C.purple}`, borderRight: `1px solid ${C.purple}` }} />
+
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 14, flexWrap: 'wrap', padding: '9px 12px', borderBottom: `1px solid ${C.line2}` }}>
+          <div style={{ fontSize: 11, letterSpacing: '.03em' }}>
+            <span style={{ color: C.purple }}>&gt;</span>{' '}
+            <span style={{ color: C.text, fontWeight: 600 }}>SWAP_TAPE</span>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+            <Pills options={['ALL', 'LFJ', 'CLOBER', 'VAULT']} value={d.mkProto} onChange={(v) => d.set('mkProto', v)} sm />
+            <Pills options={['ALL', 'BUYS', 'SELLS']} value={d.mkSide} onChange={(v) => d.set('mkSide', v)} sm />
+            <Pills options={['ANY', '≥10K', '≥100K', '≥500K']} value={d.mkSize} onChange={(v) => d.set('mkSize', v)} sm />
+            <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+              <span style={{ fontSize: 9, color: C.faint2, letterSpacing: '.04em' }}>CLOBER</span>
+              <Pills options={[{ label: 'VENUE', value: 'venue' }, { label: 'VAULT', value: 'vault' }]} value={d.clScope} onChange={(v) => d.set('clScope', v)} sm />
+            </div>
+            <div
+              onClick={() => d.set('mkPaused', !d.mkPaused)}
+              style={{
+                padding: '3px 9px', borderRadius: 4, cursor: 'pointer', fontSize: 10, userSelect: 'none', whiteSpace: 'nowrap',
+                background: d.mkPaused ? 'rgba(242,86,106,.16)' : 'transparent',
+                border: `1px solid ${d.mkPaused ? 'rgba(242,86,106,.5)' : 'rgba(255,255,255,.13)'}`,
+                color: d.mkPaused ? C.red : C.dim2,
+              }}
+            >
+              {d.mkPaused ? '▶ RESUME' : '⏸ PAUSE'}
+            </div>
+          </div>
+        </div>
+
+        <div style={{ display: 'grid', gridTemplateColumns: TAPE_GRID, gap: '0 6px', padding: '9px 14px', fontSize: 8.5, color: C.faint2, letterSpacing: '.04em', borderBottom: `1px solid ${C.line}` }}>
+          <div>TS UTC</div><div>BLOCK</div><div>TX</div><div>TO</div><div>CATEGORY</div><div>PROTOCOL</div><div>PAIR</div><div>POOL</div><div>SIDE</div>
+          <div style={{ textAlign: 'right' }}>SIZE USD</div><div style={{ textAlign: 'right' }}>EXEC PX</div>
+          <div style={{ textAlign: 'right' }}>MK-0S</div><div style={{ textAlign: 'right' }}>MK-5S</div><div style={{ textAlign: 'right' }}>MK-10S</div><div style={{ textAlign: 'right' }}>MK-30S</div><div style={{ textAlign: 'right' }}>MK-60S</div>
+        </div>
+
+        <div style={{ maxHeight: 454, overflowY: 'auto' }}>
+          {rows.map((f) => {
+            const dp = displayProto(f);
+            const age = (Date.now() - f.ts) / 1000;
+            return (
+              <div key={f.id} style={{ display: 'grid', gridTemplateColumns: TAPE_GRID, gap: '0 6px', padding: '6px 14px', fontSize: 10.5, borderBottom: `1px solid ${C.hair}`, alignItems: 'center' }}>
+                <div style={{ color: C.faint }}>{clockMs(f.ts)}</div>
+                <div style={{ color: C.dim3 }}>{fmtInt(f.blockNumber)}</div>
+                <div style={{ color: C.blue }}>{f.txHash}</div>
+                <div style={{ color: C.faint2 }}>{f.to}</div>
+                <div style={{ color: catColor(f.category), fontSize: 9 }}>{catLabel(f.category)}</div>
+                <div style={{ color: protoColor(dp), fontWeight: 600 }}>{dp}</div>
+                <div style={{ color: C.text2 }}>{f.market}</div>
+                <div style={{ color: C.faint2 }}>{f.pool}</div>
+                <div><SideTag side={f.side} /></div>
+                <div style={{ textAlign: 'right', color: C.text }}>{fmtUsd(f.usd)}</div>
+                <div style={{ textAlign: 'right', color: C.dim }}>{f.execPx.toFixed(5)}</div>
+                {H.map((h, i) => {
+                  const v = f.markoutsBps[i];
+                  if (age < h || v == null) return <div key={h} style={{ textAlign: 'right', color: C.ghost }}>{'·'}</div>;
+                  return <div key={h} style={{ textAlign: 'right', color: v >= 0 ? C.green : C.red }}>{(v >= 0 ? '+' : '') + v.toFixed(2)}</div>;
+                })}
+              </div>
+            );
+          })}
+        </div>
+
+        <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 14px', borderTop: `1px solid ${C.line2}`, fontSize: 9, color: C.faint2 }}>
+          <span>showing {rows.length} rows</span><span>last refresh {clockSec()}</span>
+        </div>
+      </div>
+
+      {/* OUTLIER_FEED */}
+      <div style={{ position: 'relative', border: `1px solid ${C.line}`, background: C.panel, margin: '0 18px 14px' }}>
+        <i style={{ position: 'absolute', top: -1, left: -1, width: 8, height: 8, borderTop: `1px solid ${C.purple}`, borderLeft: `1px solid ${C.purple}` }} />
+        <i style={{ position: 'absolute', bottom: -1, right: -1, width: 8, height: 8, borderBottom: `1px solid ${C.purple}`, borderRight: `1px solid ${C.purple}` }} />
+
+        <div style={{ padding: '9px 12px', borderBottom: `1px solid ${C.line2}`, fontSize: 11, letterSpacing: '.03em' }}>
+          <span style={{ color: C.red }}>!</span>{' '}
+          <span style={{ color: C.text, fontWeight: 600 }}>OUTLIER_FEED</span>{' '}
+          <span style={{ color: C.faint }}>sorted by |mk-0s P&amp;L| desc &middot; last 24h</span>
+        </div>
+
+        <div style={{ display: 'grid', gridTemplateColumns: OUT_GRID, gap: '0 8px', padding: '9px 14px', fontSize: 8.5, color: C.faint2, letterSpacing: '.04em', borderBottom: `1px solid ${C.line}` }}>
+          <div>WHEN</div><div>BLOCK</div><div>PAIR</div><div>SIDE</div>
+          <div style={{ textAlign: 'right' }}>USD</div><div style={{ textAlign: 'right' }}>MK-0S (BPS)</div><div style={{ textAlign: 'right' }}>MK-0S P&amp;L</div><div>TX</div><div>TO</div>
+        </div>
+
+        {outliers.map(({ f, pnl }) => {
+          const mk0 = f.markoutsBps[0] ?? 0;
+          return (
+            <div key={f.id} style={{ display: 'grid', gridTemplateColumns: OUT_GRID, gap: '0 8px', padding: '7px 14px', fontSize: 10.5, borderBottom: `1px solid ${C.hair}`, alignItems: 'center' }}>
+              <div style={{ color: C.faint }}>{clockMs(f.ts).slice(0, 8)}</div>
+              <div style={{ color: C.dim3 }}>{fmtInt(f.blockNumber)}</div>
+              <div style={{ color: C.text2 }}>{f.market}</div>
+              <div><SideTag side={f.side} /></div>
+              <div style={{ textAlign: 'right', color: C.text }}>{fmtUsd(f.usd)}</div>
+              <div style={{ textAlign: 'right', color: mk0 >= 0 ? C.green : C.red }}>{(mk0 >= 0 ? '+' : '') + mk0.toFixed(2)}</div>
+              <div style={{ textAlign: 'right', color: pnl >= 0 ? C.green : C.red, fontWeight: 600 }}>{(pnl >= 0 ? '+$' : '−$') + Math.abs(pnl).toFixed(2)}</div>
+              <div style={{ color: C.blue }}>{f.txHash}</div>
+              <div style={{ color: C.faint2 }}>{f.to}</div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
