@@ -1,5 +1,5 @@
 import type { QuoteRow, Fill, Side } from '@shared';
-import { ADDR, TOKENS } from '@shared';
+import { ADDR, TOKENS, isMonAddress, isMonSymbol } from '@shared';
 import { publicClient, getLogsChunked } from '../chain/rpc.js';
 import { bookViewerAbi, bookManagerAbi, liquidityVaultAbi, CLOBER_MIN_PRICE } from '../chain/abis.js';
 import { fromUnits, toUnits, nextId, shortHex } from '../util.js';
@@ -17,6 +17,9 @@ import type { UsdPricer } from '../pricer.js';
  */
 
 const ZERO = '0x0000000000000000000000000000000000000000';
+/** Round-trip spread (bps) above which a Clober book is treated as not a real
+ *  executable market (stale/dormant) and excluded from the exec comparison. */
+const MAX_QUOTE_SPREAD_BPS = 1000;
 
 export interface CloberBook {
   bookId: bigint;
@@ -80,12 +83,11 @@ export async function discoverClober(lookback = 4000): Promise<{ books: Map<stri
   const markets: CloberMarket[] = [];
   for (const t of Object.values(TOKENS).filter((x) => x.stable)) {
     const market = `MON/${t.symbol}`;
-    const mon = TOKENS.WMON.address.toLowerCase();
     const st = t.address.toLowerCase();
     let monBase: CloberBook | undefined, stableBase: CloberBook | undefined;
     for (const b of books.values()) {
-      if (b.base === mon && b.quote === st) monBase ??= b;
-      if (b.base === st && b.quote === mon) stableBase ??= b;
+      if (isMonAddress(b.base) && b.quote === st) monBase ??= b;
+      if (b.base === st && isMonAddress(b.quote)) stableBase ??= b;
     }
     if (monBase || stableBase) markets.push({ market, stable: t.symbol, monBase, stableBase });
   }
@@ -103,7 +105,6 @@ export async function discoverClober(lookback = 4000): Promise<{ books: Map<stri
 export async function discoverCloberViaSubgraph(
   url: string,
 ): Promise<{ books: Map<string, CloberBook>; markets: CloberMarket[]; vault: Set<string> }> {
-  const mon = TOKENS.WMON.address.toLowerCase();
   const addrs = Object.values(TOKENS).map((t) => `"${t.address.toLowerCase()}"`).join(',');
   const query = `{ books(first: 500, where: { base_in: [${addrs}], quote_in: [${addrs}] }) { id unitSize base { id } quote { id } pool { id } } }`;
   const res = await fetch(url, {
@@ -119,7 +120,8 @@ export async function discoverCloberViaSubgraph(
   for (const r of rows) {
     const base = String(r.base.id).toLowerCase();
     const quote = String(r.quote.id).toLowerCase();
-    if (base !== mon && quote !== mon) continue; // MON markets only (skip stable/stable)
+    // keep exactly MON/stable: one side MON (WMON or native), the other a stable
+    if (isMonAddress(base) === isMonAddress(quote)) continue;
     const id = String(BigInt(r.id));
     const isVault = !!r.pool;
     if (isVault) vault.add(id);
@@ -134,8 +136,9 @@ export async function discoverCloberViaSubgraph(
     const st = t.address.toLowerCase();
     let monBase: CloberBook | undefined, stableBase: CloberBook | undefined;
     for (const b of books.values()) {
-      if (b.base === mon && b.quote === st) monBase ??= b;
-      if (b.base === st && b.quote === mon) stableBase ??= b;
+      // when multiple books match a direction, prefer the vault (propAMM) book
+      if (isMonAddress(b.base) && b.quote === st && (!monBase || (b.isVault && !monBase.isVault))) monBase = b;
+      if (b.base === st && isMonAddress(b.quote) && (!stableBase || (b.isVault && !stableBase.isVault))) stableBase = b;
     }
     if (monBase || stableBase) markets.push({ market: `MON/${t.symbol}`, stable: t.symbol, monBase, stableBase });
   }
@@ -147,18 +150,21 @@ export async function quoteClober(
   markets: CloberMarket[], sizesUsd: readonly number[], monUsd: number, pricer: UsdPricer,
 ): Promise<QuoteRow[]> {
   if (!markets.length || monUsd <= 0) return [];
-  type Leg = { market: string; size: number; side: Side; book: CloberBook; inDec: number; outDec: number; vault: boolean };
+  type Leg = { market: string; size: number; side: Side; book: CloberBook; inDec: number; outDec: number; venue: 'Clober' | 'Vault' };
   const legs: Leg[] = [];
   for (const m of markets) {
     const stable = tokenBySym(m.stable);
+    // venue is decided per market (not per leg) so a market's bid + ask land in
+    // the same row; a market backed by vault books surfaces as the Vault venue.
+    const venue: 'Clober' | 'Vault' = (m.monBase?.isVault || m.stableBase?.isVault) ? 'Vault' : 'Clober';
     for (const size of sizesUsd) {
       if (m.monBase) {
         // SELL MON: spend base(MON) → take quote(stable)
-        legs.push({ market: m.market, size, side: 'sell', book: m.monBase, inDec: TOKENS.WMON.decimals, outDec: stable.decimals, vault: m.monBase.isVault });
+        legs.push({ market: m.market, size, side: 'sell', book: m.monBase, inDec: TOKENS.WMON.decimals, outDec: stable.decimals, venue });
       }
       if (m.stableBase) {
         // BUY MON: spend base(stable) → take quote(MON)
-        legs.push({ market: m.market, size, side: 'buy', book: m.stableBase, inDec: stable.decimals, outDec: TOKENS.WMON.decimals, vault: m.stableBase.isVault });
+        legs.push({ market: m.market, size, side: 'buy', book: m.stableBase, inDec: stable.decimals, outDec: TOKENS.WMON.decimals, venue });
       }
     }
   }
@@ -189,7 +195,7 @@ export async function quoteClober(
     // px = stable per MON
     const px = l.side === 'sell' ? takenH / spentH : spentH / takenH;
     const bps = (px / monUsd - 1) * 1e4;
-    const venue = l.vault ? 'Vault' : 'Clober';
+    const venue = l.venue;
     const key = `${venue}|${l.market}|${l.size}`;
     let row = rowByKey.get(key);
     if (!row) {
@@ -199,7 +205,11 @@ export async function quoteClober(
     if (l.side === 'buy') { row.askBps = bps; row.askPx = px; } else { row.bidBps = bps; row.bidPx = px; }
   }
   for (const row of rowByKey.values()) row.spreadBps = row.askBps - row.bidBps;
-  return [...rowByKey.values()].filter((r) => r.askPx > 0 && r.bidPx > 0);
+  // Exclude non-executable books from the exec comparison: a book whose round-
+  // trip spread is absurd (a stale/dormant vault resting orders at far ticks —
+  // e.g. ask 2.5× / bid 0.09× mid) has no real two-sided liquidity to compare.
+  // Its historical activity still shows in the Volume tab.
+  return [...rowByKey.values()].filter((r) => r.askPx > 0 && r.bidPx > 0 && r.spreadBps < MAX_QUOTE_SPREAD_BPS);
 }
 
 /** Decode a Clober Take into a Fill. Quote leg is EXACT = unit * unitSize
@@ -218,11 +228,11 @@ export function decodeCloberTake(
   const quoteDec = TOKENS[quoteSym]?.decimals ?? 18;
   const quoteAmount = fromUnits(quoteAmountRaw, quoteDec);
 
-  // market is MON/<stable>; usd from the stable leg
-  const stableSym = quoteSym !== 'WMON' ? quoteSym : baseSym;
-  const monIsBase = baseSym === 'WMON';
-  const market = stableSym && stableSym !== 'WMON' ? `MON/${stableSym}` : 'MON/USDC';
-  const usd = quoteSym === 'WMON' ? quoteAmount * monUsd : quoteAmount;
+  // market is MON/<stable>; usd from the stable leg (MON = WMON or native MON)
+  const stableSym = isMonSymbol(quoteSym) ? baseSym : quoteSym;
+  const monIsBase = isMonSymbol(baseSym);
+  const market = stableSym && !isMonSymbol(stableSym) ? `MON/${stableSym}` : 'MON/USDC';
+  const usd = isMonSymbol(quoteSym) ? quoteAmount * monUsd : quoteAmount;
   if (usd <= 0) return null;
 
   // a Take consumes the resting side; tick>0 side heuristic for buy/sell

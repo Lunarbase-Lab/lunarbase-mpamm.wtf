@@ -65,13 +65,37 @@ export interface TokenInfo {
   stable: boolean;
 }
 
+/**
+ * MON has two on-chain representations and venues differ (spec §8, §9.4):
+ *  - LFJ (ERC-20 AMM) pairs use the WMON wrapper.
+ *  - Clober (V4-style) books + the LiquidityVault use NATIVE MON (the zero
+ *    address, via isNative()).
+ * Both are the same asset (same price, 18 decimals). Treat them as MON.
+ */
+export const NATIVE_MON = '0x0000000000000000000000000000000000000000';
+export const WMON_ADDRESS = '0x3bd359c1119da7da1d913d1c4d2b7c461115433a';
+
 export const TOKENS: Record<string, TokenInfo> = {
   USDC: { symbol: 'USDC', address: '0x754704bc059f8c67012fed69bc8a327a5aafb603', decimals: 6, stable: true },
   USDT0: { symbol: 'USDT0', address: '0xe7cd86e13ac4309349f30b3435a9d337750fc82d', decimals: 6, stable: true },
   AUSD: { symbol: 'AUSD', address: '0x00000000efe302beaa2b3e6e1b18d08d69a9012a', decimals: 6, stable: true },
   USD1: { symbol: 'USD1', address: '0x111111d2bf19e43c34263401e0cad979ed1cdb61', decimals: 18, stable: true },
-  WMON: { symbol: 'WMON', address: '0x3bd359c1119da7da1d913d1c4d2b7c461115433a', decimals: 18, stable: false },
+  WMON: { symbol: 'WMON', address: WMON_ADDRESS, decimals: 18, stable: false },
+  MON: { symbol: 'MON', address: NATIVE_MON, decimals: 18, stable: false },
 };
+
+/** A set of every token address that denotes MON (WMON wrapper + native MON). */
+export const MON_ADDRESSES: ReadonlySet<string> = new Set([WMON_ADDRESS.toLowerCase(), NATIVE_MON]);
+
+/** True if `addr` denotes MON in either representation. */
+export function isMonAddress(addr: string): boolean {
+  return MON_ADDRESSES.has(addr.toLowerCase());
+}
+
+/** True if a token symbol denotes MON (WMON or native MON). */
+export function isMonSymbol(sym: string | undefined): boolean {
+  return sym === 'WMON' || sym === 'MON';
+}
 
 /** v1 pair universe — MON vs USD stables (spec D5). */
 export const MARKETS = ['MON/USDC', 'MON/USDT0', 'MON/AUSD', 'MON/USD1'] as const;
