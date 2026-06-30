@@ -64,6 +64,19 @@ export function startServer(source: DataSource): Server {
   };
   source.on('message', onMessage);
 
+  // Fail cleanly on a listen error (e.g. another instance already on this port)
+  // instead of crashing with an unhandled 'error' event.
+  const onFatal = (err: NodeJS.ErrnoException) => {
+    if (err.code === 'EADDRINUSE') {
+      console.error(`[mpamm] API_PORT ${config.port} is already in use — another instance is running, or set API_PORT to a free port.`);
+    } else {
+      console.error('[mpamm] server error:', err.message);
+    }
+    process.exit(1);
+  };
+  httpServer.on('error', onFatal);
+  wss.on('error', onFatal);
+
   httpServer.listen(config.port, () => {
     console.log(`[mpamm] ${source.mode} source · http://localhost:${config.port} · ws ${STREAM_PATH}`);
   });
