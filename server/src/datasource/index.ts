@@ -16,6 +16,8 @@ export interface DataSource {
   getQuotes(): QuoteSnapshot;
   getFills(): Fill[];
   getVolume(): DailyVolume[];
+  /** Historical fills query (DB-backed for live, in-memory for sim). */
+  queryFills(opts: { sinceMs?: number; limit?: number }): Fill[];
   on(ev: 'message', cb: (m: StreamMessage) => void): this;
   off(ev: 'message', cb: (m: StreamMessage) => void): this;
 }
@@ -28,6 +30,14 @@ export abstract class BaseSource extends EventEmitter implements DataSource {
   abstract getQuotes(): QuoteSnapshot;
   abstract getFills(): Fill[];
   abstract getVolume(): DailyVolume[];
+
+  /** Default: filter the in-memory window. Live overrides with a DB query. */
+  queryFills(opts: { sinceMs?: number; limit?: number }): Fill[] {
+    const { sinceMs, limit = 1000 } = opts;
+    let fills = this.getFills();
+    if (sinceMs != null) fills = fills.filter((f) => f.ts >= sinceMs);
+    return [...fills].sort((a, b) => b.ts - a.ts).slice(0, limit);
+  }
 
   protected emitMsg(m: StreamMessage): void {
     this.emit('message', m);

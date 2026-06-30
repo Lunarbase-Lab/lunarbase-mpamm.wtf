@@ -1,12 +1,14 @@
 import { DatabaseSync } from 'node:sqlite';
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
-import type { DailyVolume } from '@shared';
+import type { DailyVolume, Fill } from '@shared';
 
 /**
- * SQLite persistence for closed daily-volume buckets (spec §6.2). v1 storage is
- * a single-writer service with low cardinality. Live state stays in memory;
- * only DailyVolume is persisted so history survives restarts.
+ * SQLite persistence (spec §6.2). The DB is the source of truth for history:
+ * daily-volume aggregates + the lastProcessedBlock cursor, and decoded fills
+ * (the tape/markouts/leaderboard are expensive to re-derive — log decode + a
+ * Bybit-mid join — so they're stored, not just held in a live window). The
+ * current quote matrix stays in memory (replace-on-poll, cheap to refetch).
  */
 export class VolumeStore {
   private db: DatabaseSync;
@@ -27,6 +29,25 @@ export class VolumeStore {
         key   TEXT PRIMARY KEY,
         value TEXT
       );
+      CREATE TABLE IF NOT EXISTS fills (
+        id           TEXT PRIMARY KEY,
+        ts           INTEGER NOT NULL,
+        block_number INTEGER NOT NULL,
+        protocol     TEXT NOT NULL,
+        source       TEXT NOT NULL,
+        scope        TEXT NOT NULL,
+        market       TEXT NOT NULL,
+        side         TEXT NOT NULL,
+        category     TEXT NOT NULL,
+        usd          REAL NOT NULL,
+        base_amount  REAL NOT NULL,
+        exec_px      REAL NOT NULL,
+        tx_hash      TEXT NOT NULL,
+        to_label     TEXT NOT NULL,
+        pool         TEXT NOT NULL,
+        markouts_bps TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS fills_ts ON fills (ts);
     `);
   }
 
@@ -63,5 +84,54 @@ export class VolumeStore {
     }));
   }
 
+  // ── fills ─────────────────────────────────────────────────────────────────
+  /** Insert/refresh fills (markouts mutate as a fill ages) in one transaction. */
+  upsertFills(fills: Fill[]): void {
+    if (!fills.length) return;
+    const stmt = this.db.prepare(`
+      INSERT INTO fills (id, ts, block_number, protocol, source, scope, market, side, category, usd, base_amount, exec_px, tx_hash, to_label, pool, markouts_bps)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET markouts_bps = excluded.markouts_bps`);
+    this.db.exec('BEGIN');
+    try {
+      for (const f of fills) {
+        stmt.run(f.id, f.ts, f.blockNumber, f.protocol, f.source, f.scope, f.market, f.side, f.category,
+          f.usd, f.baseAmount, f.execPx, f.txHash, f.to, f.pool, JSON.stringify(f.markoutsBps));
+      }
+      this.db.exec('COMMIT');
+    } catch (e) {
+      this.db.exec('ROLLBACK');
+      throw e;
+    }
+  }
+
+  /** Most recent fills, oldest-first (ready to use as an in-memory ring). */
+  recentFills(limit: number): Fill[] {
+    const rows = this.db.prepare(`SELECT * FROM fills ORDER BY ts DESC LIMIT ?`).all(limit) as Array<Record<string, any>>;
+    return rows.map(rowToFill).reverse();
+  }
+
+  /** Fills since `sinceMs` (epoch ms), newest-first, capped at `limit`. */
+  fillsSince(sinceMs: number, limit: number): Fill[] {
+    const rows = this.db.prepare(`SELECT * FROM fills WHERE ts >= ? ORDER BY ts DESC LIMIT ?`).all(sinceMs, limit) as Array<Record<string, any>>;
+    return rows.map(rowToFill);
+  }
+
+  /** Drop fills older than `beforeMs` (retention). Returns rows removed. */
+  pruneFills(beforeMs: number): number {
+    const info = this.db.prepare(`DELETE FROM fills WHERE ts < ?`).run(beforeMs);
+    return Number(info.changes);
+  }
+
   close(): void { this.db.close(); }
+}
+
+function rowToFill(r: Record<string, any>): Fill {
+  return {
+    id: r.id, ts: r.ts, blockNumber: r.block_number,
+    protocol: r.protocol, source: r.source, scope: r.scope, market: r.market, side: r.side, category: r.category,
+    usd: r.usd, baseAmount: r.base_amount, execPx: r.exec_px,
+    txHash: r.tx_hash, to: r.to_label, pool: r.pool,
+    markoutsBps: JSON.parse(r.markouts_bps),
+  };
 }

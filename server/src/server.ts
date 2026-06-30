@@ -31,8 +31,11 @@ export function startServer(source: DataSource): Server {
 
   app.get('/api/quotes', (_req, res) => res.json(source.getQuotes()));
   app.get('/api/fills', (req, res) => {
-    const limit = Math.min(Number(req.query.limit) || 400, 1000);
-    res.json(source.getFills().slice(-limit));
+    // ?days=N → last N days (from the persisted store); ?limit caps the count.
+    const days = Number(req.query.days);
+    const sinceMs = Number.isFinite(days) && days > 0 ? Date.now() - days * 86_400_000 : undefined;
+    const limit = Math.min(Number(req.query.limit) || 1000, 50_000);
+    res.json(source.queryFills({ sinceMs, limit }));
   });
   app.get('/api/volume', (_req, res) => {
     // both scopes are carried per-row (cloberVenue / cloberVault); the client

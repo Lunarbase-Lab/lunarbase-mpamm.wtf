@@ -1,8 +1,15 @@
-import type { MarketsResponse, StreamMessage } from '@shared';
+import type { MarketsResponse, StreamMessage, Fill } from '@shared';
 
 export async function fetchMarkets(): Promise<MarketsResponse> {
   const r = await fetch('/api/markets');
   if (!r.ok) throw new Error(`/api/markets ${r.status}`);
+  return r.json();
+}
+
+/** Historical fills window (persisted) for the tape / markouts / leaderboard. */
+export async function fetchFills(days = 30, limit = 20000): Promise<Fill[]> {
+  const r = await fetch(`/api/fills?days=${days}&limit=${limit}`);
+  if (!r.ok) throw new Error(`/api/fills ${r.status}`);
   return r.json();
 }
 

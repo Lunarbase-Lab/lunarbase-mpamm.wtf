@@ -42,6 +42,7 @@ export class LiveDataSource extends BaseSource {
   private days: DailyVolume[] = [];
   private fills: Fill[] = [];
   private pending = new Set<Fill>();
+  private dirty = new Set<Fill>();
   private midHist: { t: number; mid: number }[] = [];
   private lastBlock = 0n;
   private timer?: ReturnType<typeof setInterval>;
@@ -98,6 +99,9 @@ export class LiveDataSource extends BaseSource {
   private async initHistory(): Promise<void> {
     // 1. authoritative persisted history
     this.days = this.store.all();
+    // load recent fills for live serving; drop rows past the retention window
+    this.store.pruneFills(Date.now() - config.fillsRetentionDays * 86_400_000);
+    this.fills = this.store.recentFills(400);
 
     // 2. refresh closed Clober days from the subgraph (cheap deep-history seed)
     const today = utcDay();
@@ -140,7 +144,13 @@ export class LiveDataSource extends BaseSource {
       this.store.upsertMany(this.days);
       this.store.setMeta('lastProcessedBlock', String(this.lastBlock));
       this.store.setMeta('lastProcessedDay', utcDay());
+      if (this.dirty.size) { this.store.upsertFills([...this.dirty]); this.dirty.clear(); }
     } catch { /* non-fatal */ }
+  }
+
+  /** Historical fills from the DB (the leaderboard/markouts query real windows). */
+  queryFills(opts: { sinceMs?: number; limit?: number }): Fill[] {
+    return this.store.fillsSince(opts.sinceMs ?? 0, Math.min(opts.limit ?? 1000, 50_000));
   }
 
   // ── poll loop ───────────────────────────────────────────────────────────────
@@ -234,6 +244,7 @@ export class LiveDataSource extends BaseSource {
     this.fills.push(f);
     if (this.fills.length > 400) this.fills.shift();
     this.pending.add(f);
+    this.dirty.add(f);
     const d = this.today();
     if (f.protocol === 'LFJ') d.lfj += f.usd;
     else { d.cloberVenue += f.usd; if (f.scope === 'vault') d.cloberVault += f.usd; }
@@ -255,7 +266,7 @@ export class LiveDataSource extends BaseSource {
         f.markoutsBps[i] = mid <= 0 || f.execPx <= 0 ? 0 : ss * (mid / f.execPx - 1) * 1e4;
         changed = true;
       }
-      if (changed) this.emitMsg({ ch: 'fill', data: f });
+      if (changed) { this.dirty.add(f); this.emitMsg({ ch: 'fill', data: f }); }
       if (complete) this.pending.delete(f);
     }
   }

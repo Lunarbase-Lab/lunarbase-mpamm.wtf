@@ -3,10 +3,11 @@ import type { Fill } from '@shared';
 import { useDashboard } from '../store';
 import { C, hexA } from '../theme';
 import { Pills, SideTag } from '../components/ui';
-import { fmtUsd, fmtAmt, fmtInt, pnlFmt, percentile, sparkPath, humanAge } from '../lib/format';
+import { fmtUsd, fmtAmt, fmtInt, pnlFmt, percentile, sparkPath, humanAge, shortHex } from '../lib/format';
 
 const HZ_IDX: Record<string, number> = { 'T+0S': 0, 'T+10S': 2, 'T+30S': 3, 'T+60S': 4 };
-const WIN_F: Record<string, number> = { '24H': 1, '7D': 5.6, '30D': 22 };
+const DAY = 86_400_000;
+const WIN_MS: Record<string, number> = { '24H': DAY, '7D': 7 * DAY, '30D': 30 * DAY };
 
 // PROTOCOL display name + colour (DCLogic.protoCol against the displayProto).
 function displayProto(f: Fill): string {
@@ -35,8 +36,14 @@ export function LeaderboardTab() {
   const { lbWin, lbShow, lbGroup, lbHz, lbMk, lbWinners, lbTop } = d;
 
   const hzIdx = HZ_IDX[lbHz] ?? 0;
-  const winF = WIN_F[lbWin] ?? 1;
   const sign = lbMk === 'MAKER' ? -1 : 1;
+
+  // real time-window slice over the persisted fills (no extrapolation).
+  const windowed = useMemo(() => {
+    const since = Date.now() - (WIN_MS[lbWin] ?? WIN_MS['24H']);
+    return fills.filter((f) => f.ts >= since);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fills, lbWin, d.frame]);
 
   // PROTOCOL_LEADERBOARD rows — grouped + percentiled per DCLogic.lbVals().
   const lbRows = useMemo(() => {
@@ -51,19 +58,19 @@ export function LeaderboardTab() {
           : C.purpleL;
 
     const groups: Record<string, Fill[]> = {};
-    for (const f of fills) {
+    for (const f of windowed) {
       const k = keyFn(f);
       (groups[k] = groups[k] ?? []).push(f);
     }
     let arr = Object.entries(groups).map(([k, fs]) => {
-      const vol = fs.reduce((a, f) => a + f.usd, 0) * winF;
+      const vol = fs.reduce((a, f) => a + f.usd, 0);
       const mks = fs.map((f) => sign * (f.markoutsBps[hzIdx] ?? 0));
-      const pnl = fs.reduce((a, f) => a + (sign * (f.markoutsBps[hzIdx] ?? 0)) / 1e4 * f.usd, 0) * winF;
+      const pnl = fs.reduce((a, f) => a + (sign * (f.markoutsBps[hzIdx] ?? 0)) / 1e4 * f.usd, 0);
       const ord = [...fs].sort((a, b) => a.ts - b.ts);
       let c = 0;
       const sp = ord.map((f) => { c += (sign * (f.markoutsBps[hzIdx] ?? 0)) / 1e4 * f.usd; return c; });
       return {
-        name: k, color: colorFor(k), vol, swaps: Math.round(fs.length * winF),
+        name: k, color: colorFor(k), vol, swaps: fs.length,
         p5: percentile(mks, .05), p25: percentile(mks, .25), p50: percentile(mks, .5),
         p75: percentile(mks, .75), p95: percentile(mks, .95), pnl, sp,
       };
@@ -72,11 +79,11 @@ export function LeaderboardTab() {
     arr = arr.slice(0, 12);
     return arr;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [fills, lbGroup, lbHz, lbMk, lbWin, d.frame]);
+  }, [windowed, lbGroup, lbHz, lbMk, d.frame]);
 
   // TOP_SWAPS rows — biggest single-swap winners/losers per DCLogic.lbVals().
   const topRows = useMemo(() => {
-    let tsw = fills.map((f) => {
+    let tsw = windowed.map((f) => {
       const mk = sign * (f.markoutsBps[hzIdx] ?? 0);
       return { f, mk, pnl: mk / 1e4 * f.usd };
     });
@@ -85,7 +92,7 @@ export function LeaderboardTab() {
       : tsw.filter((x) => x.pnl < 0).sort((a, b) => a.pnl - b.pnl);
     return tsw.slice(0, lbTop);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [fills, lbHz, lbMk, lbWinners, lbTop, d.frame]);
+  }, [windowed, lbHz, lbMk, lbWinners, lbTop, d.frame]);
 
   // percentile cell — '+'/'' + toFixed(2), green > 0.02 / red < -0.02 / dim.
   const pcell = (v: number) => ({
@@ -212,7 +219,7 @@ export function LeaderboardTab() {
                 <div style={{ color: C.faint2 }}>{String(i + 1).padStart(2, '0')}</div>
                 <div style={{ color: C.dim3 }}>{fmtInt(f.blockNumber)}</div>
                 <div style={{ color: C.faint2 }}>{humanAge((Date.now() - f.ts) / 1000)}</div>
-                <div style={{ color: C.blue }}>{f.txHash}</div>
+                <div style={{ color: C.blue }}>{shortHex(f.txHash)}</div>
                 <div style={{ color: C.dim3, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{f.to}</div>
                 <div style={{ color: catCol(f.category), fontSize: 9 }}>{catLabel(f.category)}</div>
                 <div style={{ color: C.faint2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{f.pool}</div>

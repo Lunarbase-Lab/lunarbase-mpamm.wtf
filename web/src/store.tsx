@@ -1,6 +1,6 @@
 import { createContext, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import type { MarketState, QuoteSnapshot, QuoteRow, Fill, DailyVolume, Venue } from '@shared';
-import { fetchMarkets, connectStream } from './lib/api';
+import { fetchMarkets, fetchFills, connectStream } from './lib/api';
 
 export const VENUES: Venue[] = ['LFJ', 'Clober', 'Vault', 'Bybit'];
 export type Tab = 'exec' | 'volume' | 'markouts' | 'leaderboard';
@@ -121,9 +121,15 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
     const mounted = { v: true };
     const loadSnapshot = async () => {
       try {
-        const m = await fetchMarkets();
+        // markets snapshot + the persisted historical fills window (the tape /
+        // markouts / leaderboard operate on real history, not a live buffer).
+        const [m, hist] = await Promise.all([
+          fetchMarkets(),
+          fetchFills(30, 20000).catch(() => null),
+        ]);
         if (!mounted.v) return;
-        setState(m.state); setQuotes(m.quotes); setVolume(m.volume); setFills(m.fills);
+        setState(m.state); setQuotes(m.quotes); setVolume(m.volume);
+        setFills(hist && hist.length ? hist : m.fills);
         quotesRef.current = m.quotes;
         reseed();
         setFrame((f) => f + 1);
@@ -172,6 +178,6 @@ function upsertFill(fills: Fill[], f: Fill): Fill[] {
     return next;
   }
   const next = [...fills, f];
-  if (next.length > 400) next.shift();
+  if (next.length > 50000) next.shift();
   return next;
 }

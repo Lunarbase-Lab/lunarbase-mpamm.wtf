@@ -3,7 +3,7 @@ import type { Fill } from '@shared';
 import { useDashboard } from '../store';
 import { C } from '../theme';
 import { Pills, SideTag } from '../components/ui';
-import { fmtUsd, clockMs, clockSec, fmtInt } from '../lib/format';
+import { fmtUsd, clockMs, clockSec, fmtInt, shortHex } from '../lib/format';
 
 const H = [0, 5, 10, 30, 60];
 const TAPE_GRID = '78px 78px 84px 84px 64px 64px 80px 88px 46px 80px 80px 52px 52px 52px 52px 52px';
@@ -60,9 +60,11 @@ export function MarkoutsTab() {
   }
   const rows = d.mkPaused && frozenRef.current ? frozenRef.current : tape;
 
-  // outlier feed — all fills by |mk-0s P&L| desc, top 18.
+  // outlier feed — last 24h by |mk-0s P&L| desc, top 18.
   const outliers = useMemo(() => {
+    const since = Date.now() - 86_400_000;
     return d.fills
+      .filter((f) => f.ts >= since)
       .map((f) => ({ f, pnl: ((f.markoutsBps[0] ?? 0) / 1e4) * f.usd }))
       .sort((a, b) => Math.abs(b.pnl) - Math.abs(a.pnl))
       .slice(0, 18);
@@ -124,7 +126,7 @@ export function MarkoutsTab() {
               <div key={f.id} style={{ display: 'grid', gridTemplateColumns: TAPE_GRID, gap: '0 6px', padding: '6px 14px', fontSize: 10.5, borderBottom: `1px solid ${C.hair}`, alignItems: 'center' }}>
                 <div style={{ color: C.faint }}>{clockMs(f.ts)}</div>
                 <div style={{ color: C.dim3 }}>{fmtInt(f.blockNumber)}</div>
-                <div style={{ color: C.blue }}>{f.txHash}</div>
+                <div style={{ color: C.blue }}>{shortHex(f.txHash)}</div>
                 <div style={{ color: C.faint2 }}>{f.to}</div>
                 <div style={{ color: catColor(f.category), fontSize: 9 }}>{catLabel(f.category)}</div>
                 <div style={{ color: protoColor(dp), fontWeight: 600 }}>{dp}</div>
@@ -175,7 +177,7 @@ export function MarkoutsTab() {
               <div style={{ textAlign: 'right', color: C.text }}>{fmtUsd(f.usd)}</div>
               <div style={{ textAlign: 'right', color: mk0 >= 0 ? C.green : C.red }}>{(mk0 >= 0 ? '+' : '') + mk0.toFixed(2)}</div>
               <div style={{ textAlign: 'right', color: pnl >= 0 ? C.green : C.red, fontWeight: 600 }}>{(pnl >= 0 ? '+$' : '−$') + Math.abs(pnl).toFixed(2)}</div>
-              <div style={{ color: C.blue }}>{f.txHash}</div>
+              <div style={{ color: C.blue }}>{shortHex(f.txHash)}</div>
               <div style={{ color: C.faint2 }}>{f.to}</div>
             </div>
           );

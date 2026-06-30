@@ -65,3 +65,10 @@ export function clockSec(ts = Date.now()): string {
 export function fmtInt(n: number): string {
   return Math.round(n).toLocaleString();
 }
+
+/** Abbreviate a hash/address for display (idempotent — pre-shortened or short
+ *  values pass through unchanged). Live decoders store full tx hashes. */
+export function shortHex(h: string, head = 4, tail = 4): string {
+  if (!h || h.includes('…') || h.length <= 2 + head + tail + 1) return h;
+  return h.slice(0, 2 + head) + '…' + h.slice(-tail);
+}

@@ -47,6 +47,9 @@ export const config = {
   persistMs: num('PERSIST_MS', 5000),
   /** Max same-day gap to fill from getLogs on restart (else start at tip). */
   gapFillMaxBlocks: num('GAPFILL_MAX_BLOCKS', 200000),
+  /** Decoded fills are persisted; rows older than this are pruned. The
+   *  leaderboard's widest window is 30d, so keep a little more. */
+  fillsRetentionDays: num('FILLS_RETENTION_DAYS', 35),
 } as const;
 
 export type Config = typeof config;
