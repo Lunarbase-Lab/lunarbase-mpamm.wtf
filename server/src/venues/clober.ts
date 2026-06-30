@@ -92,6 +92,56 @@ export async function discoverClober(lookback = 4000): Promise<{ books: Map<stri
   return { books, markets, vault };
 }
 
+/**
+ * Discover Clober books from the subgraph (spec Appendix B) — the public RPC
+ * can't enumerate them (BookManager is a V4-style singleton, books are hashed
+ * BookIds with no list view) and its getLogs is range-capped. The subgraph is
+ * used ONLY for discovery: it yields each MON/stable book's id + base/quote +
+ * unitSize, and `Book.pool != null` marks vault (propAMM) books. Live quotes
+ * and fills then hit the chain (getExpectedOutput / Take logs) as usual.
+ */
+export async function discoverCloberViaSubgraph(
+  url: string,
+): Promise<{ books: Map<string, CloberBook>; markets: CloberMarket[]; vault: Set<string> }> {
+  const mon = TOKENS.WMON.address.toLowerCase();
+  const addrs = Object.values(TOKENS).map((t) => `"${t.address.toLowerCase()}"`).join(',');
+  const query = `{ books(first: 500, where: { base_in: [${addrs}], quote_in: [${addrs}] }) { id unitSize base { id } quote { id } pool { id } } }`;
+  const res = await fetch(url, {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ query }), signal: AbortSignal.timeout(15_000),
+  });
+  if (!res.ok) throw new Error(`subgraph ${res.status}`);
+  const j: any = await res.json();
+  const rows: Array<{ id: string; unitSize: string; base: { id: string }; quote: { id: string }; pool: { id: string } | null }> = j?.data?.books ?? [];
+
+  const books = new Map<string, CloberBook>();
+  const vault = new Set<string>();
+  for (const r of rows) {
+    const base = String(r.base.id).toLowerCase();
+    const quote = String(r.quote.id).toLowerCase();
+    if (base !== mon && quote !== mon) continue; // MON markets only (skip stable/stable)
+    const id = String(BigInt(r.id));
+    const isVault = !!r.pool;
+    if (isVault) vault.add(id);
+    books.set(id, {
+      bookId: BigInt(r.id), base, quote, unitSize: BigInt(r.unitSize),
+      baseSym: symByAddr(base), quoteSym: symByAddr(quote), isVault,
+    });
+  }
+
+  const markets: CloberMarket[] = [];
+  for (const t of Object.values(TOKENS).filter((x) => x.stable)) {
+    const st = t.address.toLowerCase();
+    let monBase: CloberBook | undefined, stableBase: CloberBook | undefined;
+    for (const b of books.values()) {
+      if (b.base === mon && b.quote === st) monBase ??= b;
+      if (b.base === st && b.quote === mon) stableBase ??= b;
+    }
+    if (monBase || stableBase) markets.push({ market: `MON/${t.symbol}`, stable: t.symbol, monBase, stableBase });
+  }
+  return { books, markets, vault };
+}
+
 /** Quote Clober for each market × size via BookViewer.getExpectedOutput. */
 export async function quoteClober(
   markets: CloberMarket[], sizesUsd: readonly number[], monUsd: number, pricer: UsdPricer,

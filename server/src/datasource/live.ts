@@ -9,7 +9,7 @@ import { lbPairAbi, bookManagerAbi } from '../chain/abis.js';
 import { BybitFeed } from '../bybit.js';
 import { UsdPricer } from '../pricer.js';
 import { discoverLfj, quoteLfj, decodeLfjSwap, type LbMarket } from '../venues/lfj.js';
-import { discoverClober, quoteClober, decodeCloberTake, type CloberBook, type CloberMarket } from '../venues/clober.js';
+import { discoverClober, discoverCloberViaSubgraph, quoteClober, decodeCloberTake, type CloberBook, type CloberMarket } from '../venues/clober.js';
 import { VolumeStore } from '../db.js';
 import { seedCloberDaily } from '../seed/subgraph.js';
 import { utcDay } from '../util.js';
@@ -65,15 +65,19 @@ export class LiveDataSource extends BaseSource {
     this.timer = setInterval(() => { void this.tick(); }, config.quoteIntervalMs);
     this.persistTimer = setInterval(() => this.persist(), config.persistMs);
 
-    // Clober quoting/decoding needs a book cache; discovery is slow on the
-    // public RPC (range-capped getLogs), so resolve it in the background.
-    void discoverClober(2000)
+    // Clober quoting/decoding needs a book cache. The public RPC can't enumerate
+    // books (singleton BookManager) and its getLogs is range-capped, so seed the
+    // book ids + unitSize + vault set from the subgraph; live quotes/fills then
+    // hit the chain. Falls back to a recent-Open-log scan if the subgraph fails.
+    void discoverCloberViaSubgraph(config.subgraphUrl)
       .then((c) => {
         this.clober = c;
-        if (!c.markets.length) this.notes.push('no recent Clober books found on public RPC (live Clober quotes need an archive node or subgraph book seed)');
-        else this.notes.push(`Clober: ${c.markets.length} live market(s), ${c.vault.size} vault book id(s)`);
+        this.notes.push(`Clober: ${c.markets.length} market(s) from subgraph (${c.books.size} books, ${c.vault.size} vault)`);
       })
-      .catch(() => this.notes.push('Clober discovery degraded'));
+      .catch(async () => {
+        this.notes.push('Clober subgraph discovery failed; trying recent Open logs');
+        try { this.clober = await discoverClober(2000); } catch { /* leave empty */ }
+      });
   }
 
   stop(): void {
