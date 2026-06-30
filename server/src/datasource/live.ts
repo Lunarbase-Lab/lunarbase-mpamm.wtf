@@ -5,14 +5,18 @@ import {
 } from '@shared';
 import { config } from '../config.js';
 import { publicClient, getLogsChunked, probeChain } from '../chain/rpc.js';
-import { lbPairAbi, bookManagerAbi } from '../chain/abis.js';
+import { lbPairAbi, bookManagerAbi, routerGatewayAbi, liquidityVaultAbi } from '../chain/abis.js';
 import { BybitFeed } from '../bybit.js';
 import { UsdPricer } from '../pricer.js';
 import { discoverLfj, quoteLfj, decodeLfjSwap, type LbMarket } from '../venues/lfj.js';
-import { discoverClober, discoverCloberViaSubgraph, quoteClober, decodeCloberTake, type CloberBook, type CloberMarket } from '../venues/clober.js';
+import {
+  discoverClober, discoverCloberViaSubgraph, quoteClober, decodeCloberTake,
+  buildRouterMap, cloberBookFromOpen, assembleCloberMarkets,
+  type CloberBook, type CloberMarket,
+} from '../venues/clober.js';
 import { VolumeStore } from '../db.js';
 import { seedCloberDaily } from '../seed/subgraph.js';
-import { utcDay } from '../util.js';
+import { utcDay, annotateCex } from '../util.js';
 
 /**
  * LiveDataSource — real Monad RPC + Bybit, run as a persist-forward indexer.
@@ -179,6 +183,7 @@ export class LiveDataSource extends BaseSource {
       quoteClober(this.clober.markets, config.sizesUsd, monUsd, this.pricer).catch(() => [] as QuoteRow[]),
     ]);
     const bybitRows = this.bybitRows(monUsd);
+    annotateCex([...lfjRows, ...cloberRows], bybitRows); // spec §4.2 (audit I1)
     this.quotes = { block: this.block, monUsd, ts: Date.now(), rows: [...lfjRows, ...cloberRows, ...bybitRows] };
     this.emitMsg({ ch: 'state', data: this.getState() });
     this.emitMsg({ ch: 'quotes', data: this.quotes });
@@ -210,37 +215,45 @@ export class LiveDataSource extends BaseSource {
   // ── fills ───────────────────────────────────────────────────────────────────
   private async tailFills(): Promise<void> {
     const monUsd = this.bybit.monUsd();
-    // Defer the whole tail until the Bybit mid is warm — else MON-quote Clober
-    // fills would be dropped and markout anchors would be wrong. lastBlock is not
-    // advanced, so the same range is re-decoded once the mid arrives (audit C3).
+    // Defer the tail until the Bybit mid is warm so markout anchors are sound;
+    // lastBlock is not advanced, so the range is re-decoded once warm (audit C3).
     if (monUsd <= 0) return;
     const head = await publicClient.getBlockNumber();
     if (head <= this.lastBlock) return;
     const from = this.lastBlock + 1n;
+
+    const ev = (abi: readonly unknown[], name: string) => abi.find((x: any) => x.type === 'event' && x.name === name);
+    const [lfjLogs, takeLogs, routerLogs, bmOpens, vaultOpens] = (await Promise.all([
+      this.lfj.length
+        ? getLogsChunked({ address: this.lfj.map((m) => m.pair) as `0x${string}`[], fromBlock: from, toBlock: head, events: [ev(lbPairAbi, 'Swap')] })
+        : Promise.resolve([] as unknown[]),
+      getLogsChunked({ address: ADDR.bookManager as `0x${string}`, fromBlock: from, toBlock: head, events: [ev(bookManagerAbi, 'Take')] }),
+      getLogsChunked({ address: ADDR.routerGateway as `0x${string}`, fromBlock: from, toBlock: head, events: [ev(routerGatewayAbi, 'Swap')] }).catch(() => [] as unknown[]),
+      getLogsChunked({ address: ADDR.bookManager as `0x${string}`, fromBlock: from, toBlock: head, events: [ev(bookManagerAbi, 'Open')] }).catch(() => [] as unknown[]),
+      getLogsChunked({ address: ADDR.liquidityVault as `0x${string}`, fromBlock: from, toBlock: head, events: [ev(liquidityVaultAbi, 'Open')] }).catch(() => [] as unknown[]),
+    ])) as [any[], any[], any[], any[], any[]];
+
+    // C4: fold any newly-Opened MON/stable books into the cache before decoding.
+    this.mergeNewBooks(bmOpens, vaultOpens);
+    // I3: routed-flow attribution by txHash (used to classify Takes, not dup them).
+    const routerMap = buildRouterMap(routerLogs);
+    // B2: resolve block timestamps for the blocks that actually carry fills.
+    const blocks = new Set<bigint>();
+    for (const l of lfjLogs) blocks.add(l.blockNumber);
+    for (const l of takeLogs) blocks.add(l.blockNumber);
+    const blockTs = await this.blockTimes(blocks);
+    const tsOf = (bn: bigint) => blockTs.get(String(bn)) ?? Date.now();
+
     const fresh: Fill[] = [];
-
-    if (this.lfj.length) {
-      const swapEvent = lbPairAbi.find((x: any) => x.type === 'event' && x.name === 'Swap');
-      const logs = (await getLogsChunked({
-        address: this.lfj.map((m) => m.pair) as `0x${string}`[], fromBlock: from, toBlock: head, events: [swapEvent],
-      })) as any[];
-      for (const l of logs) {
-        const m = this.lfjByAddr.get(String(l.address).toLowerCase());
-        if (!m) continue;
-        const f = decodeLfjSwap(l, m, this.pricer, monUsd);
-        if (f) fresh.push(f);
-      }
+    for (const l of lfjLogs) {
+      const m = this.lfjByAddr.get(String(l.address).toLowerCase());
+      if (!m) continue;
+      const f = decodeLfjSwap(l, m, tsOf(l.blockNumber));
+      if (f) fresh.push(f);
     }
-
-    if (this.clober.books.size) {
-      const takeEvent = bookManagerAbi.find((x: any) => x.type === 'event' && x.name === 'Take');
-      const logs = (await getLogsChunked({
-        address: ADDR.bookManager as `0x${string}`, fromBlock: from, toBlock: head, events: [takeEvent],
-      })) as any[];
-      for (const l of logs) {
-        const f = decodeCloberTake(l, this.clober.books, this.clober.vault, this.pricer, monUsd);
-        if (f) fresh.push(f);
-      }
+    for (const l of takeLogs) {
+      const f = decodeCloberTake(l, this.clober.books, this.clober.vault, tsOf(l.blockNumber), routerMap.get(String(l.transactionHash).toLowerCase()));
+      if (f) fresh.push(f);
     }
 
     this.lastBlock = head;
@@ -248,18 +261,60 @@ export class LiveDataSource extends BaseSource {
     for (const f of fresh) this.ingest(f);
   }
 
+  /** Block timestamps (ms) for the blocks that carry fills (audit B2). */
+  private async blockTimes(blocks: Set<bigint>): Promise<Map<string, number>> {
+    const m = new Map<string, number>();
+    await Promise.all([...blocks].map(async (bn) => {
+      try { const b = await publicClient.getBlock({ blockNumber: bn }); m.set(String(bn), Number(b.timestamp) * 1000); } catch { /* fall back to now */ }
+    }));
+    return m;
+  }
+
+  /** Fold mid-run BookManager/LiquidityVault Opens into the cache (audit C4). */
+  private mergeNewBooks(bmOpens: any[], vaultOpens: any[]): void {
+    let changed = false;
+    for (const l of vaultOpens) {
+      const a = l.args; if (!a) continue;
+      if (a.bookIdA !== undefined) { this.clober.vault.add(String(a.bookIdA)); changed = true; }
+      if (a.bookIdB !== undefined) { this.clober.vault.add(String(a.bookIdB)); changed = true; }
+    }
+    if (vaultOpens.length) for (const [id, b] of this.clober.books) b.isVault = this.clober.vault.has(id);
+    for (const l of bmOpens) {
+      const a = l.args; if (!a) continue;
+      if (this.clober.books.has(String(a.id))) continue;
+      const b = cloberBookFromOpen(a, this.clober.vault);
+      if (b) { this.clober.books.set(String(a.id), b); changed = true; }
+    }
+    if (changed) this.clober.markets = assembleCloberMarkets(this.clober.books);
+  }
+
   private ingest(f: Fill): void {
     this.fills.push(f);
     if (this.fills.length > 400) this.fills.shift();
-    // Only fills with a realized price get markouts; pxApprox (Clober, no
-    // tick→price yet) stay markoutsBps=null rather than fabricate ~0 (audit B1).
-    if (!f.pxApprox) this.pending.add(f);
+    // Markouts only for genuinely-live fills (we observed the Bybit mid across
+    // their horizons). Replayed/old fills keep markoutsBps=null (audit B2).
+    if (Date.now() - f.ts < 10_000) this.pending.add(f);
     this.dirty.add(f);
-    const d = this.today();
+    // Bucket by the fill's execution day, not wall-clock (audit B2). Closed
+    // Clober days are subgraph-authoritative and refreshed each boot, so the
+    // rare sub-second-across-midnight Clober fill self-heals on the next reseed.
+    const d = this.dayFor(f.ts);
     if (f.protocol === 'LFJ') d.lfj += f.usd;
     else { d.cloberVenue += f.usd; if (f.scope === 'vault') d.cloberVault += f.usd; }
     d.swaps += 1;
     this.emitMsg({ ch: 'fill', data: f });
+  }
+
+  /** Find/create the daily bucket for a fill's execution timestamp (audit B2). */
+  private dayFor(tsMs: number): DailyVolume {
+    const day = utcDay(tsMs);
+    let d = this.days.find((x) => x.utcDay === day);
+    if (!d) {
+      d = { utcDay: day, lfj: 0, cloberVenue: 0, cloberVault: 0, swaps: 0, partial: day === utcDay() };
+      this.days.push(d);
+      this.days.sort((a, b) => (a.utcDay < b.utcDay ? -1 : 1));
+    }
+    return d;
   }
 
   /** Join each pending fill to the Bybit mid at each horizon as it ages. */

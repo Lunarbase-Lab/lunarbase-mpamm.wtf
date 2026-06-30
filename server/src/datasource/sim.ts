@@ -5,7 +5,7 @@ import {
   type Fill, type DailyVolume, type Venue, type Protocol, type Scope, type Side, type FillCategory,
 } from '@shared';
 import { config } from '../config.js';
-import { clamp, utcDay, nextId } from '../util.js';
+import { clamp, utcDay, nextId, annotateCex } from '../util.js';
 
 /**
  * SimDataSource — a server-side port of the design's DCLogic simulation
@@ -103,6 +103,7 @@ export class SimDataSource extends BaseSource {
         }
       }
     }
+    annotateCex(rows.filter((r) => r.venue !== 'Bybit'), rows.filter((r) => r.venue === 'Bybit'));
     return rows;
   }
 

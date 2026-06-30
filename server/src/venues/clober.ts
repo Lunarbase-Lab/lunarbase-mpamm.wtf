@@ -1,4 +1,4 @@
-import type { QuoteRow, Fill, Side } from '@shared';
+import type { QuoteRow, Fill, Side, FillCategory } from '@shared';
 import { ADDR, TOKENS, isMonAddress, isMonSymbol } from '@shared';
 import { publicClient, getLogsChunked } from '../chain/rpc.js';
 import { bookViewerAbi, bookManagerAbi, liquidityVaultAbi, CLOBER_MIN_PRICE } from '../chain/abis.js';
@@ -44,6 +44,34 @@ const tokenBySym = (sym: string) => TOKENS[sym];
 const symByAddr = (addr: string): string | undefined =>
   Object.values(TOKENS).find((t) => t.address.toLowerCase() === addr.toLowerCase())?.symbol;
 
+/** Assemble MON/stable markets from a book cache, preferring the vault book per
+ *  direction so venue attribution + quoting are consistent across every
+ *  discovery path and live merge. */
+export function assembleCloberMarkets(books: Map<string, CloberBook>): CloberMarket[] {
+  const markets: CloberMarket[] = [];
+  for (const t of Object.values(TOKENS).filter((x) => x.stable)) {
+    const st = t.address.toLowerCase();
+    let monBase: CloberBook | undefined, stableBase: CloberBook | undefined;
+    for (const b of books.values()) {
+      if (isMonAddress(b.base) && b.quote === st && (!monBase || (b.isVault && !monBase.isVault))) monBase = b;
+      if (b.base === st && isMonAddress(b.quote) && (!stableBase || (b.isVault && !stableBase.isVault))) stableBase = b;
+    }
+    if (monBase || stableBase) markets.push({ market: `MON/${t.symbol}`, stable: t.symbol, monBase, stableBase });
+  }
+  return markets;
+}
+
+/** Build a MON/stable CloberBook from an Open event's args; null if not MON/stable. */
+export function cloberBookFromOpen(a: any, vault: Set<string>): CloberBook | null {
+  const base = String(a.base).toLowerCase(), quote = String(a.quote).toLowerCase();
+  if (isMonAddress(base) === isMonAddress(quote)) return null;
+  const id = String(a.id);
+  return {
+    bookId: BigInt(a.id), base, quote, unitSize: BigInt(a.unitSize),
+    baseSym: symByAddr(base), quoteSym: symByAddr(quote), isVault: vault.has(id),
+  };
+}
+
 /** Build a book cache + vault set from recent Open logs, then assemble the
  *  MON/stable markets we can quote. `lookback` blocks back from head. */
 export async function discoverClober(lookback = 4000): Promise<{ books: Map<string, CloberBook>; markets: CloberMarket[]; vault: Set<string> }> {
@@ -83,20 +111,7 @@ export async function discoverClober(lookback = 4000): Promise<{ books: Map<stri
     }
   } catch { /* tolerate */ }
 
-  // assemble MON/stable markets from the cache (prefer the vault book on a tie,
-  // matching the subgraph path — audit I4)
-  const markets: CloberMarket[] = [];
-  for (const t of Object.values(TOKENS).filter((x) => x.stable)) {
-    const market = `MON/${t.symbol}`;
-    const st = t.address.toLowerCase();
-    let monBase: CloberBook | undefined, stableBase: CloberBook | undefined;
-    for (const b of books.values()) {
-      if (isMonAddress(b.base) && b.quote === st && (!monBase || (b.isVault && !monBase.isVault))) monBase = b;
-      if (b.base === st && isMonAddress(b.quote) && (!stableBase || (b.isVault && !stableBase.isVault))) stableBase = b;
-    }
-    if (monBase || stableBase) markets.push({ market, stable: t.symbol, monBase, stableBase });
-  }
-  return { books, markets, vault };
+  return { books, markets: assembleCloberMarkets(books), vault };
 }
 
 /**
@@ -136,18 +151,7 @@ export async function discoverCloberViaSubgraph(
     });
   }
 
-  const markets: CloberMarket[] = [];
-  for (const t of Object.values(TOKENS).filter((x) => x.stable)) {
-    const st = t.address.toLowerCase();
-    let monBase: CloberBook | undefined, stableBase: CloberBook | undefined;
-    for (const b of books.values()) {
-      // when multiple books match a direction, prefer the vault (propAMM) book
-      if (isMonAddress(b.base) && b.quote === st && (!monBase || (b.isVault && !monBase.isVault))) monBase = b;
-      if (b.base === st && isMonAddress(b.quote) && (!stableBase || (b.isVault && !stableBase.isVault))) stableBase = b;
-    }
-    if (monBase || stableBase) markets.push({ market: `MON/${t.symbol}`, stable: t.symbol, monBase, stableBase });
-  }
-  return { books, markets, vault };
+  return { books, markets: assembleCloberMarkets(books), vault };
 }
 
 /** Quote Clober for each market × size via BookViewer.getExpectedOutput. */
@@ -215,48 +219,83 @@ export async function quoteClober(
   return [...rowByKey.values()].filter((r) => r.askPx > 0 && r.bidPx > 0 && r.spreadBps < MAX_QUOTE_SPREAD_BPS);
 }
 
-/** Decode a Clober Take into a Fill. Quote leg is EXACT = unit * unitSize
- *  (spec §5.2); USD = quote amount when quote is a stable. */
+/** routed-flow attribution for a Take (its tx also emitted a RouterGateway.Swap). */
+export interface RouterInfo { to: string; category: FillCategory; }
+
+/**
+ * Clober V2 tick → realized price, stable-per-MON. The protocol price is
+ * 1.0001^tick = quote-raw per base-raw (verified against MIN_PRICE 1350587 at
+ * MIN_TICK and the live BookDayData/Take prices). Converting raw→human and
+ * orienting to stable-per-MON: 1.0001^(±tick) × 10^(18 − stableDecimals), with
+ * the sign + when MON is the book's base, − when MON is the quote.
+ */
+export function cloberTickToPrice(tick: number, monIsBase: boolean, stableDecimals: number): number {
+  return Math.pow(1.0001, monIsBase ? tick : -tick) * Math.pow(10, 18 - stableDecimals);
+}
+
+/**
+ * Decode a Clober Take into a Fill (spec §5.2). The quote leg is exact
+ * (unit × unitSize); the realized price + base leg come from the resting tick,
+ * so the fill carries a true execution price and real markouts (audit B1-real).
+ * `tsMs` is the block timestamp (audit B2); `router` tags routed flow (audit I3).
+ */
 export function decodeCloberTake(
   log: { args: any; transactionHash: string; blockNumber: bigint },
-  books: Map<string, CloberBook>, vault: Set<string>, pricer: UsdPricer, monUsd: number,
+  books: Map<string, CloberBook>, vault: Set<string>, tsMs: number, router?: RouterInfo,
 ): Fill | null {
   const a = log.args; if (!a) return null;
   const bookId = String(a.bookId);
   const book = books.get(bookId);
   if (!book) return null;
-  const quoteAmountRaw = BigInt(a.unit) * book.unitSize;
-  const quoteSym = book.quoteSym, baseSym = book.baseSym;
-  if (!quoteSym) return null;
-  const quoteDec = TOKENS[quoteSym]?.decimals ?? 18;
-  const quoteAmount = fromUnits(quoteAmountRaw, quoteDec);
+  const { baseSym, quoteSym } = book;
 
   // require exactly MON/stable (one MON side, a real stable on the other) so a
   // mis-scoped book never gets booked as MON/USDC volume (audit C1).
   if (isMonSymbol(baseSym) === isMonSymbol(quoteSym)) return null;
-  const stableSym = isMonSymbol(quoteSym) ? baseSym : quoteSym;
-  if (!stableSym || !TOKENS[stableSym]?.stable) return null;
   const monIsBase = isMonSymbol(baseSym);
-  const market = `MON/${stableSym}`;
-  const usd = isMonSymbol(quoteSym) ? quoteAmount * monUsd : quoteAmount;
+  const stableSym = monIsBase ? quoteSym : baseSym;
+  if (!stableSym || !TOKENS[stableSym]?.stable) return null;
+  const stableDec = TOKENS[stableSym].decimals;
+
+  // quote leg is exact (unit × unitSize); quote token = stable iff MON is base.
+  const quoteDec = monIsBase ? stableDec : TOKENS.WMON.decimals;
+  const quoteHuman = fromUnits(BigInt(a.unit) * book.unitSize, quoteDec);
+  if (quoteHuman <= 0) return null;
+
+  const execPx = cloberTickToPrice(Number(a.tick), monIsBase, stableDec);
+  if (!Number.isFinite(execPx) || execPx <= 0) return null;
+
+  // USD = the stable leg: exact when MON is base (quote IS the stable); else
+  // derive the stable value from the realized price. No CEX mid needed (audit C3).
+  const usd = monIsBase ? quoteHuman : quoteHuman * execPx;
+  const baseAmount = usd / execPx; // MON amount
   if (usd <= 0) return null;
 
   // A Clober book is one-directional: a Take consumes resting bids (the taker
   // delivers base, receives quote), so side follows the book's orientation.
   const side: Side = monIsBase ? 'sell' : 'buy';
-  // execPx is NOT a realized price — the base leg needs the deferred tick→price
-  // (spec §5.2). usd (quote leg) is exact; markouts are not derivable (audit B1).
-  const execPx = monUsd;
   const isVault = vault.has(bookId);
 
   return {
     id: nextId('clb'),
     protocol: 'Clober', source: 'clober-take', scope: isVault ? 'vault' : 'venue',
-    market, side, category: isVault ? 'CEX/DEX' : 'DIRECT',
-    usd, baseAmount: usd / (execPx || monUsd), execPx, pxApprox: true,
-    txHash: log.transactionHash, to: shortHex(a.user ?? ZERO),
+    market: `MON/${stableSym}`, side, category: router?.category ?? 'DIRECT',
+    usd, baseAmount, execPx,
+    txHash: log.transactionHash, to: router?.to ?? shortHex(a.user ?? ZERO),
     pool: `book ${bookId.slice(0, 8)}`,
-    blockNumber: Number(log.blockNumber), ts: Date.now(),
+    blockNumber: Number(log.blockNumber), ts: tsMs,
     markoutsBps: [null, null, null, null, null],
   };
+}
+
+/** Map txHash → routed-flow attribution from RouterGateway.Swap logs (audit I3).
+ *  A routed swap also emits the underlying Take(s); we use it only to classify
+ *  those Takes (category/to), never as a separate fill, so volume isn't doubled. */
+export function buildRouterMap(logs: Array<{ args: any; transactionHash: string }>): Map<string, RouterInfo> {
+  const m = new Map<string, RouterInfo>();
+  for (const l of logs) {
+    const a = l.args; if (!a) continue;
+    m.set(l.transactionHash.toLowerCase(), { to: shortHex(String(a.router ?? ZERO)), category: 'ROUTER' });
+  }
+  return m;
 }

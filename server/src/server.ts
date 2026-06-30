@@ -37,10 +37,16 @@ export function startServer(source: DataSource): Server {
     const limit = Math.min(Number(req.query.limit) || 1000, 50_000);
     res.json(source.queryFills({ sinceMs, limit }));
   });
-  app.get('/api/volume', (_req, res) => {
-    // both scopes are carried per-row (cloberVenue / cloberVault); the client
-    // selects. The query param is accepted for spec parity.
-    res.json(source.getVolume());
+  app.get('/api/volume', (req, res) => {
+    // honor ?from=&to= (YYYY-MM-DD, lexicographic). Both scope columns
+    // (cloberVenue / cloberVault) are carried per row and the client selects, so
+    // ?scope is accepted but informational (audit I7).
+    const from = typeof req.query.from === 'string' ? req.query.from : undefined;
+    const to = typeof req.query.to === 'string' ? req.query.to : undefined;
+    let days = source.getVolume();
+    if (from) days = days.filter((d) => d.utcDay >= from);
+    if (to) days = days.filter((d) => d.utcDay <= to);
+    res.json(days);
   });
 
   const httpServer = createServer(app);

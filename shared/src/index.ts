@@ -135,6 +135,12 @@ export interface QuoteRow {
   filledFull: boolean;
   /** venue fee in bps (LFJ getSwapOut fee); 0 for CLOB venues. */
   feeBps: number;
+  /** realized cost vs Bybit-AS-TAKER at this size, sign-normalized so positive
+   *  = on-chain executes worse (spec §4.2): cexAskBps for buying MON, cexBidBps
+   *  for selling. The honest realized-vs-realized comparison. Undefined for the
+   *  Bybit benchmark row itself. */
+  cexAskBps?: number;
+  cexBidBps?: number;
   ts: number;
 }
 

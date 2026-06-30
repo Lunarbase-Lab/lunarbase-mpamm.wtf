@@ -22,7 +22,11 @@ export function ExecutionTab() {
   const legend = useMemo(() => {
     const leg = active.map((v) => {
       const r = row(v, size);
-      return { name: v, color: VENUE_COLOR[v], spread: r?.spreadBps ?? 0, bid: r?.bidBps ?? 0, ask: r?.askBps ?? 0, has: !!r };
+      return {
+        name: v, color: VENUE_COLOR[v], spread: r?.spreadBps ?? 0, bid: r?.bidBps ?? 0, ask: r?.askBps ?? 0,
+        // realized buy-MON cost vs Bybit-as-taker, + = on-chain worse (spec §4.2)
+        vsCex: r?.cexAskBps, has: !!r,
+      };
     }).filter((x) => x.has);
     leg.sort((a, b) => a.spread - b.spread);
     return leg;
@@ -110,15 +114,15 @@ export function ExecutionTab() {
       {/* QUOTE */}
       <Panel style={{ margin: '0 18px 14px' }}>
         <PanelHead icon="~" title="QUOTE" sub={`${pair} · ${sizeLabel(size)} · last 60s`}
-          right={<div style={{ fontSize: 9, color: C.faint2 }}>solid = ask · dashed = bid · ★ = tightest spread</div>} />
+          right={<div style={{ fontSize: 9, color: C.faint2 }}>solid = ask · dashed = bid · ★ = tightest · vs CEX = realized buy vs Bybit-taker (+ = worse)</div>} />
         <div style={{ position: 'relative', padding: '8px 8px 4px' }}>
           <QuoteCanvas />
-          <div style={{ position: 'absolute', top: 14, right: 16, background: 'rgba(10,12,16,.82)', border: '1px solid rgba(255,255,255,.1)', padding: '8px 10px', minWidth: 248, backdropFilter: 'blur(3px)' }}>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 54px 50px 50px', gap: '2px 8px', fontSize: 8.5, color: C.faint2, letterSpacing: '.05em', paddingBottom: 5, borderBottom: `1px solid ${C.line}` }}>
-              <div>VENUE</div><div style={{ textAlign: 'right' }}>SPREAD</div><div style={{ textAlign: 'right' }}>BID</div><div style={{ textAlign: 'right' }}>ASK</div>
+          <div style={{ position: 'absolute', top: 14, right: 16, background: 'rgba(10,12,16,.82)', border: '1px solid rgba(255,255,255,.1)', padding: '8px 10px', minWidth: 286, backdropFilter: 'blur(3px)' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 48px 42px 42px 56px', gap: '2px 8px', fontSize: 8.5, color: C.faint2, letterSpacing: '.05em', paddingBottom: 5, borderBottom: `1px solid ${C.line}` }}>
+              <div>VENUE</div><div style={{ textAlign: 'right' }}>SPREAD</div><div style={{ textAlign: 'right' }}>BID</div><div style={{ textAlign: 'right' }}>ASK</div><div style={{ textAlign: 'right' }}>vs CEX</div>
             </div>
             {legend.map((r) => (
-              <div key={r.name} style={{ display: 'grid', gridTemplateColumns: '1fr 54px 50px 50px', gap: '2px 8px', fontSize: 11, padding: '4px 0', alignItems: 'center' }}>
+              <div key={r.name} style={{ display: 'grid', gridTemplateColumns: '1fr 48px 42px 42px 56px', gap: '2px 8px', fontSize: 11, padding: '4px 0', alignItems: 'center' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                   <span style={{ width: 8, height: 8, borderRadius: 2, background: r.color }} />
                   <span style={{ color: C.text2 }}>{r.name}</span>
@@ -127,6 +131,9 @@ export function ExecutionTab() {
                 <div style={{ textAlign: 'right', color: r.name === tight ? C.green : C.text, fontWeight: 600 }}>{r.spread.toFixed(2)}</div>
                 <div style={{ textAlign: 'right', color: C.red }}>{sgn(r.bid)}</div>
                 <div style={{ textAlign: 'right', color: C.green }}>{sgn(r.ask)}</div>
+                <div style={{ textAlign: 'right', color: r.vsCex == null ? C.faint2 : r.vsCex > 0.05 ? C.red : r.vsCex < -0.05 ? C.green : C.dim, fontWeight: 600 }}>
+                  {r.vsCex == null ? '—' : sgn(r.vsCex)}
+                </div>
               </div>
             ))}
           </div>

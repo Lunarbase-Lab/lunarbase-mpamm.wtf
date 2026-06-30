@@ -158,8 +158,7 @@ export async function quoteLfj(
 export function decodeLfjSwap(
   log: { args: any; transactionHash: string; blockNumber: bigint; address: string },
   market: LbMarket,
-  pricer: UsdPricer,
-  monUsd: number,
+  tsMs: number,
 ): Fill | null {
   const a = log.args;
   if (!a) return null;
@@ -190,7 +189,7 @@ export function decodeLfjSwap(
     usd: stableAmount, baseAmount, execPx,
     txHash: log.transactionHash, to: shortHex(a.to ?? '0x'),
     pool: shortHex(market.pair),
-    blockNumber: Number(log.blockNumber), ts: Date.now(),
+    blockNumber: Number(log.blockNumber), ts: tsMs,
     markoutsBps: [null, null, null, null, null],
   };
 }
