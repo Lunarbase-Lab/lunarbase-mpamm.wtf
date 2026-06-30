@@ -9,15 +9,15 @@ function num(key: string, dflt: number): number {
   return Number.isFinite(n) ? n : dflt;
 }
 
-export type SourcePref = 'sim' | 'live' | 'auto';
+export type SourcePref = 'sim' | 'live';
 
 export const config = {
   // API_PORT (not PORT) so the backend never collides with a dev-tool/preview
   // manager that injects PORT for the frontend.
   port: num('API_PORT', 8787),
-  // Default to the deterministic simulator for a zero-config clone; set
-  // DATA_SOURCE=live (real chain+Bybit) or =auto (live with sim fallback).
-  source: ((env.DATA_SOURCE ?? 'sim').toLowerCase() as SourcePref),
+  // Production default: live (real Monad RPC + Bybit). Set DATA_SOURCE=sim to
+  // run the fully offline deterministic simulator instead.
+  source: (env.DATA_SOURCE?.toLowerCase() === 'sim' ? 'sim' : 'live') as SourcePref,
 
   rpcHttp: env.RPC_HTTP_URL ?? 'https://rpc.monad.xyz',
   rpcWs: env.RPC_WS_URL ?? 'wss://rpc.monad.xyz',

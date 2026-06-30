@@ -4,7 +4,7 @@ import {
   type DataSourceMode, type MarketState, type QuoteSnapshot, type QuoteRow, type Fill, type DailyVolume,
 } from '@shared';
 import { config } from '../config.js';
-import { publicClient, getLogsChunked } from '../chain/rpc.js';
+import { publicClient, getLogsChunked, probeChain } from '../chain/rpc.js';
 import { lbPairAbi, bookManagerAbi } from '../chain/abis.js';
 import { BybitFeed } from '../bybit.js';
 import { UsdPricer } from '../pricer.js';
@@ -50,6 +50,10 @@ export class LiveDataSource extends BaseSource {
   private block = 0;
 
   async start(): Promise<void> {
+    // Fail fast on an unreachable/wrong chain (spec §8) rather than half-start.
+    const probe = await probeChain();
+    if (!probe.ok) throw new Error(`Monad RPC sanity check failed (${probe.reason}). Set DATA_SOURCE=sim to run offline.`);
+
     await this.bybit.start();
     try { this.lfj = await discoverLfj(); } catch (e) { this.notes.push('LFJ discovery failed: ' + (e as Error).message); }
     this.lfjByAddr = new Map(this.lfj.map((m) => [m.pair.toLowerCase(), m]));

@@ -18,17 +18,16 @@ This is the full-stack implementation of the [`propAMM.dc.html`](design/propAMM.
 
 ```bash
 npm install
-npm run dev          # backend (sim) on :8787 + Vite on :5173 → open http://localhost:5173
+npm run dev          # backend (live) on :8787 + Vite on :5173 → open http://localhost:5173
 ```
 
-By default the backend runs the **simulator** (`DATA_SOURCE=sim`) — deterministic, zero external
-dependencies, and a faithful port of the design's data model. To run against the real chain:
+By default the backend runs **live** — real Monad RPC (Multicall3 quotes + `getLogs` fills) + the
+Bybit feed. It fails fast if the chain is unreachable rather than serving fabricated data. To run
+fully offline against the deterministic **simulator** (a faithful port of the design's data model,
+no external dependencies):
 
 ```bash
-cp .env.example .env          # then edit
-# DATA_SOURCE=live   → real Monad RPC (Multicall3 quotes + getLogs fills) + Bybit feed
-# DATA_SOURCE=auto   → live if the chain is reachable, else sim
-npm run dev
+DATA_SOURCE=sim npm run dev      # or set DATA_SOURCE=sim in .env
 ```
 
 `npm run typecheck` typechecks both workspaces; `npm run build` builds the frontend.
@@ -50,8 +49,8 @@ built around a `DataSource` interface with two implementations:
   `getExpectedOutput`) at block cadence; the Bybit book walked realized-vs-realized at size with
   the taker fee overlaid; fills tailed from `getLogs` (LFJ `Swap`, Clober `Take`) and bucketed
   into UTC-day volume; each fill joined to the Bybit mid for 0/5/10/30/60s markouts.
-- **`SimDataSource`** — a server-side port of the design's `DCLogic` simulation, used as the
-  default and as a fallback.
+- **`SimDataSource`** — a server-side port of the design's `DCLogic` simulation, run only when
+  `DATA_SOURCE=sim` (offline development / demos).
 
 REST: `GET /api/markets`, `/api/quotes`, `/api/volume`, `/api/fills`, `/api/health`.
 WS `/stream` channels: `state`, `quotes`, `fill`, `volume`.
