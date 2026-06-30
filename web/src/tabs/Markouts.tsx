@@ -60,12 +60,13 @@ export function MarkoutsTab() {
   }
   const rows = d.mkPaused && frozenRef.current ? frozenRef.current : tape;
 
-  // outlier feed — last 24h by |mk-0s P&L| desc, top 18.
+  // outlier feed — last 24h by |mk-0s P&L| desc, top 18. Only fills with a
+  // realized markout (excludes pxApprox Clober + not-yet-aged) — audit B1/C2.
   const outliers = useMemo(() => {
     const since = Date.now() - 86_400_000;
     return d.fills
-      .filter((f) => f.ts >= since)
-      .map((f) => ({ f, pnl: ((f.markoutsBps[0] ?? 0) / 1e4) * f.usd }))
+      .filter((f) => f.ts >= since && !f.pxApprox && f.markoutsBps[0] != null)
+      .map((f) => ({ f, pnl: ((f.markoutsBps[0] as number) / 1e4) * f.usd }))
       .sort((a, b) => Math.abs(b.pnl) - Math.abs(a.pnl))
       .slice(0, 18);
   }, [d.fills]);
@@ -134,7 +135,7 @@ export function MarkoutsTab() {
                 <div style={{ color: C.faint2 }}>{f.pool}</div>
                 <div><SideTag side={f.side} /></div>
                 <div style={{ textAlign: 'right', color: C.text }}>{fmtUsd(f.usd)}</div>
-                <div style={{ textAlign: 'right', color: C.dim }}>{f.execPx.toFixed(5)}</div>
+                <div style={{ textAlign: 'right', color: C.dim }}>{f.pxApprox ? '—' : f.execPx.toFixed(5)}</div>
                 {H.map((h, i) => {
                   const v = f.markoutsBps[i];
                   if (age < h || v == null) return <div key={h} style={{ textAlign: 'right', color: C.ghost }}>{'·'}</div>;

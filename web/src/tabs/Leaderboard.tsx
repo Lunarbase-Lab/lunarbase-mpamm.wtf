@@ -39,11 +39,25 @@ export function LeaderboardTab() {
   const sign = lbMk === 'MAKER' ? -1 : 1;
 
   // real time-window slice over the persisted fills (no extrapolation).
+  // SHOW=PROPAMM keeps LFJ + the Clober vault (propAMM) cut, dropping
+  // whole-venue Clober flow (audit I2).
   const windowed = useMemo(() => {
     const since = Date.now() - (WIN_MS[lbWin] ?? WIN_MS['24H']);
-    return fills.filter((f) => f.ts >= since);
+    return fills.filter((f) => {
+      if (f.ts < since) return false;
+      if (lbShow === 'PROPAMM' && f.protocol === 'Clober' && f.scope !== 'vault') return false;
+      return true;
+    });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [fills, lbWin, d.frame]);
+  }, [fills, lbWin, lbShow, d.frame]);
+
+  // Only fills that have a realized markout at the selected horizon feed the
+  // percentile / PnL / sparkline math — never coerce null→0 (audit C2). This
+  // also excludes pxApprox (Clober, no realized price) fills (audit B1).
+  const windowedHz = useMemo(
+    () => windowed.filter((f) => f.markoutsBps[hzIdx] != null),
+    [windowed, hzIdx],
+  );
 
   // PROTOCOL_LEADERBOARD rows — grouped + percentiled per DCLogic.lbVals().
   const lbRows = useMemo(() => {
@@ -58,7 +72,7 @@ export function LeaderboardTab() {
           : C.purpleL;
 
     const groups: Record<string, Fill[]> = {};
-    for (const f of windowed) {
+    for (const f of windowedHz) {
       const k = keyFn(f);
       (groups[k] = groups[k] ?? []).push(f);
     }
@@ -79,12 +93,12 @@ export function LeaderboardTab() {
     arr = arr.slice(0, 12);
     return arr;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [windowed, lbGroup, lbHz, lbMk, d.frame]);
+  }, [windowedHz, lbGroup, lbMk, d.frame]);
 
   // TOP_SWAPS rows — biggest single-swap winners/losers per DCLogic.lbVals().
   const topRows = useMemo(() => {
-    let tsw = windowed.map((f) => {
-      const mk = sign * (f.markoutsBps[hzIdx] ?? 0);
+    let tsw = windowedHz.map((f) => {
+      const mk = sign * (f.markoutsBps[hzIdx] as number);
       return { f, mk, pnl: mk / 1e4 * f.usd };
     });
     tsw = lbWinners
@@ -92,7 +106,7 @@ export function LeaderboardTab() {
       : tsw.filter((x) => x.pnl < 0).sort((a, b) => a.pnl - b.pnl);
     return tsw.slice(0, lbTop);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [windowed, lbHz, lbMk, lbWinners, lbTop, d.frame]);
+  }, [windowedHz, lbMk, lbWinners, lbTop, d.frame]);
 
   // percentile cell — '+'/'' + toFixed(2), green > 0.02 / red < -0.02 / dim.
   const pcell = (v: number) => ({

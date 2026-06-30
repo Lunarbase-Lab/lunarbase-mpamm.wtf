@@ -164,6 +164,11 @@ export interface Fill {
   baseAmount: number;
   /** realized execution price, quote-per-base. */
   execPx: number;
+  /** true when execPx/baseAmount are NOT a realized price (e.g. Clober's base
+   *  leg needs the deferred tick→price; spec §5.2). Such fills carry exact USD
+   *  but no fill-quality markouts — consumers must not treat their markouts as
+   *  real execution edge. */
+  pxApprox?: boolean;
   txHash: string;
   /** human label for the `to`/router address. */
   to: string;

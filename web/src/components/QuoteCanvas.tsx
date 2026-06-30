@@ -50,11 +50,17 @@ export function QuoteCanvas() {
       ctx.fillStyle = '#6b6d76'; ctx.textAlign = 'right'; ctx.fillText(p.toFixed(5), padL - 6, y + 3);
     }
     ctx.textAlign = 'center';
-    for (let s = 0; s <= 60; s += 10) {
-      const i = (1 - s / 60) * (N - 1), x = X(i);
+    // time axis spans (N-1) samples at the service's real quote cadence, not a
+    // hardcoded 500ms (audit I6).
+    const cadenceMs = d.state?.quoteCadenceMs ?? 500;
+    const spanSec = ((N - 1) * cadenceMs) / 1000;
+    const TICKS = 6;
+    for (let k = 0; k <= TICKS; k++) {
+      const i = (k / TICKS) * (N - 1), x = X(i);
+      const secAgo = Math.round((1 - k / TICKS) * spanSec);
       ctx.strokeStyle = 'rgba(255,255,255,0.035)';
       ctx.beginPath(); ctx.moveTo(x, padT); ctx.lineTo(x, h - padB); ctx.stroke();
-      ctx.fillStyle = '#5e6068'; ctx.fillText('-' + s + 's', x, h - 7);
+      ctx.fillStyle = '#5e6068'; ctx.fillText('-' + secAgo + 's', x, h - 7);
     }
 
     const stepPath = (arr: number[]) => {

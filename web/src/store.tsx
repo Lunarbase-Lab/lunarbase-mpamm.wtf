@@ -129,7 +129,9 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
         ]);
         if (!mounted.v) return;
         setState(m.state); setQuotes(m.quotes); setVolume(m.volume);
-        setFills(hist && hist.length ? hist : m.fills);
+        // /api/fills is newest-first; store oldest-first so the cap in
+        // upsertFill drops the genuine oldest, not the newest (audit B4).
+        setFills(hist && hist.length ? [...hist].reverse() : m.fills);
         quotesRef.current = m.quotes;
         reseed();
         setFrame((f) => f + 1);

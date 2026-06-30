@@ -209,10 +209,14 @@ export class LiveDataSource extends BaseSource {
 
   // ── fills ───────────────────────────────────────────────────────────────────
   private async tailFills(): Promise<void> {
+    const monUsd = this.bybit.monUsd();
+    // Defer the whole tail until the Bybit mid is warm — else MON-quote Clober
+    // fills would be dropped and markout anchors would be wrong. lastBlock is not
+    // advanced, so the same range is re-decoded once the mid arrives (audit C3).
+    if (monUsd <= 0) return;
     const head = await publicClient.getBlockNumber();
     if (head <= this.lastBlock) return;
     const from = this.lastBlock + 1n;
-    const monUsd = this.bybit.monUsd();
     const fresh: Fill[] = [];
 
     if (this.lfj.length) {
@@ -247,7 +251,9 @@ export class LiveDataSource extends BaseSource {
   private ingest(f: Fill): void {
     this.fills.push(f);
     if (this.fills.length > 400) this.fills.shift();
-    this.pending.add(f);
+    // Only fills with a realized price get markouts; pxApprox (Clober, no
+    // tick→price yet) stay markoutsBps=null rather than fabricate ~0 (audit B1).
+    if (!f.pxApprox) this.pending.add(f);
     this.dirty.add(f);
     const d = this.today();
     if (f.protocol === 'LFJ') d.lfj += f.usd;

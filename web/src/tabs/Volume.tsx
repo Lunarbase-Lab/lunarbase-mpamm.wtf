@@ -82,8 +82,9 @@ export function VolumeTab() {
     const todayT = dTot[nd - 1], prevT = dTot[nd - 2];
     const todayChg = prevT ? (todayT - prevT) / prevT * 100 : 0;
 
-    const totalSwaps = days.reduce((a, x) => a + x.swaps, 0);
-    const swaps = grand ? Math.round(totalSwaps * allTot / grand) : 0;
+    // total swap count is venue-complete (both venues) and does NOT scale with
+    // the USD scope toggle — DailyVolume.swaps has no per-scope split (audit I5).
+    const swaps = days.reduce((a, x) => a + x.swaps, 0);
 
     const W = 1000, HC = 260;
     let cum = 0;

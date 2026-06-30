@@ -186,7 +186,7 @@ export function ExecutionTab() {
               <div style={{ textAlign: 'right', color: C.faint2 }}>{r.n}</div>
             </div>
           ))}
-          <div style={{ fontSize: 9, color: C.faint3, marginTop: 9 }}>p50 = median spread (bps vs same-source mid) · σ = spread stdev · ★ = tightest p50 in window</div>
+          <div style={{ fontSize: 9, color: C.faint3, marginTop: 9 }}>p50 = median round-trip spread (bps, bid/ask vs the Bybit MONUSDT mid) · σ = spread stdev · ★ = tightest p50 in window</div>
         </div>
       </Panel>
     </div>
