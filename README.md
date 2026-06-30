@@ -52,8 +52,14 @@ built around a `DataSource` interface with two implementations:
 - **`SimDataSource`** — a server-side port of the design's `DCLogic` simulation, run only when
   `DATA_SOURCE=sim` (offline development / demos).
 
-REST: `GET /api/markets`, `/api/quotes`, `/api/volume`, `/api/fills`, `/api/health`.
+REST: `GET /api/markets`, `/api/quotes`, `/api/volume`, `/api/fills?days=&limit=`, `/api/health`.
 WS `/stream` channels: `state`, `quotes`, `fill`, `volume`.
+
+**What's persisted:** the SQLite DB holds the durable history — daily-volume aggregates, the
+`lastProcessedBlock` cursor, and **decoded fills** (expensive to re-derive: log decode + a
+Bybit-mid markout join, so they're stored with a retention window rather than re-fetched). The
+current quote matrix stays in memory (replace-on-poll, cheap). So the tape / markouts / leaderboard
+are served from real history (`/api/fills?days=N`), not just a live buffer.
 
 ### Live mode is a persist-forward indexer
 
@@ -70,8 +76,8 @@ history:
   seed it from LFJ analytics).
 - **Resume:** a same-day restart gap-fills `getLogs` from `lastProcessedBlock` → tip (no gap);
   a cold start or cross-midnight restart starts forward at the tip.
-- **Forward:** every block, decoded fills advance today's bucket; a throttled snapshot persists
-  the aggregates + cursor.
+- **Forward:** every block, decoded fills advance today's bucket and are persisted; a throttled
+  snapshot writes the aggregates + cursor + new/aged fills, pruning past the retention window.
 
 So history grows organically and survives restarts, using only public-RPC-friendly recent-range
 `getLogs` — no archive node required for ongoing operation. Clober *quotes* still need a recent
