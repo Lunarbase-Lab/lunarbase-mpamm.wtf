@@ -1,6 +1,8 @@
 import express from 'express';
 import cors from 'cors';
 import { createServer, type Server } from 'node:http';
+import { existsSync } from 'node:fs';
+import { join } from 'node:path';
 import { WebSocketServer, WebSocket } from 'ws';
 import { STREAM_PATH, type MarketsResponse, type StreamMessage } from '@shared';
 import type { DataSource } from './datasource/index.js';
@@ -48,6 +50,17 @@ export function startServer(source: DataSource): Server {
     if (to) days = days.filter((d) => d.utcDay <= to);
     res.json(days);
   });
+
+  // Production single-service: serve the built frontend same-origin (so the
+  // relative /api + /stream URLs just work). Skipped in dev (Vite serves it).
+  if (config.webDist && existsSync(config.webDist)) {
+    app.use(express.static(config.webDist));
+    app.get('*', (req, res, next) => {
+      if (req.path.startsWith('/api') || req.path === STREAM_PATH) return next();
+      res.sendFile(join(config.webDist, 'index.html'));
+    });
+    console.log(`[mpamm] serving frontend from ${config.webDist}`);
+  }
 
   const httpServer = createServer(app);
   const wss = new WebSocketServer({ server: httpServer, path: STREAM_PATH });

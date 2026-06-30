@@ -94,3 +94,38 @@ view-model from the contract data:
 - **Volume** — KPIs, stacked daily notional, cumulative + market-share, protocol breakdown.
 - **Markouts** — live swap tape with 0/5/10/30/60s markouts and an outlier feed.
 - **Leaderboard** — percentile leaderboard and biggest winners/losers by markout.
+
+## Deploy
+
+It ships as a **single container**: one Node process serves the REST/WS API **and** the built
+frontend on the same origin (so the SPA's relative `/api` + `/stream` URLs need no config). Because
+it's a stateful WS indexer (persistent Bybit/Monad connections, a poll loop, SQLite), host it on a
+**persistent-process** platform — not serverless/edge. Run **one replica** (single-writer SQLite +
+in-memory state).
+
+The [`Dockerfile`](Dockerfile) builds the frontend and runs the server serving it.
+
+### Railway (configured)
+
+[`railway.json`](railway.json) points Railway at the Dockerfile with a `/api/health` healthcheck.
+
+1. Create a Railway project from this repo (or `railway up`). It builds the Dockerfile.
+2. Add a **Volume** mounted at `/data` so the SQLite history survives deploys (`DB_PATH=/data/mpamm.db`
+   is baked into the image).
+3. Set service **Variables**:
+   - `RPC_HTTP_URL`, `RPC_WS_URL` — a **trusted Monad node** (the public endpoint works but is
+     rate-limited and `getLogs`-capped).
+   - optional: `DATA_SOURCE=sim` (demo), `TAKER_BPS`, `SEED_SINCE_UTC`, `LFJ_API_KEY` (seeds LFJ
+     history), `SUBGRAPH_URL`.
+   - Do **not** set `PORT`/`API_PORT` — Railway injects `PORT` and the image maps it to `API_PORT`.
+4. Generate a public domain. Dashboard at `/`, API at `/api/*`, stream at `/stream` (wss).
+
+### Any container host / local
+
+```bash
+docker build -t mpamm .
+docker run --rm -p 8787:8787 -v mpamm-data:/data \
+  -e RPC_HTTP_URL=https://your-monad-node -e RPC_WS_URL=wss://your-monad-node \
+  mpamm
+# open http://localhost:8787
+```
