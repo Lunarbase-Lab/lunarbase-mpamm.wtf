@@ -28,8 +28,9 @@ COPY --from=build /app/shared ./shared
 COPY --from=build /app/server ./server
 COPY --from=build /app/web/package.json ./web/package.json
 COPY --from=build /app/web/dist ./web/dist
-# Persist the SQLite history across deploys (mount a volume at /data).
-VOLUME ["/data"]
+# SQLite history persists at /data — mount a volume there (Railway Volume, or
+# `docker run -v mpamm-data:/data`). No VOLUME instruction: Railway's builder
+# rejects it, and `-v` works without it.
 EXPOSE 8787
 # Railway (and most PaaS) inject $PORT; map it to API_PORT (8787 locally).
 CMD ["sh", "-c", "API_PORT=${PORT:-8787} npm -w server run start"]
