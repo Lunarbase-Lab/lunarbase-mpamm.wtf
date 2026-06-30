@@ -21,13 +21,16 @@ async function gql(url: string, query: string): Promise<any> {
   return res.json();
 }
 
-/** Sum a `*DayData` entity's volumeUSD by UTC day, paginating by skip. */
-async function sumByDay(url: string, entity: string, sinceTs: number): Promise<Map<string, number>> {
+/** Sum BookDayData.volumeUSD by UTC day for a specific set of books (the
+ *  dashboard's MON/stable scope), paginating by skip. */
+async function sumBookDayData(url: string, bookIds: string[], sinceTs: number): Promise<Map<string, number>> {
   const byDay = new Map<string, number>();
+  if (!bookIds.length) return byDay;
+  const idset = bookIds.map((i) => `"${i}"`).join(',');
   let skip = 0;
   for (let page = 0; page < 8; page++) {
-    const j = await gql(url, `{ ${entity}(first: 1000, skip: ${skip}, orderBy: date, orderDirection: asc, where: { date_gte: ${sinceTs} }) { date volumeUSD } }`);
-    const arr: Array<{ date: number; volumeUSD: string }> | undefined = j?.data?.[entity];
+    const j = await gql(url, `{ bookDayDatas(first: 1000, skip: ${skip}, orderBy: date, orderDirection: asc, where: { book_in: [${idset}], date_gte: ${sinceTs} }) { date volumeUSD } }`);
+    const arr: Array<{ date: number; volumeUSD: string }> | undefined = j?.data?.bookDayDatas;
     if (!Array.isArray(arr)) break;
     for (const r of arr) {
       const day = new Date(r.date * 1000).toISOString().slice(0, 10);
@@ -39,12 +42,18 @@ async function sumByDay(url: string, entity: string, sinceTs: number): Promise<M
   return byDay;
 }
 
-/** Historical Clober daily volume keyed by UTC day. Throws on transport error. */
-export async function seedCloberDaily(url: string, sinceUtc: string): Promise<Map<string, CloberDay>> {
+/**
+ * Historical Clober daily volume keyed by UTC day, scoped to the dashboard's
+ * MON/stable universe (spec D5). venue = Σ over all MON/stable books; vault
+ * (propAMM cut) = Σ over the vault books among them. Throws on transport error.
+ */
+export async function seedCloberDaily(
+  url: string, sinceUtc: string, venueBookIds: string[], vaultBookIds: string[],
+): Promise<Map<string, CloberDay>> {
   const sinceTs = Math.floor(Date.parse(sinceUtc + 'T00:00:00Z') / 1000);
   const [venue, vault] = await Promise.all([
-    sumByDay(url, 'bookDayDatas', sinceTs),
-    sumByDay(url, 'poolDayDatas', sinceTs),
+    sumBookDayData(url, venueBookIds, sinceTs),
+    sumBookDayData(url, vaultBookIds, sinceTs),
   ]);
   const out = new Map<string, CloberDay>();
   for (const [day, v] of venue) out.set(day, { venue: v, vault: 0 });

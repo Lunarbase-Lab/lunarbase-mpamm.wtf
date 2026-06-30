@@ -59,25 +59,22 @@ export class LiveDataSource extends BaseSource {
     try { this.lfj = await discoverLfj(); } catch (e) { this.notes.push('LFJ discovery failed: ' + (e as Error).message); }
     this.lfjByAddr = new Map(this.lfj.map((m) => [m.pair.toLowerCase(), m]));
 
+    // Clober book cache (subgraph) — before history so the volume seed can be
+    // scoped to these MON/stable books (the public RPC can't enumerate them).
+    // Live quotes/fills still hit the chain. Falls back to a recent-Open scan.
+    try {
+      this.clober = await discoverCloberViaSubgraph(config.subgraphUrl);
+      this.notes.push(`Clober: ${this.clober.markets.length} market(s) from subgraph (${this.clober.books.size} books, ${this.clober.vault.size} vault)`);
+    } catch {
+      this.notes.push('Clober subgraph discovery failed; trying recent Open logs');
+      try { this.clober = await discoverClober(2000); } catch { /* leave empty */ }
+    }
+
     await this.initHistory();
 
     await this.poll().catch(() => undefined);
     this.timer = setInterval(() => { void this.tick(); }, config.quoteIntervalMs);
     this.persistTimer = setInterval(() => this.persist(), config.persistMs);
-
-    // Clober quoting/decoding needs a book cache. The public RPC can't enumerate
-    // books (singleton BookManager) and its getLogs is range-capped, so seed the
-    // book ids + unitSize + vault set from the subgraph; live quotes/fills then
-    // hit the chain. Falls back to a recent-Open-log scan if the subgraph fails.
-    void discoverCloberViaSubgraph(config.subgraphUrl)
-      .then((c) => {
-        this.clober = c;
-        this.notes.push(`Clober: ${c.markets.length} market(s) from subgraph (${c.books.size} books, ${c.vault.size} vault)`);
-      })
-      .catch(async () => {
-        this.notes.push('Clober subgraph discovery failed; trying recent Open logs');
-        try { this.clober = await discoverClober(2000); } catch { /* leave empty */ }
-      });
   }
 
   stop(): void {
@@ -110,7 +107,10 @@ export class LiveDataSource extends BaseSource {
     // 2. refresh closed Clober days from the subgraph (cheap deep-history seed)
     const today = utcDay();
     try {
-      const seed = await seedCloberDaily(config.subgraphUrl, config.seedSinceUtc);
+      // scope the volume seed to the discovered MON/stable books (spec D5)
+      const venueBookIds = [...this.clober.books.values()].map((b) => String(b.bookId));
+      const vaultBookIds = [...this.clober.vault];
+      const seed = await seedCloberDaily(config.subgraphUrl, config.seedSinceUtc, venueBookIds, vaultBookIds);
       let seeded = 0;
       for (const [day, cd] of seed) {
         if (day >= today) continue; // today is owned by live tailing
