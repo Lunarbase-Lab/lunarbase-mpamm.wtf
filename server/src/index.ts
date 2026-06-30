@@ -3,7 +3,6 @@ import { startServer } from './server.js';
 import { SimDataSource } from './datasource/sim.js';
 import { LiveDataSource } from './datasource/live.js';
 import { probeChain } from './chain/rpc.js';
-import { VolumeStore } from './db.js';
 import type { DataSource } from './datasource/index.js';
 
 async function pickSource(): Promise<DataSource> {
@@ -34,24 +33,13 @@ async function main(): Promise<void> {
     }
   }
 
-  // Persist closed daily-volume buckets (spec §6.2).
-  let store: VolumeStore | undefined;
-  try {
-    store = new VolumeStore();
-    store.upsertMany(source.getVolume());
-    // persist only closed (non-partial) days — today's partial bucket lives in
-    // memory and would otherwise rewrite the file every tick.
-    source.on('message', (m) => { if (m.ch === 'volume' && !m.data.partial && store) store.upsert(m.data); });
-  } catch (e) {
-    console.warn('[mpamm] volume persistence disabled:', (e as Error).message);
-  }
-
+  // History persistence is owned by the live source (DB = source of truth,
+  // spec §6.2); the simulator regenerates its history each boot.
   const server = startServer(source);
 
   const shutdown = () => {
     console.log('\n[mpamm] shutting down');
     source.stop();
-    store?.close();
     server.close(() => process.exit(0));
     setTimeout(() => process.exit(0), 1500);
   };

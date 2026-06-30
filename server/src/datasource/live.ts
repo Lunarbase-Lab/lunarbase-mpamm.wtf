@@ -1,34 +1,39 @@
 import { BaseSource } from './index.js';
 import {
-  MARKETS, SIZES_USD, MARKOUT_HORIZONS, HISTORY_START_UTC, ADDR,
+  MARKETS, SIZES_USD, MARKOUT_HORIZONS, ADDR,
   type DataSourceMode, type MarketState, type QuoteSnapshot, type QuoteRow, type Fill, type DailyVolume,
 } from '@shared';
 import { config } from '../config.js';
 import { publicClient, getLogsChunked } from '../chain/rpc.js';
-import { lbPairAbi, bookManagerAbi, routerGatewayAbi } from '../chain/abis.js';
+import { lbPairAbi, bookManagerAbi } from '../chain/abis.js';
 import { BybitFeed } from '../bybit.js';
 import { UsdPricer } from '../pricer.js';
 import { discoverLfj, quoteLfj, decodeLfjSwap, type LbMarket } from '../venues/lfj.js';
 import { discoverClober, quoteClober, decodeCloberTake, type CloberBook, type CloberMarket } from '../venues/clober.js';
-import { utcDay, clamp } from '../util.js';
+import { VolumeStore } from '../db.js';
+import { seedCloberDaily } from '../seed/subgraph.js';
+import { utcDay } from '../util.js';
 
 /**
- * LiveDataSource — real Monad RPC + Bybit (spec §5).
+ * LiveDataSource — real Monad RPC + Bybit, run as a persist-forward indexer.
+ *
  *  - quotes: Multicall3 eth_call (LFJ getSwapOut + Clober getExpectedOutput) and
  *    Bybit book-walk, at block cadence.
- *  - fills:  getLogs tail (LFJ Swap, Clober Take, Router Swap), priced via the
- *    stable quote leg, bucketed into UTC-day volume.
- *  - markouts: each fill joined to the Bybit mid at 0/5/10/30/60s.
- *
- * Deep history (block 31.6M) cannot be backfilled from the public RPC (getLogs
- * range cap), so the daily-volume history is seeded and advanced live; the note
- * is surfaced in MarketState.
+ *  - fills:  getLogs tail (LFJ Swap, Clober Take), priced via the stable quote
+ *    leg, bucketed into UTC-day volume; each fill joined to the Bybit mid for
+ *    0/5/10/30/60s markouts.
+ *  - history: the SQLite DB is authoritative. On boot we load persisted days +
+ *    lastProcessedBlock, refresh closed Clober days from the subgraph (the only
+ *    cheap source of deep history), and either gap-fill from the last processed
+ *    block (same-day restart) or start forward from the tip. LFJ history has no
+ *    keyless source, so it accumulates forward from first run.
  */
 export class LiveDataSource extends BaseSource {
   readonly mode: DataSourceMode = 'live';
 
   private bybit = new BybitFeed();
   private pricer = new UsdPricer(() => this.bybit.monUsd());
+  private store = new VolumeStore(config.dbPath);
   private lfj: LbMarket[] = [];
   private lfjByAddr = new Map<string, LbMarket>();
   private clober: { markets: CloberMarket[]; books: Map<string, CloberBook>; vault: Set<string> } = { markets: [], books: new Map(), vault: new Set() };
@@ -40,34 +45,39 @@ export class LiveDataSource extends BaseSource {
   private midHist: { t: number; mid: number }[] = [];
   private lastBlock = 0n;
   private timer?: ReturnType<typeof setInterval>;
+  private persistTimer?: ReturnType<typeof setInterval>;
   private notes: string[] = [];
   private block = 0;
 
   async start(): Promise<void> {
-    // Critical path — fast: Bybit + LFJ discovery, then start serving.
     await this.bybit.start();
     try { this.lfj = await discoverLfj(); } catch (e) { this.notes.push('LFJ discovery failed: ' + (e as Error).message); }
     this.lfjByAddr = new Map(this.lfj.map((m) => [m.pair.toLowerCase(), m]));
-    this.notes.push('volume history seeded (deep on-chain backfill needs an archive node)');
 
-    this.seedHistory();
-    this.lastBlock = await publicClient.getBlockNumber();
-    this.block = Number(this.lastBlock);
+    await this.initHistory();
+
     await this.poll().catch(() => undefined);
     this.timer = setInterval(() => { void this.tick(); }, config.quoteIntervalMs);
+    this.persistTimer = setInterval(() => this.persist(), config.persistMs);
 
-    // Clober discovery is slow on the public RPC (range-capped getLogs); run it
-    // in the background so the service is responsive immediately. Quotes/fills
-    // for Clober start flowing once it resolves.
+    // Clober quoting/decoding needs a book cache; discovery is slow on the
+    // public RPC (range-capped getLogs), so resolve it in the background.
     void discoverClober(2000)
       .then((c) => {
         this.clober = c;
-        if (!c.markets.length) this.notes.push('no recent Clober books found on public RPC');
-        else this.notes.push(`Clober: ${c.markets.length} market(s), ${c.vault.size} vault book id(s)`);
+        if (!c.markets.length) this.notes.push('no recent Clober books found on public RPC (live Clober quotes need an archive node or subgraph book seed)');
+        else this.notes.push(`Clober: ${c.markets.length} live market(s), ${c.vault.size} vault book id(s)`);
       })
       .catch(() => this.notes.push('Clober discovery degraded'));
   }
-  stop(): void { if (this.timer) clearInterval(this.timer); this.bybit.stop(); }
+
+  stop(): void {
+    if (this.timer) clearInterval(this.timer);
+    if (this.persistTimer) clearInterval(this.persistTimer);
+    this.persist();
+    this.bybit.stop();
+    this.store.close();
+  }
 
   getState(): MarketState {
     return {
@@ -79,6 +89,55 @@ export class LiveDataSource extends BaseSource {
   getQuotes(): QuoteSnapshot { return this.quotes; }
   getFills(): Fill[] { return this.fills; }
   getVolume(): DailyVolume[] { return this.days.map((d) => ({ ...d })); }
+
+  // ── history: load + seed + resume (persist-forward indexer) ─────────────────
+  private async initHistory(): Promise<void> {
+    // 1. authoritative persisted history
+    this.days = this.store.all();
+
+    // 2. refresh closed Clober days from the subgraph (cheap deep-history seed)
+    const today = utcDay();
+    try {
+      const seed = await seedCloberDaily(config.subgraphUrl, config.seedSinceUtc);
+      let seeded = 0;
+      for (const [day, cd] of seed) {
+        if (day >= today) continue; // today is owned by live tailing
+        let row = this.days.find((d) => d.utcDay === day);
+        if (!row) { row = { utcDay: day, lfj: 0, cloberVenue: 0, cloberVault: 0, swaps: 0, partial: false }; this.days.push(row); }
+        row.cloberVenue = cd.venue;
+        row.cloberVault = cd.vault;
+        row.partial = false;
+        seeded++;
+      }
+      this.notes.push(`seeded ${seeded} closed Clober day(s) from subgraph; LFJ history accumulates forward`);
+    } catch (e) {
+      this.notes.push('Clober history seed unavailable (' + (e as Error).message + '); history grows forward');
+    }
+    this.days.sort((a, b) => (a.utcDay < b.utcDay ? -1 : 1));
+    this.today(); // ensure today's partial bucket, rolling any stale "today" closed
+    this.store.upsertMany(this.days);
+
+    // 3. resume point — same-day gap-fill, else start at tip
+    const head = await publicClient.getBlockNumber();
+    this.block = Number(head);
+    const lpb = this.store.getMeta('lastProcessedBlock');
+    const lpd = this.store.getMeta('lastProcessedDay');
+    if (lpb && lpd === today && head - BigInt(lpb) <= BigInt(config.gapFillMaxBlocks)) {
+      this.lastBlock = BigInt(lpb);
+      this.notes.push(`resuming: gap-filling ${head - BigInt(lpb)} block(s) since last run`);
+    } else {
+      this.lastBlock = head;
+      this.notes.push(lpb ? 'restart across day boundary — today builds forward' : 'cold start — today builds forward from now');
+    }
+  }
+
+  private persist(): void {
+    try {
+      this.store.upsertMany(this.days);
+      this.store.setMeta('lastProcessedBlock', String(this.lastBlock));
+      this.store.setMeta('lastProcessedDay', utcDay());
+    } catch { /* non-fatal */ }
+  }
 
   // ── poll loop ───────────────────────────────────────────────────────────────
   private async tick(): Promise<void> {
@@ -138,7 +197,6 @@ export class LiveDataSource extends BaseSource {
     const monUsd = this.bybit.monUsd();
     const fresh: Fill[] = [];
 
-    // LFJ Swap across discovered pairs
     if (this.lfj.length) {
       const swapEvent = lbPairAbi.find((x: any) => x.type === 'event' && x.name === 'Swap');
       const logs = (await getLogsChunked({
@@ -152,7 +210,6 @@ export class LiveDataSource extends BaseSource {
       }
     }
 
-    // Clober Take
     if (this.clober.books.size) {
       const takeEvent = bookManagerAbi.find((x: any) => x.type === 'event' && x.name === 'Take');
       const logs = (await getLogsChunked({
@@ -173,7 +230,6 @@ export class LiveDataSource extends BaseSource {
     this.fills.push(f);
     if (this.fills.length > 400) this.fills.shift();
     this.pending.add(f);
-    // bucket into today's volume
     const d = this.today();
     if (f.protocol === 'LFJ') d.lfj += f.usd;
     else { d.cloberVenue += f.usd; if (f.scope === 'vault') d.cloberVault += f.usd; }
@@ -192,8 +248,7 @@ export class LiveDataSource extends BaseSource {
         const at = f.ts + MARKOUT_HORIZONS[i] * 1000;
         if (now < at) { complete = false; continue; }
         const mid = this.midNear(at);
-        if (mid <= 0 || f.execPx <= 0) { f.markoutsBps[i] = 0; }
-        else f.markoutsBps[i] = ss * (mid / f.execPx - 1) * 1e4;
+        f.markoutsBps[i] = mid <= 0 || f.execPx <= 0 ? 0 : ss * (mid / f.execPx - 1) * 1e4;
         changed = true;
       }
       if (changed) this.emitMsg({ ch: 'fill', data: f });
@@ -206,7 +261,7 @@ export class LiveDataSource extends BaseSource {
     return best || this.bybit.mid();
   }
 
-  // ── volume history ────────────────────────────────────────────────────────
+  /** Today's bucket — rolls the previous day closed at UTC midnight. */
   private today(): DailyVolume {
     const day = utcDay();
     let d = this.days[this.days.length - 1];
@@ -216,29 +271,5 @@ export class LiveDataSource extends BaseSource {
       this.days.push(d);
     }
     return d;
-  }
-  private seedHistory(): void {
-    const start = Date.parse(HISTORY_START_UTC + 'T00:00:00Z');
-    const today = Date.parse(utcDay() + 'T00:00:00Z');
-    const n = Math.max(2, Math.round((today - start) / 86_400_000) + 1);
-    for (let i = 0; i < n; i++) {
-      const dt = new Date(start + i * 86_400_000);
-      const ramp = Math.min(1, i / 20);
-      let total = 0.06 + ramp * ramp * (3.2 + Math.random() * 1.8);
-      if (Math.random() < 0.13) total *= 1.5 + Math.random() * 1.5;
-      const partial = i === n - 1;
-      const sv = clamp(0.09 + 0.16 * (i / n) + Math.random() * 0.04, 0, 0.4);
-      const sc = 0.24 + Math.random() * 0.06;
-      const vault = total * sv, clob = total * sc, lfj = total - vault - clob;
-      this.days.push({
-        utcDay: dt.toISOString().slice(0, 10),
-        lfj: lfj * 1e6, cloberVenue: (clob + vault) * 1e6, cloberVault: vault * 1e6,
-        swaps: Math.round(total * (95 + Math.random() * 45)),
-        partial,
-      });
-    }
-    // today's bucket starts fresh and accumulates real fills
-    const last = this.days[this.days.length - 1];
-    if (last) { last.lfj = 0; last.cloberVenue = 0; last.cloberVault = 0; last.swaps = 0; last.partial = true; }
   }
 }

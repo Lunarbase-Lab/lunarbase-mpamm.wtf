@@ -23,7 +23,22 @@ export class VolumeStore {
         swaps        INTEGER NOT NULL DEFAULT 0,
         partial      INTEGER NOT NULL DEFAULT 0
       );
+      CREATE TABLE IF NOT EXISTS meta (
+        key   TEXT PRIMARY KEY,
+        value TEXT
+      );
     `);
+  }
+
+  getMeta(key: string): string | undefined {
+    const row = this.db.prepare(`SELECT value FROM meta WHERE key = ?`).get(key) as { value: string } | undefined;
+    return row?.value;
+  }
+
+  setMeta(key: string, value: string): void {
+    this.db
+      .prepare(`INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value`)
+      .run(key, value);
   }
 
   upsert(d: DailyVolume): void {

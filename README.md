@@ -56,14 +56,28 @@ built around a `DataSource` interface with two implementations:
 REST: `GET /api/markets`, `/api/quotes`, `/api/volume`, `/api/fills`, `/api/health`.
 WS `/stream` channels: `state`, `quotes`, `fill`, `volume`.
 
-### Live-mode notes (public RPC)
+### Live mode is a persist-forward indexer
 
 The public `https://rpc.monad.xyz` endpoint supports `eth_call` (quotes ✓) and short `getLogs`
 ranges (live fill tailing ✓), but **caps `getLogs` to ~100 blocks**, so deep history (from the
-Clober deploy block ~31.6M) cannot be backfilled — daily-volume history is therefore seeded and
-advanced live, and this is surfaced in `MarketState.notes`. Clober book discovery scans only a
-recent window, so Clober quotes appear only when recent `Open` events exist. A trusted archive
-node (spec §8) removes both limitations. The simulator has no such gaps.
+Clober deploy block ~31.6M) can't be backfilled at the tip. Rather than depend on a deep archival
+replay, live mode **indexes forward** — the SQLite DB is the source of truth for daily-volume
+history:
+
+- **Boot:** load persisted days + `lastProcessedBlock` from the DB.
+- **Seed (once, cheap):** closed Clober days are filled from the Goldsky subgraph
+  (`Σ BookDayData.volumeUSD` = whole-venue, `Σ PoolDayData.volumeUSD` = vault/propAMM cut).
+  LFJ has no keyless source, so it **accumulates forward** from first run (set `LFJ_API_KEY` to
+  seed it from LFJ analytics).
+- **Resume:** a same-day restart gap-fills `getLogs` from `lastProcessedBlock` → tip (no gap);
+  a cold start or cross-midnight restart starts forward at the tip.
+- **Forward:** every block, decoded fills advance today's bucket; a throttled snapshot persists
+  the aggregates + cursor.
+
+So history grows organically and survives restarts, using only public-RPC-friendly recent-range
+`getLogs` — no archive node required for ongoing operation. Clober *quotes* still need a recent
+book cache (discovery scans a recent window), so they appear only when recent `Open` events exist;
+an archive node or a subgraph book-seed would remove that too. The simulator has no such gaps.
 
 ## Frontend (`web/`)
 
