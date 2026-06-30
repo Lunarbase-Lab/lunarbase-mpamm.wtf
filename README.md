@@ -129,3 +129,27 @@ docker run --rm -p 8787:8787 -v mpamm-data:/data \
   mpamm
 # open http://localhost:8787
 ```
+
+### CI / auto-deploy (GitHub Actions → Railway)
+
+[`.github/workflows/ci.yml`](.github/workflows/ci.yml) runs on every push + PR:
+
+- **verify** — `npm ci` → typecheck (server + web) → build the frontend → build the Docker image.
+- **deploy** — only on **push to `main`**, and only **after `verify` is green** (`railway up`), so a
+  broken commit never ships. Runs under a GitHub `production` environment (add a required reviewer
+  there if you want manual approval gates).
+
+One-time setup:
+
+1. Push this repo to GitHub.
+2. Create the Railway project + service once (dashboard, or `railway init` then a first `railway up`),
+   add the `/data` volume, and set the RPC variables (see above).
+3. Create a Railway **project token**: Project → Settings → Tokens (scope it to the prod environment).
+4. In GitHub → repo **Settings → Secrets and variables → Actions**:
+   - Secret **`RAILWAY_TOKEN`** = the project token.
+   - Variable **`RAILWAY_SERVICE`** = the service name.
+   - Variable **`RAILWAY_PUBLIC_URL`** (optional) = your domain, shown on the deployment.
+5. **Disconnect Railway's own GitHub auto-deploy** for `main` (Service → Settings) so the Action is
+   the single deploy path — otherwise a push triggers two builds.
+
+Now every green push to `main` auto-deploys.
