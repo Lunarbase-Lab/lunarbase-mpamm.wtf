@@ -9,11 +9,10 @@ async function main(): Promise<void> {
   // A live boot failure is fatal — we never silently serve simulated data in
   // production. A process supervisor should restart the service.
   const source: DataSource = config.source === 'sim' ? new SimDataSource() : new LiveDataSource();
-  console.log(`[mpamm] starting ${source.mode} source`);
-  await source.start();
 
-  // History persistence is owned by the live source (DB = source of truth,
-  // spec §6.2); the simulator regenerates its history each boot.
+  // Bind the port up front so a dev proxy / client can connect immediately —
+  // endpoints serve empty snapshots during the (multi-second) live warm-up, then
+  // the WS stream + snapshot refetch fill them in. (No connect-refused window.)
   const server = startServer(source);
 
   const shutdown = () => {
@@ -24,6 +23,10 @@ async function main(): Promise<void> {
   };
   process.on('SIGINT', shutdown);
   process.on('SIGTERM', shutdown);
+
+  console.log(`[mpamm] warming up ${source.mode} source…`);
+  await source.start();
+  console.log(`[mpamm] ${source.mode} source ready`);
 }
 
 main().catch((e) => {
