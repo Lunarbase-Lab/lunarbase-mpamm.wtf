@@ -17,6 +17,18 @@ export function startServer(source: DataSource): Server {
   const app = express();
   app.use(cors());
 
+  // HSTS (production only): once a browser has seen this over HTTPS, it forces
+  // HTTPS for a year — including subdomains (www.*) — so there's no plain-http
+  // hop to cache as "not secure". Guarded by NODE_ENV so it never pins localhost
+  // in dev; TLS is terminated at Render's edge, which only serves us over HTTPS.
+  // No `preload` directive — that's a separate, hard-to-reverse hstspreload.org opt-in.
+  if (process.env.NODE_ENV === 'production') {
+    app.use((_req, res, next) => {
+      res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+      next();
+    });
+  }
+
   app.get('/api/health', (_req, res) => {
     res.json({ ok: true, source: source.mode, block: source.getState().block });
   });
