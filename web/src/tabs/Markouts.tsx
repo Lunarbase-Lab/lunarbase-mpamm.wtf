@@ -65,11 +65,13 @@ export function MarkoutsTab() {
   const outliers = useMemo(() => {
     const since = Date.now() - 86_400_000;
     return d.fills
-      .filter((f) => f.ts >= since && !f.pxApprox && f.markoutsBps[0] != null)
+      .filter((f) => f.ts >= since && !f.pxApprox && f.markoutsBps[0] != null
+        // CLOBER vault scope: exclude independent (whole-venue) Clober takes here too.
+        && !(d.clScope === 'vault' && f.protocol === 'Clober' && f.scope !== 'vault'))
       .map((f) => ({ f, pnl: ((f.markoutsBps[0] as number) / 1e4) * f.usd }))
       .sort((a, b) => Math.abs(b.pnl) - Math.abs(a.pnl))
       .slice(0, 18);
-  }, [d.fills]);
+  }, [d.fills, d.clScope]);
 
   return (
     <div>

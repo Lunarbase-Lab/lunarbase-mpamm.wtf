@@ -112,9 +112,10 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
         const r = rowFor(q, v, pair, size);
         if (!r) continue;
         for (let i = 0; i < N; i++) {
-          const j = 1 + (Math.random() * 2 - 1) * 0.0008;
-          if (r.bidPx > 0) next[v].bid.push(r.bidPx * j);
-          if (r.askPx > 0) next[v].ask.push(r.askPx * j);
+          // flat pre-fill (no jitter) — the chart is a discrete STEP chart, so the
+          // pre-fill holds flat and real streaming quotes step it (no smoothing).
+          if (r.bidPx > 0) next[v].bid.push(r.bidPx);
+          if (r.askPx > 0) next[v].ask.push(r.askPx);
         }
       }
     }

@@ -5,18 +5,34 @@ import { hexA } from '../theme';
 
 const N = 120;
 
-/** Streaming bid/ask quote chart — a port of DCLogic.draw(): step-area lines per
- *  venue (solid = ask, dashed = bid), price grid, and a -60s..0 time axis. */
+/**
+ * Streaming bid/ask QUOTE chart — a STEP (staircase) chart, because quotes are
+ * discrete events (one sample per poll/block): hold each sample flat until the
+ * next, then step. No smoothing / linear interpolation. Per venue: solid ask +
+ * dashed bid step lines and a translucent stepped ribbon between them; the
+ * widest-spread venues' fills paint first (underneath) so tighter venues stay
+ * legible, then all strokes on top. Port of the design's draw() (data-quote).
+ *
+ * Reliability (design parity): repaint is driven by the data cadence (`d.frame`)
+ * — which survives tab unmount/remount — plus a mount rAF + setTimeout backup for
+ * late layout and a resize handler; the canvas ref self-heals via the
+ * `data-quote` marker if it's missing or detached.
+ */
 export function QuoteCanvas() {
   const d = useDashboard();
   const ref = useRef<HTMLCanvasElement | null>(null);
+  const paintRef = useRef<() => void>(() => {});
 
-  useEffect(() => {
-    const cv = ref.current;
+  // rebuilt every render so it closes over the latest series / selection
+  paintRef.current = () => {
+    // self-heal a missing/detached ref (racy mount, or a stale node after a
+    // tab-away-and-back) by re-acquiring the marked canvas.
+    let cv = ref.current;
+    if (!cv || !cv.isConnected) cv = ref.current = document.querySelector('canvas[data-quote]');
     if (!cv) return;
     const dpr = window.devicePixelRatio || 1;
     const w = cv.clientWidth, h = cv.clientHeight;
-    if (!w || !h) return;
+    if (!w || !h) return; // laid out yet? the mount backup retries
     if (cv.width !== Math.round(w * dpr) || cv.height !== Math.round(h * dpr)) {
       cv.width = Math.round(w * dpr); cv.height = Math.round(h * dpr);
     }
@@ -50,8 +66,7 @@ export function QuoteCanvas() {
       ctx.fillStyle = '#6b6d76'; ctx.textAlign = 'right'; ctx.fillText(p.toFixed(5), padL - 6, y + 3);
     }
     ctx.textAlign = 'center';
-    // time axis spans (N-1) samples at the service's real quote cadence, not a
-    // hardcoded 500ms (audit I6).
+    // time axis spans (N-1) samples at the service's real quote cadence (audit I6).
     const cadenceMs = d.state?.quoteCadenceMs ?? 500;
     const spanSec = ((N - 1) * cadenceMs) / 1000;
     const TICKS = 6;
@@ -68,23 +83,51 @@ export function QuoteCanvas() {
       arr.forEach((p, i) => {
         const x = X(i), y = Y(p);
         if (!i) ctx.moveTo(x, y);
-        else { ctx.lineTo(x, Y(arr[i - 1])); ctx.lineTo(x, y); }
+        else { ctx.lineTo(x, Y(arr[i - 1])); ctx.lineTo(x, y); } // hold, then step
       });
     };
 
-    for (const v of active) {
-      const c = VENUE_COLOR[v as Venue], s = d.series[v];
-      if (s.ask.length < 2) continue;
-      // filled band between ask (top) and bid (bottom)
+    // FILLS first — widest-spread band underneath so tighter venues stay legible.
+    const spreadOf = (v: Venue) => {
+      const r = d.quotes?.rows.find((x) => x.venue === v && x.market === d.pair && x.sizeUsd === d.size);
+      return r ? Math.abs(r.spreadBps) : Infinity; // no live quote → treat as widest (underneath)
+    };
+    const byW = [...active].sort((a, b) => spreadOf(b) - spreadOf(a));
+    for (const v of byW) {
+      const s = d.series[v];
+      const n = Math.min(s.ask.length, s.bid.length);
+      if (n < 2) continue; // need both sides for a ribbon (one-sided venues skip)
       ctx.beginPath();
-      s.ask.forEach((p, i) => { const x = X(i), y = Y(p); i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); });
-      for (let i = s.bid.length - 1; i >= 0; i--) ctx.lineTo(X(i), Y(s.bid[i]));
-      ctx.closePath(); ctx.fillStyle = hexA(c, 0.05); ctx.fill();
-      // ask solid, bid dashed
-      ctx.lineWidth = 1.3; ctx.strokeStyle = c; ctx.setLineDash([]); stepPath(s.ask); ctx.stroke();
-      ctx.lineWidth = 1; ctx.setLineDash([3, 3]); stepPath(s.bid); ctx.stroke(); ctx.setLineDash([]);
+      ctx.moveTo(X(0), Y(s.ask[0]));
+      for (let i = 1; i < n; i++) { ctx.lineTo(X(i), Y(s.ask[i - 1])); ctx.lineTo(X(i), Y(s.ask[i])); } // stepped top (ask)
+      ctx.lineTo(X(n - 1), Y(s.bid[n - 1]));
+      for (let i = n - 1; i > 0; i--) { ctx.lineTo(X(i - 1), Y(s.bid[i])); ctx.lineTo(X(i - 1), Y(s.bid[i - 1])); } // stepped bottom (bid)
+      ctx.closePath();
+      ctx.fillStyle = hexA(VENUE_COLOR[v], 0.08); ctx.fill();
     }
-  }, [d.frame, d.venues, d.pair, d.size, d.series]);
 
-  return <canvas ref={ref} style={{ display: 'block', width: '100%', height: 360 }} />;
+    // STROKES on top — solid stepped ask, dashed stepped bid (each side drawn
+    // independently so a one-sided venue still shows its real line).
+    for (const v of active) {
+      const s = d.series[v];
+      ctx.strokeStyle = VENUE_COLOR[v];
+      if (s.ask.length >= 2) { ctx.lineWidth = 1.5; ctx.setLineDash([]); stepPath(s.ask); ctx.stroke(); }
+      if (s.bid.length >= 2) { ctx.lineWidth = 1.1; ctx.setLineDash([3, 3]); stepPath(s.bid); ctx.stroke(); ctx.setLineDash([]); }
+    }
+  };
+
+  // repaint on the data cadence + on venue/pair/size changes (survives remount)
+  useEffect(() => { paintRef.current(); }, [d.frame, d.venues, d.pair, d.size, d.series]);
+
+  // mount: paint now + backups for late layout, and repaint on resize
+  useEffect(() => {
+    const p = () => paintRef.current();
+    p();
+    const raf = requestAnimationFrame(p);
+    const t = setTimeout(p, 80);
+    window.addEventListener('resize', p);
+    return () => { cancelAnimationFrame(raf); clearTimeout(t); window.removeEventListener('resize', p); };
+  }, []);
+
+  return <canvas ref={ref} data-quote="1" style={{ display: 'block', width: '100%', height: 360 }} />;
 }
