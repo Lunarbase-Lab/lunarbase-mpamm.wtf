@@ -59,7 +59,7 @@ function rowFor(q: QuoteSnapshot | null, venue: Venue, market: string, size: num
 
 export function DashboardProvider({ children }: { children: ReactNode }) {
   const [ui, setUi] = useState<UiState>({
-    tab: 'exec', pair: 'MON/USDC', size: 1000,
+    tab: 'exec', pair: 'MON/USDC', size: 100,
     venues: { LFJ: true, Clober: true, Vault: true, Bybit: true },
     clScope: 'venue',
     mkProto: 'ALL', mkSide: 'ALL', mkSize: 'ANY', mkPaused: false,

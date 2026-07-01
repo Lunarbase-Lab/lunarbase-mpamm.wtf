@@ -70,6 +70,20 @@ export function ExecutionTab() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [d.frame, d.venues]);
 
+  // hint: an active propAMM venue with no executable quote at the selected size
+  // but a real one at another size (Clober/Vault books are thin — often only the
+  // smallest size is two-sided/one-sided-real) so it doesn't read as "missing".
+  const hint = useMemo(() => {
+    const q = d.quotes; if (!q) return null;
+    const notes = active.filter((v) => v !== 'Bybit').map((v) => {
+      if (q.rows.some((r) => r.venue === v && r.market === pair && r.sizeUsd === size)) return null;
+      const at = SIZES_USD.filter((s) => q.rows.some((r) => r.venue === v && r.market === pair && r.sizeUsd === s));
+      return at.length ? `${v} quotes ${pair} at ${at.map(sizeLabel).join(' / ')}` : null;
+    }).filter(Boolean);
+    return notes.length ? notes.join(' · ') : null;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [d.quotes, d.venues, pair, size, d.frame]);
+
   return (
     <div>
       <div style={{ padding: '18px 18px 10px' }}>
@@ -143,6 +157,11 @@ export function ExecutionTab() {
             ))}
           </div>
         </div>
+        {hint && (
+          <div style={{ padding: '0 14px 10px', fontSize: 9.5, color: C.faint2, lineHeight: 1.5 }}>
+            ⓘ {hint} — no executable quote at {sizeLabel(size)} (thin / one-sided book at this size).
+          </div>
+        )}
       </Panel>
 
       {/* BID_ASK_DEPTH */}
