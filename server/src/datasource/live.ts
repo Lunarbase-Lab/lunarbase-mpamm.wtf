@@ -114,6 +114,17 @@ export class LiveDataSource extends BaseSource {
     // reflected in the persisted volume, so a gap-fill that re-decodes them
     // (e.g. after a crash before the cursor advanced) won't re-count them.
     for (const f of this.fills) this.countedIds.add(f.id);
+    // Resume markout aging across a restart (M1): a fill persisted with only its
+    // early horizons (T+0/T+5) must go back on the pending queue if a later
+    // horizon is still in the future, or ageMarkouts (which only walks `pending`)
+    // would leave those cells null forever. Horizons that elapsed unobserved
+    // during the downtime stay null — ageMarkouts won't fabricate them.
+    const bootMs = Date.now();
+    for (const f of this.fills) {
+      if (MARKOUT_HORIZONS.some((h, i) => f.markoutsBps[i] == null && bootMs < f.ts + h * 1000)) {
+        this.pending.add(f);
+      }
+    }
 
     // 2. refresh closed Clober days from the subgraph (cheap deep-history seed)
     const today = utcDay();
@@ -373,13 +384,19 @@ export class LiveDataSource extends BaseSource {
   /** Join each pending fill to the Bybit mid at each horizon as it ages. */
   private ageMarkouts(): void {
     const now = Date.now();
+    // A horizon that elapsed before we had any mid to observe it (e.g. during a
+    // restart's downtime) can't be computed faithfully — leave it null rather
+    // than fabricate it from a much-later mid (M1). midHist is pushed each poll
+    // before this runs, so [0] is the oldest retained observation.
+    const earliestMid = this.midHist.length ? this.midHist[0].t : now;
     for (const f of [...this.pending]) {
       const ss = f.side === 'buy' ? 1 : -1;
       let changed = false, complete = true;
       for (let i = 0; i < MARKOUT_HORIZONS.length; i++) {
         if (f.markoutsBps[i] != null) continue;
         const at = f.ts + MARKOUT_HORIZONS[i] * 1000;
-        if (now < at) { complete = false; continue; }
+        if (now < at) { complete = false; continue; }   // horizon not reached yet
+        if (at < earliestMid) continue;                  // elapsed unobserved → leave null (not incomplete)
         const mid = this.midNear(at);
         f.markoutsBps[i] = mid <= 0 || f.execPx <= 0 ? 0 : ss * (mid / f.execPx - 1) * 1e4;
         changed = true;

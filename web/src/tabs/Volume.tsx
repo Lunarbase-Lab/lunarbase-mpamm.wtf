@@ -205,9 +205,9 @@ export function VolumeTab() {
           <div style={{ fontSize: 10, marginTop: 6, color: vm.k7css }}>{vm.k7chg} <span style={{ color: C.faint2 }}>vs prior 7d</span></div>
         </div>
         <div style={{ padding: '14px 16px', borderRight: `1px solid ${C.line2}` }}>
-          <div style={{ fontSize: 9, color: C.faint2, letterSpacing: '.06em' }}>TOTAL SWAPS</div>
+          <div style={{ fontSize: 9, color: C.faint2, letterSpacing: '.06em' }}>INDEXED SWAPS</div>
           <div style={{ fontSize: 22, fontWeight: 600, marginTop: 8, color: C.text }}>{vm.kSwaps}</div>
-          <div style={{ fontSize: 10, color: C.faint2, marginTop: 6 }}>both venues</div>
+          <div style={{ fontSize: 10, color: C.faint2, marginTop: 6 }} title="On-chain swaps decoded forward + reconciled from retained fills, both venues. Subgraph-seeded Clober history has volume but no per-swap count, so it isn't included here.">both venues · indexed</div>
         </div>
         <div style={{ padding: '14px 16px', borderRight: `1px solid ${C.line2}` }}>
           <div style={{ fontSize: 9, color: C.faint2, letterSpacing: '.06em' }}>PEAK DAY</div>
