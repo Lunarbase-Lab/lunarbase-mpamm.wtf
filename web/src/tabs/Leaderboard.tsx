@@ -52,10 +52,11 @@ export function LeaderboardTab() {
   }, [fills, lbWin, lbShow, d.frame]);
 
   // Only fills that have a realized markout at the selected horizon feed the
-  // percentile / PnL / sparkline math — never coerce null→0 (audit C2). This
-  // also excludes pxApprox (Clober, no realized price) fills (audit B1).
+  // percentile / PnL / sparkline math — never coerce null→0 (audit C2). Exclude
+  // pxApprox fills EXPLICITLY (not just via the null-markout proxy): the shared
+  // contract says their execPx/markouts are not real execution edge (spec §5.2).
   const windowedHz = useMemo(
-    () => windowed.filter((f) => f.markoutsBps[hzIdx] != null),
+    () => windowed.filter((f) => !f.pxApprox && f.markoutsBps[hzIdx] != null),
     [windowed, hzIdx],
   );
 

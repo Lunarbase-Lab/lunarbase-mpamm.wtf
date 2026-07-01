@@ -142,9 +142,11 @@ WebSocket `eth_subscribe(logs)` → one normalized `Fill`:
 - **Fills ring buffer** — last N fills for tape cold-start.
 - **Market state** — per-pair reserves/active-bin (LFJ), best bid/ask (Clober); slower cadence than the quote poll.
 
-### 5.4 Historical backfill — purely on-chain
-On cold start (and to fill gaps), **replay logs** with the same decoders as the live stream: LFJ `Swap` and Clober `Take`, priced via the stable quote leg (exact for MON/stable pairs). No venue REST or subgraph dependency. The Clober subgraph (`bookDayDatas`/`poolDayDatas`) and the LFJ analytics API remain available as optional cross-checks/accelerators, not as sources of truth.
-- Chunk `getLogs` block ranges if the provider caps them.
+### 5.4 Historical backfill — persist-forward indexer + subgraph seed
+The public RPC caps `getLogs` to short ranges, so deep on-chain replay from the Clober deploy block is impractical. Live mode is therefore a **persist-forward indexer**: the SQLite DB is the source of truth for daily-volume history — loaded on boot, advanced forward from decoded fills (LFJ `Swap`, Clober `Take`, priced via the stable quote leg, exact for MON/stable pairs), and resumed from `lastProcessedBlock` with a same-day `getLogs` gap-fill (a cross-midnight or cold start begins forward at the tip).
+- **Clober closed days** are seeded once from the **Goldsky subgraph** (`Σ bookDayDatas.volumeUSD` = whole-venue, scoped to the discovered MON/stable books; `Σ poolDayDatas.volumeUSD` = the vault/propAMM cut) — authoritative for days before the indexer ran, since the RPC can't reach them. LFJ has no keyless historical source, so it accumulates forward from first run.
+- Fills carry a **deterministic `txHash:logIndex` id** and are counted idempotently, and daily volume + the `lastProcessedBlock` cursor + fills are persisted in **one transaction**, so a re-tail / gap-fill / restart can never double-count (H1).
+- Chunk `getLogs` block ranges (the provider caps them).
 - Historical USD for non-stable pairs would need a historical price feed → out of v1 scope (consistent with the MON/stable focus).
 
 ### 5.5 Bybit benchmark + pricing

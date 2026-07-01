@@ -90,7 +90,10 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
       const s = seriesRef.current[v];
       if (r.bidPx > 0) { s.bid.push(r.bidPx); if (s.bid.length > N) s.bid.shift(); }
       if (r.askPx > 0) { s.ask.push(r.askPx); if (s.ask.length > N) s.ask.shift(); }
-      if (!r.oneSided && r.bidPx > 0 && r.askPx > 0) {
+      // only a real, full-size two-sided quote feeds the spread distribution —
+      // a partial (size-exhausted, filledFull=false) or one-sided quote is not
+      // executable at the requested notional, so it must not skew the stats.
+      if (!r.oneSided && r.filledFull && r.bidPx > 0 && r.askPx > 0) {
         const smp = samplesRef.current[v];
         smp.push(r.spreadBps);
         if (smp.length > 600) smp.shift();

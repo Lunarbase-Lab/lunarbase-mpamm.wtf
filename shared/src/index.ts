@@ -204,7 +204,16 @@ export interface DailyVolume {
   cloberVenue: number;
   /** USD notional, Clober vault (propAMM) cut only. */
   cloberVault: number;
+  /** total landed swaps across both venues, forward-indexed. Seeded closed
+   *  Clober days carry volume but no per-swap count (the subgraph exposes
+   *  volumeUSD only), so they contribute 0 here. */
   swaps: number;
+  /** per-source swap counts (forward-indexed), so the breakdown shows real
+   *  counts per protocol/scope instead of a USD-prorated estimate.
+   *  cloberVaultSwaps ⊆ cloberSwaps; swaps = lfjSwaps + cloberSwaps. */
+  lfjSwaps: number;
+  cloberSwaps: number;
+  cloberVaultSwaps: number;
   /** true for today's still-accumulating bucket. */
   partial: boolean;
 }

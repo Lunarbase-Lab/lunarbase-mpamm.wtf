@@ -3,7 +3,7 @@ import { TOKENS } from '@shared';
 import { publicClient } from '../chain/rpc.js';
 import { lbFactoryAbi, lbPairAbi } from '../chain/abis.js';
 import { ADDR } from '@shared';
-import { fromUnits, toUnits, nextId, shortHex } from '../util.js';
+import { fromUnits, toUnits, shortHex } from '../util.js';
 import type { UsdPricer } from '../pricer.js';
 
 /** A discovered LFJ Liquidity Book market (MON vs one stable). */
@@ -156,7 +156,7 @@ export async function quoteLfj(
 /** Decode an LFJ Swap log into a normalized Fill. amounts are two uint128
  *  packed in one bytes32 (low128=X, high128=Y); no byte reversal (spec §5.2). */
 export function decodeLfjSwap(
-  log: { args: any; transactionHash: string; blockNumber: bigint; address: string },
+  log: { args: any; transactionHash: string; blockNumber: bigint; address: string; logIndex: number },
   market: LbMarket,
   tsMs: number,
 ): Fill | null {
@@ -183,7 +183,9 @@ export function decodeLfjSwap(
   const execPx = stableAmount / baseAmount;
 
   return {
-    id: nextId('lfj'),
+    // deterministic id: a (txHash, logIndex) pair is unique per on-chain event,
+    // so a re-tail / gap-fill / restart re-decode dedupes instead of duplicating.
+    id: `lfj-${log.transactionHash.toLowerCase()}-${log.logIndex}`,
     protocol: 'LFJ', source: 'lfj-swap', scope: 'venue',
     market: market.market, side: isBuy ? 'buy' : 'sell', category: 'DIRECT',
     usd: stableAmount, baseAmount, execPx,

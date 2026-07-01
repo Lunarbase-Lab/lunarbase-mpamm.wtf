@@ -26,28 +26,33 @@ export function ExecutionTab() {
         name: v, color: VENUE_COLOR[v], spread: r?.spreadBps ?? 0, bid: r?.bidBps ?? 0, ask: r?.askBps ?? 0,
         // realized buy-MON cost vs Bybit-as-taker, + = on-chain worse (spec §4.2)
         vsCex: r?.cexAskBps, has: !!r,
-        // a one-sided quote has only one executable side (the other is thin/backstop)
+        // a one-sided quote has only one executable side (the other is thin/backstop);
+        // a partial quote (filledFull=false) exhausts before the full notional.
         oneSided: !!r?.oneSided, hasBid: (r?.bidPx ?? 0) > 0, hasAsk: (r?.askPx ?? 0) > 0,
+        full: r?.filledFull ?? true,
       };
     }).filter((x) => x.has);
-    // two-sided rows first (sorted by spread), one-sided rows (no real spread) after
-    leg.sort((a, b) => (a.oneSided ? 1 : 0) - (b.oneSided ? 1 : 0) || a.spread - b.spread);
+    // executable full-size two-sided rows first (by spread), then partial, then one-sided
+    const rank = (x: { oneSided: boolean; full: boolean }) => (x.oneSided ? 2 : !x.full ? 1 : 0);
+    leg.sort((a, b) => rank(a) - rank(b) || a.spread - b.spread);
     return leg;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [d.quotes, d.venues, pair, size, d.frame]);
-  const tight = legend.find((x) => !x.oneSided)?.name; // tightest real two-sided spread
+  // tightest = tightest genuinely-executable quote (full-size + two-sided)
+  const tight = legend.find((x) => !x.oneSided && x.full)?.name;
 
   // depth ladder — per size, per venue bar widths
   const depth = useMemo(() => SIZES_USD.map((sz) => {
-    const segsBid: { w: number; color: string }[] = [];
-    const segsAsk: { w: number; color: string }[] = [];
+    const segsBid: { w: number; color: string; full: boolean }[] = [];
+    const segsAsk: { w: number; color: string; full: boolean }[] = [];
     for (const v of active) {
       const r = row(v, sz);
       if (!r) continue;
       const wb = Math.min(50, Math.abs(Math.min(0, r.bidBps)) / AX * 50);
       const wa = Math.min(50, Math.max(0, r.askBps) / AX * 50);
-      segsBid.push({ w: wb, color: VENUE_COLOR[v] });
-      segsAsk.push({ w: wa, color: VENUE_COLOR[v] });
+      // dim a venue's bar at a size it can't fill fully (filledFull=false)
+      segsBid.push({ w: wb, color: VENUE_COLOR[v], full: r.filledFull });
+      segsAsk.push({ w: wa, color: VENUE_COLOR[v], full: r.filledFull });
     }
     segsBid.sort((a, b) => b.w - a.w); segsAsk.sort((a, b) => b.w - a.w);
     return { label: sizeLabel(sz), highlight: sz === size, segsBid, segsAsk };
@@ -145,9 +150,11 @@ export function ExecutionTab() {
                   <span style={{ color: C.text2 }}>{r.name}</span>
                   {r.oneSided
                     ? <span title="only one side is executable at this size — the other is thin / far-tick backstop" style={{ fontSize: 7.5, color: C.amber, border: `1px solid ${hexA(C.amber, 0.45)}`, borderRadius: 3, padding: '0 3px', letterSpacing: '.04em' }}>1-SIDED</span>
-                    : <span style={{ fontSize: 9, color: r.name === tight ? C.green : 'transparent' }}>★</span>}
+                    : !r.full
+                      ? <span title="liquidity exhausts before the full notional — the price shown is for a partial fill, not executable at the full size" style={{ fontSize: 7.5, color: C.amber, border: `1px solid ${hexA(C.amber, 0.45)}`, borderRadius: 3, padding: '0 3px', letterSpacing: '.04em' }}>PARTIAL</span>
+                      : <span style={{ fontSize: 9, color: r.name === tight ? C.green : 'transparent' }}>★</span>}
                 </div>
-                <div style={{ textAlign: 'right', color: r.oneSided ? C.faint2 : r.name === tight ? C.green : C.text, fontWeight: 600 }}>{r.oneSided ? '—' : r.spread.toFixed(2)}</div>
+                <div style={{ textAlign: 'right', color: r.oneSided || !r.full ? C.faint2 : r.name === tight ? C.green : C.text, fontWeight: 600 }}>{r.oneSided ? '—' : r.spread.toFixed(2)}</div>
                 <div style={{ textAlign: 'right', color: r.hasBid ? C.red : C.faint2 }}>{r.hasBid ? sgn(r.bid) : 'n/a'}</div>
                 <div style={{ textAlign: 'right', color: r.hasAsk ? C.green : C.faint2 }}>{r.hasAsk ? sgn(r.ask) : 'n/a'}</div>
                 <div style={{ textAlign: 'right', color: r.vsCex == null ? C.faint2 : r.vsCex > 0.05 ? C.red : r.vsCex < -0.05 ? C.green : C.dim, fontWeight: 600 }}>
@@ -177,8 +184,8 @@ export function ExecutionTab() {
               <div style={{ width: 54, textAlign: 'right', fontSize: 11, color: C.dim }}>{rowd.label}</div>
               <div style={{ position: 'relative', flex: 1, height: 20 }}>
                 <div style={{ position: 'absolute', left: '50%', top: -3, bottom: -3, width: 1, background: 'rgba(53,208,160,.55)', zIndex: 5 }} />
-                {rowd.segsBid.map((s, i) => <div key={'b' + i} style={{ position: 'absolute', top: 2, height: 16, right: '50%', width: `${s.w.toFixed(2)}%`, background: hexA(s.color, 0.9), borderRadius: '2px 0 0 2px' }} />)}
-                {rowd.segsAsk.map((s, i) => <div key={'a' + i} style={{ position: 'absolute', top: 2, height: 16, left: '50%', width: `${s.w.toFixed(2)}%`, background: hexA(s.color, 0.9), borderRadius: '0 2px 2px 0' }} />)}
+                {rowd.segsBid.map((s, i) => <div key={'b' + i} style={{ position: 'absolute', top: 2, height: 16, right: '50%', width: `${s.w.toFixed(2)}%`, background: hexA(s.color, s.full ? 0.9 : 0.32), borderRadius: '2px 0 0 2px' }} />)}
+                {rowd.segsAsk.map((s, i) => <div key={'a' + i} style={{ position: 'absolute', top: 2, height: 16, left: '50%', width: `${s.w.toFixed(2)}%`, background: hexA(s.color, s.full ? 0.9 : 0.32), borderRadius: '0 2px 2px 0' }} />)}
               </div>
             </div>
           ))}

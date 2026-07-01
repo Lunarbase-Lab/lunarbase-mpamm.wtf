@@ -2,7 +2,7 @@ import type { QuoteRow, Fill, Side, FillCategory } from '@shared';
 import { ADDR, TOKENS, isMonAddress, isMonSymbol } from '@shared';
 import { publicClient, getLogsChunked } from '../chain/rpc.js';
 import { bookViewerAbi, bookManagerAbi, liquidityVaultAbi, CLOBER_MIN_PRICE } from '../chain/abis.js';
-import { fromUnits, toUnits, nextId, shortHex } from '../util.js';
+import { fromUnits, toUnits, shortHex } from '../util.js';
 import type { UsdPricer } from '../pricer.js';
 
 /**
@@ -267,7 +267,7 @@ export function cloberTickToPrice(tick: number, monIsBase: boolean, stableDecima
  * `tsMs` is the block timestamp (audit B2); `router` tags routed flow (audit I3).
  */
 export function decodeCloberTake(
-  log: { args: any; transactionHash: string; blockNumber: bigint },
+  log: { args: any; transactionHash: string; blockNumber: bigint; logIndex: number },
   books: Map<string, CloberBook>, vault: Set<string>, tsMs: number, router?: RouterInfo,
 ): Fill | null {
   const a = log.args; if (!a) return null;
@@ -304,7 +304,8 @@ export function decodeCloberTake(
   const isVault = vault.has(bookId);
 
   return {
-    id: nextId('clb'),
+    // deterministic id (txHash:logIndex) so re-tail/gap-fill/restart dedupes.
+    id: `clb-${log.transactionHash.toLowerCase()}-${log.logIndex}`,
     protocol: 'Clober', source: 'clober-take', scope: isVault ? 'vault' : 'venue',
     market: `MON/${stableSym}`, side, category: router?.category ?? 'DIRECT',
     usd, baseAmount, execPx,

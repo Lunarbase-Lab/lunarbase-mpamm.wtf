@@ -138,10 +138,15 @@ export class SimDataSource extends BaseSource {
       const vault = total * sv, clob = total * sc, lfj = total - vault - clob;
       const sw = Math.round(total * (95 + Math.random() * 45));
       swaps += sw;
+      // per-source swap counts (split by USD share) so the breakdown shows real
+      // per-protocol counts rather than a UI-side proration (parity with live).
+      const lfjSwaps = Math.round(sw * (lfj / total));
+      const cloberSwaps = sw - lfjSwaps;
+      const cloberVaultSwaps = Math.round(cloberSwaps * (vault / (clob + vault || 1)));
       this.days.push({
         utcDay: dt.toISOString().slice(0, 10),
         lfj: lfj * 1e6, cloberVenue: (clob + vault) * 1e6, cloberVault: vault * 1e6,
-        swaps: sw, partial,
+        swaps: sw, lfjSwaps, cloberSwaps, cloberVaultSwaps, partial,
       });
     }
     this.totalSwaps = swaps;
@@ -151,8 +156,14 @@ export class SimDataSource extends BaseSource {
     if (!d) return;
     const add = (0.004 + Math.random() * 0.02) * 1e6;
     const v = add * (0.14 + Math.random() * 0.12), c = add * (0.24 + Math.random() * 0.06), l = add - v - c;
-    d.lfj += l; d.cloberVault += v; d.cloberVenue += c + v; d.swaps += Math.round(1 + Math.random() * 2);
-    this.totalSwaps += d.swaps;
+    d.lfj += l; d.cloberVault += v; d.cloberVenue += c + v;
+    const swAdd = Math.round(1 + Math.random() * 2);
+    const lfjAdd = Math.round(swAdd * (l / add));
+    const clobAdd = swAdd - lfjAdd;
+    d.lfjSwaps += lfjAdd; d.cloberSwaps += clobAdd;
+    d.cloberVaultSwaps += Math.round(clobAdd * (v / (c + v || 1)));
+    d.swaps += swAdd;
+    this.totalSwaps += swAdd;
   }
 
   // ── fills (DCLogic.makeFill / seedFills / spawnFill) ────────────────────────

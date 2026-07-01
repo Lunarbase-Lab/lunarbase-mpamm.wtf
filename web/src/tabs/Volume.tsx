@@ -11,6 +11,8 @@ interface SeriesDef {
   name: string;
   color: string;
   val: (d: DailyVolume) => number;
+  /** real per-source swap count for this series (no USD proration). */
+  swaps: (d: DailyVolume) => number;
 }
 
 export function VolumeTab() {
@@ -23,12 +25,12 @@ export function VolumeTab() {
 
     const series: SeriesDef[] = scope === 'vault'
       ? [
-        { name: 'LFJ', color: C.blue, val: (x) => x.lfj },
-        { name: 'Clober · Vault', color: C.purpleL, val: (x) => x.cloberVault },
+        { name: 'LFJ', color: C.blue, val: (x) => x.lfj, swaps: (x) => x.lfjSwaps },
+        { name: 'Clober · Vault', color: C.purpleL, val: (x) => x.cloberVault, swaps: (x) => x.cloberVaultSwaps },
       ]
       : [
-        { name: 'LFJ', color: C.blue, val: (x) => x.lfj },
-        { name: 'Clober', color: C.cyan, val: (x) => x.cloberVenue },
+        { name: 'LFJ', color: C.blue, val: (x) => x.lfj, swaps: (x) => x.lfjSwaps },
+        { name: 'Clober', color: C.cyan, val: (x) => x.cloberVenue, swaps: (x) => x.cloberSwaps },
       ];
 
     const f = (m: number) => fMillions(m);
@@ -82,8 +84,9 @@ export function VolumeTab() {
     const todayT = dTot[nd - 1], prevT = dTot[nd - 2];
     const todayChg = prevT ? (todayT - prevT) / prevT * 100 : 0;
 
-    // total swap count is venue-complete (both venues) and does NOT scale with
-    // the USD scope toggle — DailyVolume.swaps has no per-scope split (audit I5).
+    // KPI "total swaps" is venue-complete (both venues), independent of the
+    // Clober scope toggle. The per-protocol breakdown below uses the real
+    // per-source counts (lfjSwaps/cloberSwaps/cloberVaultSwaps), not a proration.
     const swaps = days.reduce((a, x) => a + x.swaps, 0);
 
     const W = 1000, HC = 260;
@@ -116,13 +119,17 @@ export function VolumeTab() {
       days.forEach((x) => { const v = s.val(x); if (v > pv) { pv = v; pd = mmdd(x.utcDay); } });
       return { v: f(pv), day: pd };
     };
-    const brk = series.map((s) => {
+    // real per-source swap counts (no USD proration): the vault series counts
+    // only vault takes, the venue series counts whole-venue Clober takes (I5).
+    const brkSwaps = series.map((s) => days.reduce((a, x) => a + s.swaps(x), 0));
+    const brkSwapTotal = brkSwaps.reduce((a, b) => a + b, 0);
+    const brk = series.map((s, k) => {
       const tot = days.reduce((a, x) => a + s.val(x), 0);
       const pk = pPeak(s);
       return {
         name: s.name, color: s.color, vol: f(tot), share: share(tot),
         shareW: (allTot ? tot / allTot * 100 : 0).toFixed(1),
-        swaps: Math.round(allTot ? swaps * tot / allTot : 0).toLocaleString(),
+        swaps: brkSwaps[k].toLocaleString(),
         peakV: pk.v, peakDay: pk.day,
         first: s.name.indexOf('Vault') >= 0 ? '2026-05-15' : '2026-05-13',
       };
@@ -147,7 +154,7 @@ export function VolumeTab() {
       msTopPct: (series[series.length - 1].val(days[nd - 1]) / lt * 100).toFixed(1) + '%',
       msBotName: series[0].name,
       msBotPct: (series[0].val(days[nd - 1]) / lt * 100).toFixed(1) + '%',
-      brk, brkTotalVol: f(allTot), brkTotalSwaps: swaps.toLocaleString(),
+      brk, brkTotalVol: f(allTot), brkTotalSwaps: brkSwapTotal.toLocaleString(),
       volScopeNote: scope === 'vault' ? 'Clober = vault (propAMM) cut' : 'Clober = whole-venue',
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps

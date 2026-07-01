@@ -47,6 +47,9 @@ export class LiveDataSource extends BaseSource {
   private fills: Fill[] = [];
   private pending = new Set<Fill>();
   private dirty = new Set<Fill>();
+  /** ids already counted into the volume buckets (kept in sync with the fills
+   *  window) — makes ingest idempotent so a re-decode never double-counts. */
+  private countedIds = new Set<string>();
   private midHist: { t: number; mid: number }[] = [];
   private lastBlock = 0n;
   private timer?: ReturnType<typeof setInterval>;
@@ -107,6 +110,10 @@ export class LiveDataSource extends BaseSource {
     // load recent fills for live serving; drop rows past the retention window
     this.store.pruneFills(Date.now() - config.fillsRetentionDays * 86_400_000);
     this.fills = this.store.recentFills(400);
+    // seed the dedup guard with the persisted window: these fills are already
+    // reflected in the persisted volume, so a gap-fill that re-decodes them
+    // (e.g. after a crash before the cursor advanced) won't re-count them.
+    for (const f of this.fills) this.countedIds.add(f.id);
 
     // 2. refresh closed Clober days from the subgraph (cheap deep-history seed)
     const today = utcDay();
@@ -119,7 +126,7 @@ export class LiveDataSource extends BaseSource {
       for (const [day, cd] of seed) {
         if (day >= today) continue; // today is owned by live tailing
         let row = this.days.find((d) => d.utcDay === day);
-        if (!row) { row = { utcDay: day, lfj: 0, cloberVenue: 0, cloberVault: 0, swaps: 0, partial: false }; this.days.push(row); }
+        if (!row) { row = this.emptyDay(day, false); this.days.push(row); }
         row.cloberVenue = cd.venue;
         row.cloberVault = cd.vault;
         row.partial = false;
@@ -131,6 +138,7 @@ export class LiveDataSource extends BaseSource {
     }
     this.days.sort((a, b) => (a.utcDay < b.utcDay ? -1 : 1));
     this.today(); // ensure today's partial bucket, rolling any stale "today" closed
+    this.reconcileSwapCounts(); // derive per-source swap counts from retained fills
     this.store.upsertMany(this.days);
 
     // 3. resume point — same-day gap-fill, else start at tip
@@ -149,11 +157,43 @@ export class LiveDataSource extends BaseSource {
 
   private persist(): void {
     try {
-      this.store.upsertMany(this.days);
-      this.store.setMeta('lastProcessedBlock', String(this.lastBlock));
-      this.store.setMeta('lastProcessedDay', utcDay());
-      if (this.dirty.size) { this.store.upsertFills([...this.dirty]); this.dirty.clear(); }
-    } catch { /* non-fatal */ }
+      // one transaction: volume + cursor + fills together, so a crash can never
+      // leave the volume ahead of the cursor and let a gap-fill re-count (H1).
+      this.store.persistSnapshot(
+        this.days,
+        { lastProcessedBlock: String(this.lastBlock), lastProcessedDay: utcDay() },
+        this.dirty.size ? [...this.dirty] : [],
+      );
+      this.dirty.clear();
+    } catch { /* non-fatal — dirty retained, retried next tick */ }
+  }
+
+  /** A fresh zeroed daily bucket. */
+  private emptyDay(day: string, partial: boolean): DailyVolume {
+    return { utcDay: day, lfj: 0, cloberVenue: 0, cloberVault: 0, swaps: 0, lfjSwaps: 0, cloberSwaps: 0, cloberVaultSwaps: 0, partial };
+  }
+
+  /**
+   * Derive per-source swap counts (lfj / clober / vault) from the retained fills
+   * — the authoritative per-fill record — so the protocol breakdown is accurate
+   * across the retention window immediately (the schema migration adds those
+   * columns zeroed). Days with no retained fills (older than retention, or the
+   * subgraph-seeded Clober history) keep 0: we have their volume, not their
+   * per-source swap count. Runs once at boot, before forward tailing.
+   */
+  private reconcileSwapCounts(): void {
+    const bySrc = new Map<string, { lfj: number; clob: number; vault: number }>();
+    for (const f of this.store.fillsSince(0, 50_000)) {
+      const day = utcDay(f.ts);
+      const e = bySrc.get(day) ?? { lfj: 0, clob: 0, vault: 0 };
+      if (f.protocol === 'LFJ') e.lfj++;
+      else { e.clob++; if (f.scope === 'vault') e.vault++; }
+      bySrc.set(day, e);
+    }
+    for (const d of this.days) {
+      const c = bySrc.get(d.utcDay);
+      if (c) { d.lfjSwaps = c.lfj; d.cloberSwaps = c.clob; d.cloberVaultSwaps = c.vault; }
+    }
   }
 
   /** Historical fills from the DB (the leaderboard/markouts query real windows). */
@@ -289,8 +329,18 @@ export class LiveDataSource extends BaseSource {
   }
 
   private ingest(f: Fill): void {
+    // Idempotent (H1): a fill already counted — a re-tail / gap-fill / restart
+    // re-decode of the same on-chain event (now with a deterministic id) — must
+    // never advance the volume buckets again. countedIds tracks the live window;
+    // atomic persist keeps the cursor and volume consistent so a gap-fill never
+    // re-tails counted blocks in the first place.
+    if (this.countedIds.has(f.id)) return;
+    this.countedIds.add(f.id);
     this.fills.push(f);
-    if (this.fills.length > 400) this.fills.shift();
+    if (this.fills.length > 400) {
+      const dropped = this.fills.shift();
+      if (dropped) this.countedIds.delete(dropped.id);
+    }
     // Markouts only for genuinely-live fills (we observed the Bybit mid across
     // their horizons). Replayed/old fills keep markoutsBps=null (audit B2).
     if (Date.now() - f.ts < 10_000) this.pending.add(f);
@@ -299,8 +349,11 @@ export class LiveDataSource extends BaseSource {
     // Clober days are subgraph-authoritative and refreshed each boot, so the
     // rare sub-second-across-midnight Clober fill self-heals on the next reseed.
     const d = this.dayFor(f.ts);
-    if (f.protocol === 'LFJ') d.lfj += f.usd;
-    else { d.cloberVenue += f.usd; if (f.scope === 'vault') d.cloberVault += f.usd; }
+    if (f.protocol === 'LFJ') { d.lfj += f.usd; d.lfjSwaps += 1; }
+    else {
+      d.cloberVenue += f.usd; d.cloberSwaps += 1;
+      if (f.scope === 'vault') { d.cloberVault += f.usd; d.cloberVaultSwaps += 1; }
+    }
     d.swaps += 1;
     this.emitMsg({ ch: 'fill', data: f });
   }
@@ -310,7 +363,7 @@ export class LiveDataSource extends BaseSource {
     const day = utcDay(tsMs);
     let d = this.days.find((x) => x.utcDay === day);
     if (!d) {
-      d = { utcDay: day, lfj: 0, cloberVenue: 0, cloberVault: 0, swaps: 0, partial: day === utcDay() };
+      d = this.emptyDay(day, day === utcDay());
       this.days.push(d);
       this.days.sort((a, b) => (a.utcDay < b.utcDay ? -1 : 1));
     }
@@ -347,7 +400,7 @@ export class LiveDataSource extends BaseSource {
     let d = this.days[this.days.length - 1];
     if (!d || d.utcDay !== day) {
       if (d) d.partial = false;
-      d = { utcDay: day, lfj: 0, cloberVenue: 0, cloberVault: 0, swaps: 0, partial: true };
+      d = this.emptyDay(day, true);
       this.days.push(d);
     }
     return d;
