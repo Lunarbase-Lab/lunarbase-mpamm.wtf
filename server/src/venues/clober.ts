@@ -17,9 +17,12 @@ import type { UsdPricer } from '../pricer.js';
  */
 
 const ZERO = '0x0000000000000000000000000000000000000000';
-/** Round-trip spread (bps) above which a Clober book is treated as not a real
- *  executable market (stale/dormant) and excluded from the exec comparison. */
-const MAX_QUOTE_SPREAD_BPS = 1000;
+/** Per-side sanity band (bps from the Bybit mid): a quote side priced beyond
+ *  ±this is a far-tick backstop / mispriced resting order, not executable
+ *  liquidity. Verified on-chain against live Clober vault books — a real ask
+ *  ≈ +70bps sits next to a backstop bid ≈ −7786bps and garbage asks in the
+ *  thousands–billions of bps; ±20% cleanly separates the real side from those. */
+const PER_SIDE_BAND_BPS = 2000;
 
 export interface CloberBook {
   bookId: bigint;
@@ -188,6 +191,7 @@ export async function quoteClober(
   const res = await publicClient.multicall({ contracts, allowFailure: true });
 
   const rowByKey = new Map<string, QuoteRow>();
+  const fullByKey = new Map<string, { bid: boolean; ask: boolean }>();
   const ts = Date.now();
   for (let i = 0; i < legs.length; i++) {
     const l = legs[i]; const r = res[i];
@@ -196,8 +200,9 @@ export async function quoteClober(
     if (takenQuote <= 0n || spentBase <= 0n) continue;
     const takenH = fromUnits(takenQuote, l.outDec);
     const spentH = fromUnits(spentBase, l.inDec);
-    // px = stable per MON. The px is over the FILLED portion only; flag when the
-    // book exhausts before the requested size so it doesn't read as tight (B3).
+    // px = stable per MON, over the FILLED portion only. limitPrice = MIN, so a
+    // thin book sweeps to far ticks and the average price craters — the per-side
+    // sanity check below catches that (and partial fills via filledFull, B3).
     const px = l.side === 'sell' ? takenH / spentH : spentH / takenH;
     const bps = (px / monUsd - 1) * 1e4;
     const legFilledFull = spentBase >= (l.reqBase * 999_999_999n) / 1_000_000_000n;
@@ -207,16 +212,38 @@ export async function quoteClober(
     if (!row) {
       row = { venue, market: l.market, sizeUsd: l.size, bidBps: 0, askBps: 0, bidPx: 0, askPx: 0, spreadBps: 0, filledFull: true, feeBps: 0, ts };
       rowByKey.set(key, row);
+      fullByKey.set(key, { bid: false, ask: false });
     }
-    row.filledFull &&= legFilledFull;
-    if (l.side === 'buy') { row.askBps = bps; row.askPx = px; } else { row.bidBps = bps; row.bidPx = px; }
+    const fk = fullByKey.get(key)!;
+    if (l.side === 'buy') { row.askBps = bps; row.askPx = px; fk.ask = legFilledFull; }
+    else { row.bidBps = bps; row.bidPx = px; fk.bid = legFilledFull; }
   }
-  for (const row of rowByKey.values()) row.spreadBps = row.askBps - row.bidBps;
-  // Exclude non-executable books from the exec comparison: a book whose round-
-  // trip spread is absurd (a stale/dormant vault resting orders at far ticks —
-  // e.g. ask 2.5× / bid 0.09× mid) has no real two-sided liquidity to compare.
-  // Its historical activity still shows in the Volume tab.
-  return [...rowByKey.values()].filter((r) => r.askPx > 0 && r.bidPx > 0 && r.spreadBps < MAX_QUOTE_SPREAD_BPS);
+
+  // A side is executable at this size only if it fills the full notional AND
+  // prices within ±PER_SIDE_BAND_BPS of mid. Both sides real → a clean two-sided
+  // row; exactly one real → a one-sided row (the thin side zeroed, flagged) so a
+  // genuine ask/bid still surfaces even when the book has no real other side;
+  // neither → an empty/all-garbage book, dropped (activity still shows in Volume).
+  const out: QuoteRow[] = [];
+  for (const [key, row] of rowByKey) {
+    const fk = fullByKey.get(key)!;
+    row.spreadBps = row.askBps - row.bidBps;
+    const bidReal = row.bidPx > 0 && fk.bid && Math.abs(row.bidBps) <= PER_SIDE_BAND_BPS;
+    const askReal = row.askPx > 0 && fk.ask && Math.abs(row.askBps) <= PER_SIDE_BAND_BPS;
+    if (bidReal && askReal) {
+      row.oneSided = false;
+      row.filledFull = fk.bid && fk.ask;
+      out.push(row);
+    } else if (bidReal !== askReal) {
+      row.oneSided = true;
+      row.filledFull = bidReal ? fk.bid : fk.ask;
+      if (!bidReal) { row.bidPx = 0; row.bidBps = 0; }
+      if (!askReal) { row.askPx = 0; row.askBps = 0; }
+      row.spreadBps = 0; // not meaningful for a one-sided quote
+      out.push(row);
+    }
+  }
+  return out;
 }
 
 /** routed-flow attribution for a Take (its tx also emitted a RouterGateway.Swap). */

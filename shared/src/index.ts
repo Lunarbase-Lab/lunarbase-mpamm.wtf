@@ -133,6 +133,11 @@ export interface QuoteRow {
   spreadBps: number;
   /** false when the venue's liquidity exhausts before the full notional. */
   filledFull: boolean;
+  /** true when only ONE side is executable at this size (the other side is thin /
+   *  far-tick backstop): the shown side is real, the missing side is px 0 and
+   *  spreadBps is not meaningful. Set by the Clober/Vault quoter (CLOB books that
+   *  quote a genuine ask but no real bid at the requested size, or vice-versa). */
+  oneSided?: boolean;
   /** venue fee in bps (LFJ getSwapOut fee); 0 for CLOB venues. */
   feeBps: number;
   /** realized cost vs Bybit-AS-TAKER at this size, sign-normalized so positive

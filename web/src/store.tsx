@@ -84,12 +84,17 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
     for (const v of VENUES) {
       const r = rowFor(q, v, pair, size);
       if (!r) continue;
+      // push each side independently: a one-sided quote (thin/backstop other
+      // side, px 0) contributes only its real line — never a 0 that would wreck
+      // the canvas price scale, and never a phantom spread into the percentiles.
       const s = seriesRef.current[v];
-      s.bid.push(r.bidPx); s.ask.push(r.askPx);
-      if (s.bid.length > N) { s.bid.shift(); s.ask.shift(); }
-      const smp = samplesRef.current[v];
-      smp.push(r.spreadBps);
-      if (smp.length > 600) smp.shift();
+      if (r.bidPx > 0) { s.bid.push(r.bidPx); if (s.bid.length > N) s.bid.shift(); }
+      if (r.askPx > 0) { s.ask.push(r.askPx); if (s.ask.length > N) s.ask.shift(); }
+      if (!r.oneSided && r.bidPx > 0 && r.askPx > 0) {
+        const smp = samplesRef.current[v];
+        smp.push(r.spreadBps);
+        if (smp.length > 600) smp.shift();
+      }
     }
   };
 
@@ -105,8 +110,8 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
         if (!r) continue;
         for (let i = 0; i < N; i++) {
           const j = 1 + (Math.random() * 2 - 1) * 0.0008;
-          next[v].bid.push(r.bidPx * j);
-          next[v].ask.push(r.askPx * j);
+          if (r.bidPx > 0) next[v].bid.push(r.bidPx * j);
+          if (r.askPx > 0) next[v].ask.push(r.askPx * j);
         }
       }
     }
