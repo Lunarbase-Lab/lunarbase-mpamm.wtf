@@ -1,6 +1,7 @@
 name: CI
 
-# Verify every push + PR; deploy to Railway only when main is green.
+# Verify every push + PR. Deployment is handled by Render's native GitHub
+# auto-deploy (push to main → Render builds the Dockerfile + deploys).
 on:
   push:
     branches: [main]
@@ -35,31 +36,6 @@ jobs:
       - name: Build frontend
         run: npm -w web run build
 
-      # Build the production image so a broken Dockerfile fails CI, not the deploy.
+      # Build the production image so a broken Dockerfile fails CI.
       - name: Build Docker image
         run: docker build -t mpamm:ci .
-
-  deploy:
-    name: deploy → Railway
-    needs: verify
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
-    runs-on: ubuntu-latest
-    # one deploy at a time; never cancel an in-flight production deploy
-    concurrency:
-      group: deploy-production
-      cancel-in-progress: false
-    environment:
-      name: production
-      url: ${{ vars.RAILWAY_PUBLIC_URL }}
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install Railway CLI
-        run: npm i -g @railway/cli
-
-      - name: Deploy
-        # RAILWAY_TOKEN = a Railway *project* token (Project → Settings → Tokens),
-        # scoped to the target environment. RAILWAY_SERVICE = the service name.
-        run: railway up --service "${{ vars.RAILWAY_SERVICE }}" --ci
-        env:
-          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
