@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useEffect, useMemo } from 'react';
 import { SIZES_USD, type VenueMeta, type QuoteRow } from '@shared';
 import { useDashboard } from '../store';
 import { C, hexA, pill, venueColor } from '../theme';
@@ -7,11 +7,21 @@ import { QuoteCanvas } from '../components/QuoteCanvas';
 import { sgn, sizeLabel, percentile, stdev } from '../lib/format';
 
 const AX = 22; // bps axis half-range for the depth ladder
+const DEFAULT_MARKETS = ['MON/USDC', 'MON/USDT0', 'MON/AUSD', 'MON/USD1'];
 
 export function ExecutionTab() {
   const d = useDashboard();
   const pair = d.pair, size = d.size;
-  const markets = d.state?.markets ?? ['MON/USDC', 'MON/USDT0', 'MON/AUSD', 'MON/USD1'];
+  const allMarkets = d.state?.markets ?? DEFAULT_MARKETS;
+  const markets = useMemo(() => {
+    if (!d.quotes) return allMarkets;
+    const venueIds = new Set(d.displayVenues.map((v) => v.id));
+    const withVenue = new Set(d.quotes.rows.filter((r) => venueIds.has(r.venueId)).map((r) => r.market));
+    return allMarkets.filter((m) => withVenue.has(m));
+  }, [allMarkets, d.quotes, d.displayVenues]);
+  useEffect(() => {
+    if (markets.length && !markets.includes(pair)) d.set('pair', markets[0]);
+  }, [markets, pair, d]);
   // toggle chips: every propAMM venue + the CEX reference (if the registry has one).
   const chips: VenueMeta[] = d.reference ? [...d.displayVenues, d.reference] : d.displayVenues;
   // active = chips the user has enabled (all registry venues default on).
