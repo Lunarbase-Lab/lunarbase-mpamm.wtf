@@ -1,16 +1,47 @@
 * { box-sizing: border-box; }
-html, body { margin: 0; background: #08090B; }
+
+/* ===== BRIGHT (default) — Category Labs: warm cream, near-black ink, brand orange ===== */
+:root {
+  --bg: rgb(242,239,233); --panel: rgb(252,251,248); --overlay: rgba(252,251,248,0.9);
+  --border: rgba(23,20,15,0.16); --border2: rgba(23,20,15,0.10); --border-soft: rgba(23,20,15,0.07);
+  --pill-border: rgba(23,20,15,0.24); --scroll: rgba(23,20,15,0.22);
+  --text-strong: rgb(19,17,9); --text: rgb(27,24,16); --text2: rgb(46,42,33); --text3: rgb(74,69,58); --text4: rgb(92,87,75);
+  --dim: rgb(110,105,93); --dim2: rgb(126,120,105); --faint: rgb(138,131,117); --faint2: rgb(181,174,158);
+  --accent: rgb(255,77,0); --accent2: rgb(214,62,0); --accent-fg: rgb(23,19,11);
+  --accent-border: rgba(255,77,0,0.5); --accent-dim: rgba(255,77,0,0.12); --accent-row: rgba(255,77,0,0.05);
+  --green: rgb(10,133,96); --green-border: rgba(10,133,96,0.55); --green-line: rgba(10,133,96,0.6);
+  --red: rgb(201,43,72); --red-border: rgba(201,43,72,0.5); --red-bg: rgba(201,43,72,0.1);
+  --amber: rgb(163,101,10); --link: rgb(214,62,0);
+  /* extra grays for the React port's finer ladder (no direct design token) */
+  --dim3: rgb(132,126,111); --faint3: rgb(198,191,176);
+}
+/* ===== DARK — unchanged Monad terminal ===== */
+:root[data-theme="dark"] {
+  --bg: rgb(8,9,11); --panel: rgb(10,12,16); --overlay: rgba(10,12,16,0.82);
+  --border: rgba(255,255,255,0.08); --border2: rgba(255,255,255,0.06); --border-soft: rgba(255,255,255,0.045);
+  --pill-border: rgba(255,255,255,0.13); --scroll: rgba(255,255,255,0.1);
+  --text-strong: rgb(255,255,255); --text: rgb(230,231,234); --text2: rgb(205,207,214); --text3: rgb(185,188,198); --text4: rgb(154,155,163);
+  --dim: rgb(139,140,149); --dim2: rgb(107,109,118); --faint: rgb(94,96,104); --faint2: rgb(58,60,68);
+  --accent: rgb(131,110,249); --accent2: rgb(154,136,255); --accent-fg: rgb(255,255,255);
+  --accent-border: rgba(131,110,249,0.4); --accent-dim: rgba(131,110,249,0.18); --accent-row: rgba(131,110,249,0.06);
+  --green: rgb(53,208,160); --green-border: rgba(53,208,160,0.5); --green-line: rgba(53,208,160,0.55);
+  --red: rgb(242,86,106); --red-border: rgba(242,86,106,0.5); --red-bg: rgba(242,86,106,0.16);
+  --amber: rgb(224,163,62); --link: rgb(110,139,255);
+  --dim3: rgb(122,124,132); --faint3: rgb(74,76,84);
+}
+
+html, body { margin: 0; background: var(--bg); }
 #root {
-  background: #08090B;
+  background: var(--bg);
   min-height: 100vh;
   font-family: 'JetBrains Mono', 'SF Mono', monospace;
-  color: #E6E7EA;
+  color: var(--text);
   font-feature-settings: 'tnum' 1;
   padding-bottom: 40px;
 }
 ::-webkit-scrollbar { width: 9px; height: 9px; }
 ::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: rgba(255,255,255,.1); border-radius: 5px; }
+::-webkit-scrollbar-thumb { background: var(--scroll); border-radius: 5px; }
 @keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: .25; } }
-@keyframes flashIn { 0% { background: rgba(131,110,249,.16); } 100% { background: transparent; } }
+@keyframes flashIn { 0% { background: var(--accent-dim); } 100% { background: transparent; } }
 .flash { animation: flashIn 1s ease-out; }

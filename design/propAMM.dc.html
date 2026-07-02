@@ -13,35 +13,62 @@
 <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
   * { box-sizing: border-box; }
-  html, body { margin: 0; background: #08090B; }
+  /* ===== BRIGHT (default) — Category Labs: warm cream, near-black ink, brand orange ===== */
+  :root {
+    --bg: rgb(242,239,233); --panel: rgb(252,251,248); --overlay: rgba(252,251,248,0.9);
+    --border: rgba(23,20,15,0.16); --border2: rgba(23,20,15,0.10); --border-soft: rgba(23,20,15,0.07);
+    --pill-border: rgba(23,20,15,0.24); --scroll: rgba(23,20,15,0.22);
+    --text-strong: rgb(19,17,9); --text: rgb(27,24,16); --text2: rgb(46,42,33); --text3: rgb(74,69,58); --text4: rgb(92,87,75);
+    --dim: rgb(110,105,93); --dim2: rgb(126,120,105); --faint: rgb(138,131,117); --faint2: rgb(181,174,158);
+    --accent: rgb(255,77,0); --accent2: rgb(214,62,0); --accent-fg: rgb(23,19,11);
+    --accent-border: rgba(255,77,0,0.5); --accent-dim: rgba(255,77,0,0.12); --accent-row: rgba(255,77,0,0.05);
+    --green: rgb(10,133,96); --green-border: rgba(10,133,96,0.55); --green-line: rgba(10,133,96,0.6);
+    --red: rgb(201,43,72); --red-border: rgba(201,43,72,0.5); --red-bg: rgba(201,43,72,0.1);
+    --amber: rgb(163,101,10); --link: rgb(214,62,0);
+  }
+  /* ===== DARK — unchanged Monad terminal ===== */
+  :root[data-theme="dark"] {
+    --bg: rgb(8,9,11); --panel: rgb(10,12,16); --overlay: rgba(10,12,16,0.82);
+    --border: rgba(255,255,255,0.08); --border2: rgba(255,255,255,0.06); --border-soft: rgba(255,255,255,0.045);
+    --pill-border: rgba(255,255,255,0.13); --scroll: rgba(255,255,255,0.1);
+    --text-strong: rgb(255,255,255); --text: rgb(230,231,234); --text2: rgb(205,207,214); --text3: rgb(185,188,198); --text4: rgb(154,155,163);
+    --dim: rgb(139,140,149); --dim2: rgb(107,109,118); --faint: rgb(94,96,104); --faint2: rgb(58,60,68);
+    --accent: rgb(131,110,249); --accent2: rgb(154,136,255); --accent-fg: rgb(255,255,255);
+    --accent-border: rgba(131,110,249,0.4); --accent-dim: rgba(131,110,249,0.18); --accent-row: rgba(131,110,249,0.06);
+    --green: rgb(53,208,160); --green-border: rgba(53,208,160,0.5); --green-line: rgba(53,208,160,0.55);
+    --red: rgb(242,86,106); --red-border: rgba(242,86,106,0.5); --red-bg: rgba(242,86,106,0.16);
+    --amber: rgb(224,163,62); --link: rgb(110,139,255);
+  }
+  html, body { margin: 0; background: var(--bg); }
   ::-webkit-scrollbar { width: 9px; height: 9px; }
   ::-webkit-scrollbar-track { background: transparent; }
-  ::-webkit-scrollbar-thumb { background: rgba(255,255,255,.1); border-radius: 5px; }
+  ::-webkit-scrollbar-thumb { background: var(--scroll); border-radius: 5px; }
   @keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: .25; } }
-  @keyframes flashIn { 0% { background: rgba(131,110,249,.16); } 100% { background: transparent; } }
+  @keyframes flashIn { 0% { background: var(--accent-dim); } 100% { background: transparent; } }
 </style>
+<script>try { document.documentElement.dataset.theme = localStorage.getItem('pamm-theme') === 'dark' ? 'dark' : 'light'; } catch (e) { document.documentElement.dataset.theme = 'light'; }</script>
 </helmet>
 
-<div style="background:#08090B; min-height:100vh; font-family:'JetBrains Mono','SF Mono',monospace; color:#E6E7EA; font-feature-settings:'tnum' 1; padding-bottom:40px">
+<div style="background:var(--bg); min-height:100vh; font-family:'JetBrains Mono','SF Mono',monospace; color:var(--text); font-feature-settings:'tnum' 1; padding-bottom:40px">
 
   <!-- ===================== TOP BAR ===================== -->
-  <div style="display:flex; align-items:center; gap:16px; height:42px; padding:0 16px; border-bottom:1px solid rgba(255,255,255,.08); position:sticky; top:0; z-index:50; background:#08090B">
+  <div style="display:flex; align-items:center; gap:16px; height:42px; padding:0 16px; border-bottom:1px solid var(--border); position:sticky; top:0; z-index:50; background:var(--panel)">
     <div style="display:flex; align-items:center; gap:9px">
-      <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="10.5" stroke="#836EF9" stroke-width="1.3"/><polygon points="12,6 18,12 12,18 6,12" stroke="#836EF9" stroke-width="1.3" fill="none"/><circle cx="12" cy="12" r="1.7" fill="#836EF9"/></svg>
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="10.5" stroke="#836EF9" stroke-width="1.3" data-comment-anchor="218671af9a-circle"/><polygon points="12,6 18,12 12,18 6,12" stroke="#836EF9" stroke-width="1.3" fill="none"/><circle cx="12" cy="12" r="1.7" fill="#836EF9"/></svg>
       <span style="font-weight:700; font-size:13px; letter-spacing:.01em; font-family:'Space Grotesk',sans-serif">propAMM</span>
-      <span style="font-size:8.5px; color:#9A88FF; border:1px solid rgba(131,110,249,.4); border-radius:3px; padding:2px 6px; letter-spacing:.08em">MONAD MAINNET</span>
+      <span style="font-size:8.5px; color:var(--accent2); border:1px solid var(--accent-border); border-radius:3px; padding:2px 6px; letter-spacing:.08em">MONAD MAINNET</span>
     </div>
     <div style="display:flex; gap:1px; margin-left:8px">
       <sc-for list="{{ tabs }}" as="tab" hint-placeholder-count="4">
         <div onClick="{{ tab.onClick }}" style="{{ tab.style }}">[{{ tab.num }}] {{ tab.label }}</div>
       </sc-for>
-      <div style="font-size:11px; padding:6px 12px; color:#5e6068; cursor:default">[5] DOCS &#8599;</div>
     </div>
-    <div style="margin-left:auto; display:flex; align-items:center; gap:15px; font-size:10px; color:#6b6d76">
-      <span style="display:flex; align-items:center; gap:5px; color:#35D0A0"><span style="width:6px; height:6px; border-radius:50%; background:#35D0A0; animation:blink 1.6s infinite"></span>live</span>
-      <span>MON <span style="color:#E6E7EA">${{ monPx }}</span></span>
-      <span>BLOCK <span style="color:#E6E7EA">{{ block }}</span></span>
-      <span>UTC <span style="color:#E6E7EA">{{ clock }}</span></span>
+    <div style="margin-left:auto; display:flex; align-items:center; gap:15px; font-size:10px; color:var(--dim2)">
+      <div onClick="{{ toggleTheme }}" style="display:flex; align-items:center; gap:5px; border:1px solid var(--pill-border); border-radius:4px; padding:3px 8px; cursor:pointer; letter-spacing:.06em; user-select:none" style-hover="color:var(--text); border-color:var(--border)">&#9680; {{ themeLabel }}</div>
+      <span style="display:flex; align-items:center; gap:5px; color:var(--green)"><span style="width:6px; height:6px; border-radius:50%; background:var(--green); animation:blink 1.6s infinite"></span>live</span>
+      <span>MON <span style="color:var(--text)">${{ monPx }}</span></span>
+      <span>BLOCK <span style="color:var(--text)">{{ block }}</span></span>
+      <span>UTC <span style="color:var(--text)">{{ clock }}</span></span>
     </div>
   </div>
 
@@ -49,26 +76,26 @@
   <sc-if value="{{ isExec }}" hint-placeholder-val="{{ true }}">
   <div>
     <div style="padding:18px 18px 10px">
-      <div style="font-size:14px; font-weight:600; letter-spacing:.06em; color:#E6E7EA">REALTIME EXECUTION COMPARISON</div>
-      <div style="font-size:11px; color:#7a7c84; margin-top:6px; line-height:1.55; max-width:880px">Last 60s of quotes for the selected pair at the chosen notional. Spreads are quoted vs the Bybit <span style="color:#B9BCC6">MONUSDT</span> BBO mid. <span style="color:#B9BCC6">Bybit (taker)</span> walks the live book for the requested size and overlays the configured taker fee ({{ taker }} bps each side) &mdash; realized-vs-realized, the only honest comparison for size-sensitive flow.</div>
+      <div style="font-size:14px; font-weight:600; letter-spacing:.06em; color:var(--text)">REALTIME EXECUTION COMPARISON</div>
+      <div style="font-size:11px; color:var(--dim); margin-top:6px; line-height:1.55; max-width:880px">Last 60s of quotes for the selected pair at the chosen notional. Spreads are quoted vs the Bybit <span style="color:var(--text3)">MONUSDT</span> BBO mid. <span style="color:var(--text3)">Bybit (taker)</span> walks the live book for the requested size and overlays the configured taker fee ({{ taker }} bps each side) &mdash; realized-vs-realized, the only honest comparison for size-sensitive flow.</div>
     </div>
 
     <!-- controls -->
     <div style="display:flex; align-items:center; gap:22px; flex-wrap:wrap; padding:6px 18px 16px">
       <div style="display:flex; align-items:center; gap:8px">
-        <span style="font-size:9px; color:#5e6068; letter-spacing:.08em">ASSET</span>
+        <span style="font-size:9px; color:var(--faint); letter-spacing:.08em">ASSET</span>
         <div style="display:flex; gap:4px">
           <sc-for list="{{ pairs }}" as="p" hint-placeholder-count="4"><div onClick="{{ p.onClick }}" style="{{ p.style }}">{{ p.name }}</div></sc-for>
         </div>
       </div>
       <div style="display:flex; align-items:center; gap:8px">
-        <span style="font-size:9px; color:#5e6068; letter-spacing:.08em">SIZE</span>
+        <span style="font-size:9px; color:var(--faint); letter-spacing:.08em">SIZE</span>
         <div style="display:flex; gap:4px">
           <sc-for list="{{ sizes }}" as="s" hint-placeholder-count="4"><div onClick="{{ s.onClick }}" style="{{ s.style }}">{{ s.label }}</div></sc-for>
         </div>
       </div>
       <div style="display:flex; align-items:center; gap:8px; margin-left:auto">
-        <span style="font-size:9px; color:#5e6068; letter-spacing:.08em">VENUES</span>
+        <span style="font-size:9px; color:var(--faint); letter-spacing:.08em">VENUES</span>
         <div style="display:flex; gap:4px">
           <sc-for list="{{ venues }}" as="v" hint-placeholder-count="4"><div onClick="{{ v.onClick }}" style="{{ v.style }}"><span style="{{ v.dot }}"></span>{{ v.label }}</div></sc-for>
         </div>
@@ -76,26 +103,26 @@
     </div>
 
     <!-- QUOTE panel -->
-    <div style="position:relative; border:1px solid rgba(255,255,255,.07); background:#0A0C10; margin:0 18px 14px">
-      <div style="position:absolute; top:-1px; left:-1px; width:8px; height:8px; border-top:1px solid #836EF9; border-left:1px solid #836EF9"></div>
-      <div style="position:absolute; bottom:-1px; right:-1px; width:8px; height:8px; border-bottom:1px solid #836EF9; border-right:1px solid #836EF9"></div>
-      <div style="display:flex; align-items:center; justify-content:space-between; padding:9px 12px; border-bottom:1px solid rgba(255,255,255,.06)">
-        <div style="font-size:11px; letter-spacing:.03em"><span style="color:#836EF9">~</span> <span style="color:#E6E7EA; font-weight:600">QUOTE</span> <span style="color:#6b6d76">{{ pairSel }} &middot; {{ sizeLabelSel }} &middot; last 60s</span></div>
-        <div style="font-size:9px; color:#5e6068">solid = ask &middot; dashed = bid &middot; &#9733; = tightest spread</div>
+    <div style="position:relative; border:1px solid var(--border); background:var(--panel); margin:0 18px 14px">
+      <div style="position:absolute; top:-1px; left:-1px; width:8px; height:8px; border-top:1px solid var(--accent); border-left:1px solid var(--accent)"></div>
+      <div style="position:absolute; bottom:-1px; right:-1px; width:8px; height:8px; border-bottom:1px solid var(--accent); border-right:1px solid var(--accent)"></div>
+      <div style="display:flex; align-items:center; justify-content:space-between; padding:9px 12px; border-bottom:1px solid var(--border2)">
+        <div style="font-size:11px; letter-spacing:.03em"><span style="color:var(--accent)">~</span> <span style="color:var(--text); font-weight:600">QUOTE</span> <span style="color:var(--dim2)">{{ pairSel }} &middot; {{ sizeLabelSel }} &middot; last 60s</span></div>
+        <div style="font-size:9px; color:var(--faint)">solid = ask &middot; dashed = bid &middot; &#9733; = tightest spread</div>
       </div>
       <div style="position:relative; padding:8px 8px 4px">
         <canvas ref="{{ setCanvas }}" data-quote="1" style="display:block; width:100%; height:360px"></canvas>
         <!-- legend overlay -->
-        <div style="position:absolute; top:14px; right:16px; background:rgba(10,12,16,.82); border:1px solid rgba(255,255,255,.1); padding:8px 10px; min-width:248px; backdrop-filter:blur(3px)">
-          <div style="display:grid; grid-template-columns:1fr 54px 50px 50px; gap:2px 8px; font-size:8.5px; color:#5e6068; letter-spacing:.05em; padding-bottom:5px; border-bottom:1px solid rgba(255,255,255,.07)">
+        <div style="position:absolute; top:14px; right:16px; background:var(--overlay); border:1px solid var(--border); padding:8px 10px; min-width:248px; backdrop-filter:blur(3px)">
+          <div style="display:grid; grid-template-columns:1fr 54px 50px 50px; gap:2px 8px; font-size:8.5px; color:var(--faint); letter-spacing:.05em; padding-bottom:5px; border-bottom:1px solid var(--border)">
             <div>VENUE</div><div style="text-align:right">SPREAD</div><div style="text-align:right">BID</div><div style="text-align:right">ASK</div>
           </div>
           <sc-for list="{{ legend }}" as="r" hint-placeholder-count="4">
             <div style="display:grid; grid-template-columns:1fr 54px 50px 50px; gap:2px 8px; font-size:11px; padding:4px 0; align-items:center">
-              <div style="display:flex; align-items:center; gap:6px"><span style="width:8px; height:8px; border-radius:2px; background:{{ r.color }}"></span><span style="color:#cdcfd6">{{ r.name }}</span><span style="{{ r.starcss }}">&#9733;</span></div>
+              <div style="display:flex; align-items:center; gap:6px"><span style="width:8px; height:8px; border-radius:2px; background:{{ r.color }}"></span><span style="color:var(--text2)">{{ r.name }}</span><span style="{{ r.starcss }}">&#9733;</span></div>
               <div style="text-align:right; {{ r.spreadcss }}">{{ r.spread }}</div>
-              <div style="text-align:right; color:#F2566A">{{ r.bid }}</div>
-              <div style="text-align:right; color:#35D0A0">{{ r.ask }}</div>
+              <div style="text-align:right; color:var(--red)">{{ r.bid }}</div>
+              <div style="text-align:right; color:var(--green)">{{ r.ask }}</div>
             </div>
           </sc-for>
         </div>
@@ -103,21 +130,21 @@
     </div>
 
     <!-- BID_ASK_DEPTH panel -->
-    <div style="position:relative; border:1px solid rgba(255,255,255,.07); background:#0A0C10; margin:0 18px 14px">
-      <div style="position:absolute; top:-1px; left:-1px; width:8px; height:8px; border-top:1px solid #836EF9; border-left:1px solid #836EF9"></div>
-      <div style="position:absolute; bottom:-1px; right:-1px; width:8px; height:8px; border-bottom:1px solid #836EF9; border-right:1px solid #836EF9"></div>
-      <div style="padding:9px 12px; border-bottom:1px solid rgba(255,255,255,.06); font-size:11px; letter-spacing:.03em"><span style="color:#836EF9">&#8801;</span> <span style="color:#E6E7EA; font-weight:600">BID_ASK_DEPTH</span> <span style="color:#6b6d76">{{ pairSel }} &middot; spread vs Bybit mid (bps) by trade size</span></div>
+    <div style="position:relative; border:1px solid var(--border); background:var(--panel); margin:0 18px 14px">
+      <div style="position:absolute; top:-1px; left:-1px; width:8px; height:8px; border-top:1px solid var(--accent); border-left:1px solid var(--accent)"></div>
+      <div style="position:absolute; bottom:-1px; right:-1px; width:8px; height:8px; border-bottom:1px solid var(--accent); border-right:1px solid var(--accent)"></div>
+      <div style="padding:9px 12px; border-bottom:1px solid var(--border2); font-size:11px; letter-spacing:.03em"><span style="color:var(--accent)">&#8801;</span> <span style="color:var(--text); font-weight:600">BID_ASK_DEPTH</span> <span style="color:var(--dim2)">{{ pairSel }} &middot; spread vs Bybit mid (bps) by trade size</span></div>
       <div style="padding:16px 18px 8px">
         <div style="display:flex; padding-left:64px; margin-bottom:10px">
-          <div style="flex:1; text-align:center; font-size:9px; color:#5e6068; letter-spacing:.1em">BIDS &mdash; below mid</div>
-          <div style="flex:1; text-align:center; font-size:9px; color:#5e6068; letter-spacing:.1em">ASKS &mdash; above mid</div>
+          <div style="flex:1; text-align:center; font-size:9px; color:var(--faint); letter-spacing:.1em">BIDS &mdash; below mid</div>
+          <div style="flex:1; text-align:center; font-size:9px; color:var(--faint); letter-spacing:.1em">ASKS &mdash; above mid</div>
         </div>
         <sc-for list="{{ depth }}" as="row" hint-placeholder-count="4">
           <div style="display:flex; align-items:center; gap:10px; height:34px; {{ row.rowcss }}">
-            <div style="width:54px; text-align:right; font-size:11px; color:#9a9ba3">{{ row.label }}</div>
+            <div style="width:54px; text-align:right; font-size:11px; color:var(--text4)">{{ row.label }}</div>
             <div style="position:relative; flex:1; height:20px">
-              <div style="position:absolute; left:50%; top:-3px; bottom:-3px; width:1px; background:rgba(53,208,160,.55); z-index:5"></div>
-              <sc-for list="{{ row.segsBid }}" as="seg" hint-placeholder-count="3"><div style="{{ seg.style }}"></div></sc-for>
+              <div style="position:absolute; left:50%; top:-3px; bottom:-3px; width:1px; background:var(--green-line); z-index:5"></div>
+              <sc-for list="{{ row.segsBid }}" as="seg" hint-placeholder-count="3"><div style="{{ seg.style }}" data-comment-anchor="0e8558d22a-div"></div></sc-for>
               <sc-for list="{{ row.segsAsk }}" as="seg" hint-placeholder-count="3"><div style="{{ seg.style }}"></div></sc-for>
             </div>
           </div>
@@ -132,28 +159,28 @@
     </div>
 
     <!-- ROLLING_STATS panel -->
-    <div style="position:relative; border:1px solid rgba(255,255,255,.07); background:#0A0C10; margin:0 18px 14px">
-      <div style="position:absolute; top:-1px; left:-1px; width:8px; height:8px; border-top:1px solid #836EF9; border-left:1px solid #836EF9"></div>
-      <div style="position:absolute; bottom:-1px; right:-1px; width:8px; height:8px; border-bottom:1px solid #836EF9; border-right:1px solid #836EF9"></div>
-      <div style="padding:9px 12px; border-bottom:1px solid rgba(255,255,255,.06); font-size:11px; letter-spacing:.03em"><span style="color:#836EF9">#</span> <span style="color:#E6E7EA; font-weight:600">ROLLING_STATS</span> <span style="color:#6b6d76">last 5m &middot; spread distribution by venue &middot; {{ sizeLabelSel }} &middot; {{ pairSel }}</span></div>
+    <div style="position:relative; border:1px solid var(--border); background:var(--panel); margin:0 18px 14px">
+      <div style="position:absolute; top:-1px; left:-1px; width:8px; height:8px; border-top:1px solid var(--accent); border-left:1px solid var(--accent)"></div>
+      <div style="position:absolute; bottom:-1px; right:-1px; width:8px; height:8px; border-bottom:1px solid var(--accent); border-right:1px solid var(--accent)"></div>
+      <div style="padding:9px 12px; border-bottom:1px solid var(--border2); font-size:11px; letter-spacing:.03em"><span style="color:var(--accent)">#</span> <span style="color:var(--text); font-weight:600">ROLLING_STATS</span> <span style="color:var(--dim2)">last 5m &middot; spread distribution by venue &middot; {{ sizeLabelSel }} &middot; {{ pairSel }}</span></div>
       <div style="padding:6px 14px 12px">
-        <div style="display:grid; grid-template-columns:1.4fr repeat(7, 1fr) 0.8fr; gap:6px; padding:9px 6px; font-size:9px; color:#5e6068; letter-spacing:.05em; border-bottom:1px solid rgba(255,255,255,.07)">
+        <div style="display:grid; grid-template-columns:1.4fr repeat(7, 1fr) 0.8fr; gap:6px; padding:9px 6px; font-size:9px; color:var(--faint); letter-spacing:.05em; border-bottom:1px solid var(--border)">
           <div>VENUE</div><div style="text-align:right">P5</div><div style="text-align:right">P25</div><div style="text-align:right">P50</div><div style="text-align:right">P75</div><div style="text-align:right">P95</div><div style="text-align:right">AVG</div><div style="text-align:right">&#963;</div><div style="text-align:right">N</div>
         </div>
         <sc-for list="{{ statRows }}" as="r" hint-placeholder-count="4">
-          <div style="display:grid; grid-template-columns:1.4fr repeat(7, 1fr) 0.8fr; gap:6px; padding:8px 6px; font-size:11.5px; border-bottom:1px solid rgba(255,255,255,.04); align-items:center">
-            <div style="display:flex; align-items:center; gap:7px"><span style="width:8px; height:8px; border-radius:2px; background:{{ r.color }}"></span><span style="color:#cdcfd6">{{ r.name }}</span><span style="{{ r.starcss }}">&#9733;</span></div>
-            <div style="text-align:right; color:#9a9ba3">{{ r.p5 }}</div>
-            <div style="text-align:right; color:#9a9ba3">{{ r.p25 }}</div>
+          <div style="display:grid; grid-template-columns:1.4fr repeat(7, 1fr) 0.8fr; gap:6px; padding:8px 6px; font-size:11.5px; border-bottom:1px solid var(--border-soft); align-items:center">
+            <div style="display:flex; align-items:center; gap:7px"><span style="width:8px; height:8px; border-radius:2px; background:{{ r.color }}"></span><span style="color:var(--text2)">{{ r.name }}</span><span style="{{ r.starcss }}">&#9733;</span></div>
+            <div style="text-align:right; color:var(--text4)">{{ r.p5 }}</div>
+            <div style="text-align:right; color:var(--text4)">{{ r.p25 }}</div>
             <div style="text-align:right; {{ r.p50css }}">{{ r.p50 }}</div>
-            <div style="text-align:right; color:#9a9ba3">{{ r.p75 }}</div>
-            <div style="text-align:right; color:#9a9ba3">{{ r.p95 }}</div>
-            <div style="text-align:right; color:#7a7c84">{{ r.avg }}</div>
-            <div style="text-align:right; color:#7a7c84">{{ r.sd }}</div>
-            <div style="text-align:right; color:#5e6068">{{ r.n }}</div>
+            <div style="text-align:right; color:var(--text4)">{{ r.p75 }}</div>
+            <div style="text-align:right; color:var(--text4)">{{ r.p95 }}</div>
+            <div style="text-align:right; color:var(--dim)">{{ r.avg }}</div>
+            <div style="text-align:right; color:var(--dim)">{{ r.sd }}</div>
+            <div style="text-align:right; color:var(--faint)">{{ r.n }}</div>
           </div>
         </sc-for>
-        <div style="font-size:9px; color:#4a4c54; margin-top:9px">p50 = median spread (bps vs same-source mid) &middot; &#963; = spread stdev &middot; &#9733; = tightest p50 in window</div>
+        <div style="font-size:9px; color:var(--faint2); margin-top:9px">p50 = median spread (bps vs same-source mid) &middot; &#963; = spread stdev &middot; &#9733; = tightest p50 in window</div>
       </div>
     </div>
   </div>
@@ -164,118 +191,118 @@
   <div>
     <div style="display:flex; align-items:flex-start; justify-content:space-between; padding:18px 18px 14px">
       <div>
-        <div style="font-size:14px; font-weight:600; letter-spacing:.06em; color:#E6E7EA">PROPAMM VOLUME</div>
-        <div style="font-size:11px; color:#7a7c84; margin-top:6px; line-height:1.55; max-width:760px">All-time daily notional traded on tracked propAMM pools, split by protocol. Volume is the USD-stable quote leg of each landed swap; buckets are UTC days and today's bucket is partial. Vault = Clober's oracle-vault (propAMM) cut.</div>
+        <div style="font-size:14px; font-weight:600; letter-spacing:.06em; color:var(--text)">PROPAMM VOLUME</div>
+        <div style="font-size:11px; color:var(--dim); margin-top:6px; line-height:1.55; max-width:760px">All-time daily notional traded on tracked propAMM pools, split by protocol. Volume is the USD-stable quote leg of each landed swap; buckets are UTC days and today's bucket is partial. Vault = Clober's oracle-vault (propAMM) cut.</div>
       </div>
-      <div style="display:flex; align-items:center; gap:8px; font-size:10px; color:#7a7c84">
-        <span style="color:#5e6068; letter-spacing:.06em">CLOBER SCOPE</span>
+      <div style="display:flex; align-items:center; gap:8px; font-size:10px; color:var(--dim)">
+        <span style="color:var(--faint); letter-spacing:.06em">CLOBER SCOPE</span>
         <div style="display:flex; gap:3px"><sc-for list="{{ clScopePills }}" as="p" hint-placeholder-count="2"><div onClick="{{ p.onClick }}" style="{{ p.style }}">{{ p.label }}</div></sc-for></div>
       </div>
     </div>
 
     <!-- KPI row -->
-    <div style="display:grid; grid-template-columns:repeat(5,1fr); gap:0; border:1px solid rgba(255,255,255,.07); margin:0 18px 14px">
-      <div style="padding:14px 16px; border-right:1px solid rgba(255,255,255,.06)">
-        <div style="font-size:9px; color:#5e6068; letter-spacing:.06em">ALL-TIME VOLUME</div>
-        <div style="font-size:22px; font-weight:600; margin-top:8px; color:#E6E7EA">{{ kAll }}</div>
-        <div style="font-size:10px; color:#5e6068; margin-top:6px">since 2026-05-13</div>
+    <div style="display:grid; grid-template-columns:repeat(5,1fr); gap:0; border:1px solid var(--border); margin:0 18px 14px">
+      <div style="padding:14px 16px; border-right:1px solid var(--border2)">
+        <div style="font-size:9px; color:var(--faint); letter-spacing:.06em">ALL-TIME VOLUME</div>
+        <div style="font-size:22px; font-weight:600; margin-top:8px; color:var(--text)">{{ kAll }}</div>
+        <div style="font-size:10px; color:var(--faint); margin-top:6px">since 2026-05-13</div>
       </div>
-      <div style="padding:14px 16px; border-right:1px solid rgba(255,255,255,.06)">
-        <div style="font-size:9px; color:#5e6068; letter-spacing:.06em">7D VOLUME</div>
-        <div style="font-size:22px; font-weight:600; margin-top:8px; color:#E6E7EA">{{ k7 }}</div>
-        <div style="font-size:10px; margin-top:6px; {{ k7css }}">{{ k7chg }} <span style="color:#5e6068">vs prior 7d</span></div>
+      <div style="padding:14px 16px; border-right:1px solid var(--border2)">
+        <div style="font-size:9px; color:var(--faint); letter-spacing:.06em">7D VOLUME</div>
+        <div style="font-size:22px; font-weight:600; margin-top:8px; color:var(--text)">{{ k7 }}</div>
+        <div style="font-size:10px; margin-top:6px; {{ k7css }}">{{ k7chg }} <span style="color:var(--faint)">vs prior 7d</span></div>
       </div>
-      <div style="padding:14px 16px; border-right:1px solid rgba(255,255,255,.06)">
-        <div style="font-size:9px; color:#5e6068; letter-spacing:.06em">TOTAL SWAPS</div>
-        <div style="font-size:22px; font-weight:600; margin-top:8px; color:#E6E7EA">{{ kSwaps }}</div>
-        <div style="font-size:10px; color:#5e6068; margin-top:6px">both venues</div>
+      <div style="padding:14px 16px; border-right:1px solid var(--border2)">
+        <div style="font-size:9px; color:var(--faint); letter-spacing:.06em">TOTAL SWAPS</div>
+        <div style="font-size:22px; font-weight:600; margin-top:8px; color:var(--text)">{{ kSwaps }}</div>
+        <div style="font-size:10px; color:var(--faint); margin-top:6px">both venues</div>
       </div>
-      <div style="padding:14px 16px; border-right:1px solid rgba(255,255,255,.06)">
-        <div style="font-size:9px; color:#5e6068; letter-spacing:.06em">PEAK DAY</div>
-        <div style="font-size:22px; font-weight:600; margin-top:8px; color:#E6E7EA">{{ kPeak }}</div>
-        <div style="font-size:10px; color:#5e6068; margin-top:6px">{{ kPeakDay }}</div>
+      <div style="padding:14px 16px; border-right:1px solid var(--border2)">
+        <div style="font-size:9px; color:var(--faint); letter-spacing:.06em">PEAK DAY</div>
+        <div style="font-size:22px; font-weight:600; margin-top:8px; color:var(--text)">{{ kPeak }}</div>
+        <div style="font-size:10px; color:var(--faint); margin-top:6px">{{ kPeakDay }}</div>
       </div>
       <div style="padding:14px 16px">
-        <div style="font-size:9px; color:#5e6068; letter-spacing:.06em">TODAY (PARTIAL)</div>
-        <div style="font-size:22px; font-weight:600; margin-top:8px; color:#E6E7EA">{{ kToday }}</div>
-        <div style="font-size:10px; margin-top:6px; {{ kTodaycss }}">{{ kTodayChg }} <span style="color:#5e6068">vs prev day</span></div>
+        <div style="font-size:9px; color:var(--faint); letter-spacing:.06em">TODAY (PARTIAL)</div>
+        <div style="font-size:22px; font-weight:600; margin-top:8px; color:var(--text)">{{ kToday }}</div>
+        <div style="font-size:10px; margin-top:6px; {{ kTodaycss }}">{{ kTodayChg }} <span style="color:var(--faint)">vs prev day</span></div>
       </div>
     </div>
 
     <!-- DAILY_VOLUME -->
-    <div style="position:relative; border:1px solid rgba(255,255,255,.07); background:#0A0C10; margin:0 18px 14px">
-      <div style="position:absolute; top:-1px; left:-1px; width:8px; height:8px; border-top:1px solid #836EF9; border-left:1px solid #836EF9"></div>
-      <div style="position:absolute; bottom:-1px; right:-1px; width:8px; height:8px; border-bottom:1px solid #836EF9; border-right:1px solid #836EF9"></div>
-      <div style="padding:9px 12px; border-bottom:1px solid rgba(255,255,255,.06); font-size:11px; letter-spacing:.03em"><span style="color:#836EF9">~</span> <span style="color:#E6E7EA; font-weight:600">DAILY_VOLUME</span> <span style="color:#6b6d76">USD notional by protocol &middot; UTC days &middot; {{ volScopeNote }}</span></div>
+    <div style="position:relative; border:1px solid var(--border); background:var(--panel); margin:0 18px 14px">
+      <div style="position:absolute; top:-1px; left:-1px; width:8px; height:8px; border-top:1px solid var(--accent); border-left:1px solid var(--accent)"></div>
+      <div style="position:absolute; bottom:-1px; right:-1px; width:8px; height:8px; border-bottom:1px solid var(--accent); border-right:1px solid var(--accent)"></div>
+      <div style="padding:9px 12px; border-bottom:1px solid var(--border2); font-size:11px; letter-spacing:.03em"><span style="color:var(--accent)">~</span> <span style="color:var(--text); font-weight:600">DAILY_VOLUME</span> <span style="color:var(--dim2)">USD notional by protocol &middot; UTC days &middot; {{ volScopeNote }}</span></div>
       <div style="position:relative; padding:16px 18px 8px">
-        <div style="position:absolute; top:14px; left:18px; font-size:8.5px; color:#5e6068">{{ volMaxLabel }}</div>
-        <div style="position:absolute; top:88px; left:18px; font-size:8.5px; color:#5e6068">{{ volMidLabel }}</div>
-        <div style="display:flex; align-items:flex-end; gap:1.5px; height:150px; padding-left:42px; border-bottom:1px solid rgba(255,255,255,.1)">
+        <div style="position:absolute; top:14px; left:18px; font-size:8.5px; color:var(--faint)">{{ volMaxLabel }}</div>
+        <div style="position:absolute; top:88px; left:18px; font-size:8.5px; color:var(--faint)">{{ volMidLabel }}</div>
+        <div style="display:flex; align-items:flex-end; gap:1.5px; height:150px; padding-left:42px; border-bottom:1px solid var(--border)">
           <sc-for list="{{ volBars }}" as="b" hint-placeholder-count="47">
             <div style="display:flex; flex-direction:column-reverse; flex:1; gap:1px; opacity:{{ b.op }}">
-              <sc-for list="{{ b.segs }}" as="s" hint-placeholder-count="2"><div style="height:{{ s.h }}px; background:{{ s.color }}"></div></sc-for>
+              <sc-for list="{{ b.segs }}" as="s" hint-placeholder-count="2"><div style="height:{{ s.h }}px; background:{{ s.color }}" data-comment-anchor="eb01de8282-div"></div></sc-for>
             </div>
           </sc-for>
         </div>
         <div style="position:relative; height:14px; margin-top:4px; margin-left:42px">
-          <sc-for list="{{ volAxis }}" as="a" hint-placeholder-count="5"><div style="position:absolute; left:{{ a.left }}; transform:translateX(-50%); font-size:8.5px; color:#5e6068">{{ a.label }}</div></sc-for>
+          <sc-for list="{{ volAxis }}" as="a" hint-placeholder-count="5"><div style="position:absolute; left:{{ a.left }}; transform:translateX(-50%); font-size:8.5px; color:var(--faint)">{{ a.label }}</div></sc-for>
         </div>
         <!-- legend box -->
-        <div style="position:absolute; top:14px; right:16px; background:rgba(10,12,16,.82); border:1px solid rgba(255,255,255,.1); padding:8px 10px; min-width:200px">
-          <div style="display:grid; grid-template-columns:1fr 70px 44px; gap:3px 8px; font-size:8.5px; color:#5e6068; letter-spacing:.05em; padding-bottom:5px; border-bottom:1px solid rgba(255,255,255,.07)"><div>PROTOCOL</div><div style="text-align:right">ALL-TIME</div><div style="text-align:right">SHARE</div></div>
+        <div style="position:absolute; top:14px; right:16px; background:var(--overlay); border:1px solid var(--border); padding:8px 10px; min-width:200px">
+          <div style="display:grid; grid-template-columns:1fr 70px 44px; gap:3px 8px; font-size:8.5px; color:var(--faint); letter-spacing:.05em; padding-bottom:5px; border-bottom:1px solid var(--border)"><div>PROTOCOL</div><div style="text-align:right">ALL-TIME</div><div style="text-align:right">SHARE</div></div>
           <sc-for list="{{ legRows }}" as="r" hint-placeholder-count="3">
-            <div style="display:grid; grid-template-columns:1fr 70px 44px; gap:3px 8px; font-size:10.5px; padding:4px 0; align-items:center"><div style="display:flex; align-items:center; gap:6px"><span style="width:8px;height:8px;border-radius:2px;background:{{ r.color }}"></span><span style="color:#cdcfd6">{{ r.name }}</span></div><div style="text-align:right; color:#E6E7EA">{{ r.vol }}</div><div style="text-align:right; color:#9a9ba3">{{ r.share }}</div></div>
+            <div style="display:grid; grid-template-columns:1fr 70px 44px; gap:3px 8px; font-size:10.5px; padding:4px 0; align-items:center"><div style="display:flex; align-items:center; gap:6px"><span style="width:8px;height:8px;border-radius:2px;background:{{ r.color }}"></span><span style="color:var(--text2)">{{ r.name }}</span></div><div style="text-align:right; color:var(--text)">{{ r.vol }}</div><div style="text-align:right; color:var(--text4)">{{ r.share }}</div></div>
           </sc-for>
-          <div style="display:grid; grid-template-columns:1fr 70px 44px; gap:3px 8px; font-size:10.5px; padding-top:6px; margin-top:3px; border-top:1px solid rgba(255,255,255,.07)"><div style="color:#7a7c84">TOTAL</div><div style="text-align:right; color:#E6E7EA; font-weight:600">{{ legTotal }}</div><div style="text-align:right; color:#9a9ba3">100%</div></div>
+          <div style="display:grid; grid-template-columns:1fr 70px 44px; gap:3px 8px; font-size:10.5px; padding-top:6px; margin-top:3px; border-top:1px solid var(--border)"><div style="color:var(--dim)">TOTAL</div><div style="text-align:right; color:var(--text); font-weight:600">{{ legTotal }}</div><div style="text-align:right; color:var(--text4)">100%</div></div>
         </div>
       </div>
     </div>
 
     <!-- CUMULATIVE + MARKET SHARE -->
     <div style="display:grid; grid-template-columns:1fr 1fr; gap:14px; margin:0 18px 14px">
-      <div style="position:relative; border:1px solid rgba(255,255,255,.07); background:#0A0C10">
-        <div style="position:absolute; top:-1px; left:-1px; width:8px; height:8px; border-top:1px solid #836EF9; border-left:1px solid #836EF9"></div>
-        <div style="padding:9px 12px; border-bottom:1px solid rgba(255,255,255,.06); font-size:11px; letter-spacing:.03em"><span style="color:#836EF9">&#9632;</span> <span style="color:#E6E7EA; font-weight:600">CUMULATIVE_VOLUME</span></div>
+      <div style="position:relative; border:1px solid var(--border); background:var(--panel)">
+        <div style="position:absolute; top:-1px; left:-1px; width:8px; height:8px; border-top:1px solid var(--accent); border-left:1px solid var(--accent)"></div>
+        <div style="padding:9px 12px; border-bottom:1px solid var(--border2); font-size:11px; letter-spacing:.03em"><span style="color:var(--accent)">&#9632;</span> <span style="color:var(--text); font-weight:600">CUMULATIVE_VOLUME</span></div>
         <div style="position:relative; padding:14px 14px 10px">
           <svg viewBox="0 0 1000 260" preserveAspectRatio="none" style="display:block; width:100%; height:230px">
-            <defs><linearGradient id="cumg" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#836EF9" stop-opacity="0.32"/><stop offset="100%" stop-color="#836EF9" stop-opacity="0.02"/></linearGradient></defs>
-            <path d="{{ cumArea }}" fill="url(#cumg)"></path>
-            <path d="{{ cumLine }}" fill="none" stroke="#9A88FF" stroke-width="2" vector-effect="non-scaling-stroke"></path>
+            <defs><linearGradient id="cumg" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" style="stop-color:var(--accent)" stop-opacity="0.32"/><stop offset="100%" style="stop-color:var(--accent)" stop-opacity="0.02"/></linearGradient></defs>
+            <path d="{{ cumArea }}" fill="url(#cumg)" data-comment-anchor="e74b0437c3-path"></path>
+            <path d="{{ cumLine }}" fill="none" style="stroke:var(--accent2); stroke-width:2" vector-effect="non-scaling-stroke"></path>
           </svg>
-          <div style="position:absolute; top:14px; right:16px; font-size:11px; color:#9A88FF">&#931; {{ cumSigma }}</div>
+          <div style="position:absolute; top:14px; right:16px; font-size:11px; color:var(--accent2)">&#931; {{ cumSigma }}</div>
         </div>
       </div>
-      <div style="position:relative; border:1px solid rgba(255,255,255,.07); background:#0A0C10">
-        <div style="position:absolute; top:-1px; left:-1px; width:8px; height:8px; border-top:1px solid #836EF9; border-left:1px solid #836EF9"></div>
-        <div style="padding:9px 12px; border-bottom:1px solid rgba(255,255,255,.06); font-size:11px; letter-spacing:.03em"><span style="color:#836EF9">&#9670;</span> <span style="color:#E6E7EA; font-weight:600">MARKET_SHARE</span> <span style="color:#6b6d76">% of daily volume</span></div>
+      <div style="position:relative; border:1px solid var(--border); background:var(--panel)">
+        <div style="position:absolute; top:-1px; left:-1px; width:8px; height:8px; border-top:1px solid var(--accent); border-left:1px solid var(--accent)"></div>
+        <div style="padding:9px 12px; border-bottom:1px solid var(--border2); font-size:11px; letter-spacing:.03em"><span style="color:var(--accent)">&#9670;</span> <span style="color:var(--text); font-weight:600">MARKET_SHARE</span> <span style="color:var(--dim2)">% of daily volume</span></div>
         <div style="position:relative; padding:14px 14px 10px">
           <svg viewBox="0 0 1000 260" preserveAspectRatio="none" style="display:block; width:100%; height:230px">
-            <sc-for list="{{ msBands }}" as="band" hint-placeholder-count="2"><path d="{{ band.path }}" fill="{{ band.color }}" fill-opacity="0.82"></path></sc-for>
+            <sc-for list="{{ msBands }}" as="band" hint-placeholder-count="2"><path d="{{ band.path }}" fill="{{ band.color }}" fill-opacity="0.82" data-comment-anchor="47079c0a3f-path"></path></sc-for>
           </svg>
-          <div style="position:absolute; top:18px; right:16px; font-size:9px; color:#9A88FF">{{ msTopName }} {{ msTopPct }}</div>
-          <div style="position:absolute; bottom:34px; right:16px; font-size:9px; color:#cdd3ff">{{ msBotName }} {{ msBotPct }}</div>
+          <div style="position:absolute; top:18px; right:16px; font-size:9px; color:{{ msTopColor }}">{{ msTopName }} {{ msTopPct }}</div>
+          <div style="position:absolute; bottom:34px; right:16px; font-size:9px; color:{{ msBotColor }}">{{ msBotName }} {{ msBotPct }}</div>
         </div>
       </div>
     </div>
 
     <!-- PROTOCOL_BREAKDOWN -->
-    <div style="position:relative; border:1px solid rgba(255,255,255,.07); background:#0A0C10; margin:0 18px 14px">
-      <div style="position:absolute; top:-1px; left:-1px; width:8px; height:8px; border-top:1px solid #836EF9; border-left:1px solid #836EF9"></div>
-      <div style="position:absolute; bottom:-1px; right:-1px; width:8px; height:8px; border-bottom:1px solid #836EF9; border-right:1px solid #836EF9"></div>
-      <div style="padding:9px 12px; border-bottom:1px solid rgba(255,255,255,.06); font-size:11px; letter-spacing:.03em"><span style="color:#836EF9">#</span> <span style="color:#E6E7EA; font-weight:600">PROTOCOL_BREAKDOWN</span></div>
+    <div style="position:relative; border:1px solid var(--border); background:var(--panel); margin:0 18px 14px">
+      <div style="position:absolute; top:-1px; left:-1px; width:8px; height:8px; border-top:1px solid var(--accent); border-left:1px solid var(--accent)"></div>
+      <div style="position:absolute; bottom:-1px; right:-1px; width:8px; height:8px; border-bottom:1px solid var(--accent); border-right:1px solid var(--accent)"></div>
+      <div style="padding:9px 12px; border-bottom:1px solid var(--border2); font-size:11px; letter-spacing:.03em"><span style="color:var(--accent)">#</span> <span style="color:var(--text); font-weight:600">PROTOCOL_BREAKDOWN</span></div>
       <div style="padding:6px 14px 12px">
-        <div style="display:grid; grid-template-columns:1.4fr 1fr 1.4fr 1fr 1.2fr 1fr; gap:8px; padding:9px 6px; font-size:9px; color:#5e6068; letter-spacing:.05em; border-bottom:1px solid rgba(255,255,255,.07)"><div>PROTOCOL</div><div style="text-align:right">ALL-TIME VOL</div><div>SHARE</div><div style="text-align:right">SWAPS</div><div style="text-align:right">PEAK DAY</div><div style="text-align:right">FIRST ACTIVE</div></div>
+        <div style="display:grid; grid-template-columns:1.4fr 1fr 1.4fr 1fr 1.2fr 1fr; gap:8px; padding:9px 6px; font-size:9px; color:var(--faint); letter-spacing:.05em; border-bottom:1px solid var(--border)"><div>PROTOCOL</div><div style="text-align:right">ALL-TIME VOL</div><div>SHARE</div><div style="text-align:right">SWAPS</div><div style="text-align:right">PEAK DAY</div><div style="text-align:right">FIRST ACTIVE</div></div>
         <sc-for list="{{ brk }}" as="r" hint-placeholder-count="3">
-          <div style="display:grid; grid-template-columns:1.4fr 1fr 1.4fr 1fr 1.2fr 1fr; gap:8px; padding:10px 6px; font-size:11.5px; border-bottom:1px solid rgba(255,255,255,.04); align-items:center">
-            <div style="display:flex; align-items:center; gap:7px"><span style="width:8px;height:8px;border-radius:2px;background:{{ r.color }}"></span><span style="color:#cdcfd6">{{ r.name }}</span></div>
-            <div style="text-align:right; color:#E6E7EA">{{ r.vol }}</div>
-            <div style="display:flex; align-items:center; gap:8px"><div style="flex:1; height:5px; background:rgba(255,255,255,.06); border-radius:3px; overflow:hidden"><div style="height:100%; width:{{ r.shareW }}%; background:{{ r.color }}"></div></div><span style="color:#9a9ba3; width:40px; text-align:right">{{ r.share }}</span></div>
-            <div style="text-align:right; color:#9a9ba3">{{ r.swaps }}</div>
-            <div style="text-align:right; color:#9a9ba3">{{ r.peakV }} <span style="color:#5e6068">{{ r.peakDay }}</span></div>
-            <div style="text-align:right; color:#7a7c84">{{ r.first }}</div>
+          <div style="display:grid; grid-template-columns:1.4fr 1fr 1.4fr 1fr 1.2fr 1fr; gap:8px; padding:10px 6px; font-size:11.5px; border-bottom:1px solid var(--border-soft); align-items:center">
+            <div style="display:flex; align-items:center; gap:7px"><span style="width:8px;height:8px;border-radius:2px;background:{{ r.color }}"></span><span style="color:var(--text2)">{{ r.name }}</span></div>
+            <div style="text-align:right; color:var(--text)">{{ r.vol }}</div>
+            <div style="display:flex; align-items:center; gap:8px"><div style="flex:1; height:5px; background:var(--border2); border-radius:3px; overflow:hidden"><div style="height:100%; width:{{ r.shareW }}%; background:{{ r.color }}"></div></div><span style="color:var(--text4); width:40px; text-align:right">{{ r.share }}</span></div>
+            <div style="text-align:right; color:var(--text4)">{{ r.swaps }}</div>
+            <div style="text-align:right; color:var(--text4)">{{ r.peakV }} <span style="color:var(--faint)">{{ r.peakDay }}</span></div>
+            <div style="text-align:right; color:var(--dim)">{{ r.first }}</div>
           </div>
         </sc-for>
-        <div style="display:grid; grid-template-columns:1.4fr 1fr 1.4fr 1fr 1.2fr 1fr; gap:8px; padding:10px 6px; font-size:11.5px; align-items:center"><div style="color:#7a7c84">TOTAL</div><div style="text-align:right; color:#E6E7EA; font-weight:600">{{ brkTotalVol }}</div><div style="color:#9a9ba3">100%</div><div style="text-align:right; color:#9a9ba3">{{ brkTotalSwaps }}</div><div style="text-align:right; color:#5e6068">&mdash;</div><div style="text-align:right; color:#7a7c84">2026-05-13</div></div>
+        <div style="display:grid; grid-template-columns:1.4fr 1fr 1.4fr 1fr 1.2fr 1fr; gap:8px; padding:10px 6px; font-size:11.5px; align-items:center"><div style="color:var(--dim)">TOTAL</div><div style="text-align:right; color:var(--text); font-weight:600">{{ brkTotalVol }}</div><div style="color:var(--text4)">100%</div><div style="text-align:right; color:var(--text4)">{{ brkTotalSwaps }}</div><div style="text-align:right; color:var(--faint)">&mdash;</div><div style="text-align:right; color:var(--dim)">2026-05-13</div></div>
       </div>
     </div>
   </div>
@@ -283,69 +310,69 @@
   <sc-if value="{{ isMk }}" hint-placeholder-val="{{ false }}">
   <div>
     <div style="padding:18px 18px 14px">
-      <div style="font-size:14px; font-weight:600; letter-spacing:.06em; color:#E6E7EA">SWAP MARKOUTS</div>
-      <div style="font-size:11px; color:#7a7c84; margin-top:6px; line-height:1.55; max-width:880px">On-chain swaps joined to the Bybit <span style="color:#B9BCC6">MONUSDT</span> reference BBO for markouts at 0 / 5 / 10 / 30 / 60 seconds. <span style="color:#35D0A0">Positive bps</span> = the taker got a favorable fill vs the CEX reference; <span style="color:#F2566A">negative</span> = adverse. Later horizons fill in as each swap ages past them.</div>
+      <div style="font-size:14px; font-weight:600; letter-spacing:.06em; color:var(--text)">SWAP MARKOUTS</div>
+      <div style="font-size:11px; color:var(--dim); margin-top:6px; line-height:1.55; max-width:880px">On-chain swaps joined to the Bybit <span style="color:var(--text3)">MONUSDT</span> reference BBO for markouts at 0 / 5 / 10 / 30 / 60 seconds. <span style="color:var(--green)">Positive bps</span> = the taker got a favorable fill vs the CEX reference; <span style="color:var(--red)">negative</span> = adverse. Later horizons fill in as each swap ages past them.</div>
     </div>
 
     <!-- SWAP_TAPE -->
-    <div style="position:relative; border:1px solid rgba(255,255,255,.07); background:#0A0C10; margin:0 18px 14px">
-      <div style="position:absolute; top:-1px; left:-1px; width:8px; height:8px; border-top:1px solid #836EF9; border-left:1px solid #836EF9"></div>
-      <div style="position:absolute; bottom:-1px; right:-1px; width:8px; height:8px; border-bottom:1px solid #836EF9; border-right:1px solid #836EF9"></div>
-      <div style="display:flex; align-items:center; justify-content:space-between; gap:14px; flex-wrap:wrap; padding:9px 12px; border-bottom:1px solid rgba(255,255,255,.06)">
-        <div style="font-size:11px; letter-spacing:.03em"><span style="color:#836EF9">&gt;</span> <span style="color:#E6E7EA; font-weight:600">SWAP_TAPE</span></div>
+    <div style="position:relative; border:1px solid var(--border); background:var(--panel); margin:0 18px 14px">
+      <div style="position:absolute; top:-1px; left:-1px; width:8px; height:8px; border-top:1px solid var(--accent); border-left:1px solid var(--accent)"></div>
+      <div style="position:absolute; bottom:-1px; right:-1px; width:8px; height:8px; border-bottom:1px solid var(--accent); border-right:1px solid var(--accent)"></div>
+      <div style="display:flex; align-items:center; justify-content:space-between; gap:14px; flex-wrap:wrap; padding:9px 12px; border-bottom:1px solid var(--border2)">
+        <div style="font-size:11px; letter-spacing:.03em"><span style="color:var(--accent)">&gt;</span> <span style="color:var(--text); font-weight:600">SWAP_TAPE</span></div>
         <div style="display:flex; align-items:center; gap:12px; flex-wrap:wrap">
           <div style="display:flex; gap:3px"><sc-for list="{{ mkProtoPills }}" as="p" hint-placeholder-count="4"><div onClick="{{ p.onClick }}" style="{{ p.style }}">{{ p.label }}</div></sc-for></div>
           <div style="display:flex; gap:3px"><sc-for list="{{ mkSidePills }}" as="p" hint-placeholder-count="3"><div onClick="{{ p.onClick }}" style="{{ p.style }}">{{ p.label }}</div></sc-for></div>
           <div style="display:flex; gap:3px"><sc-for list="{{ mkSizePills }}" as="p" hint-placeholder-count="4"><div onClick="{{ p.onClick }}" style="{{ p.style }}">{{ p.label }}</div></sc-for></div>
-          <div style="display:flex; align-items:center; gap:5px"><span style="font-size:9px; color:#5e6068; letter-spacing:.04em">CLOBER</span><div style="display:flex; gap:3px"><sc-for list="{{ clScopePills }}" as="p" hint-placeholder-count="2"><div onClick="{{ p.onClick }}" style="{{ p.style }}">{{ p.label }}</div></sc-for></div></div>
+          <div style="display:flex; align-items:center; gap:5px"><span style="font-size:9px; color:var(--faint); letter-spacing:.04em">CLOBER</span><div style="display:flex; gap:3px"><sc-for list="{{ clScopePills }}" as="p" hint-placeholder-count="2"><div onClick="{{ p.onClick }}" style="{{ p.style }}">{{ p.label }}</div></sc-for></div></div>
           <div onClick="{{ togglePause }}" style="{{ mkPauseStyle }}">{{ mkPauseLabel }}</div>
         </div>
       </div>
-      <div style="display:grid; grid-template-columns:78px 78px 84px 84px 64px 64px 80px 88px 46px 80px 80px 52px 52px 52px 52px 52px; gap:0 6px; padding:9px 14px; font-size:8.5px; color:#5e6068; letter-spacing:.04em; border-bottom:1px solid rgba(255,255,255,.07)">
+      <div style="display:grid; grid-template-columns:78px 78px 84px 84px 64px 64px 80px 88px 46px 80px 80px 52px 52px 52px 52px 52px; gap:0 6px; padding:9px 14px; font-size:8.5px; color:var(--faint); letter-spacing:.04em; border-bottom:1px solid var(--border)">
         <div>TS UTC</div><div>BLOCK</div><div>TX</div><div>TO</div><div>CATEGORY</div><div>PROTOCOL</div><div>PAIR</div><div>POOL</div><div>SIDE</div><div style="text-align:right">SIZE USD</div><div style="text-align:right">EXEC PX</div><div style="text-align:right">MK-0S</div><div style="text-align:right">MK-5S</div><div style="text-align:right">MK-10S</div><div style="text-align:right">MK-30S</div><div style="text-align:right">MK-60S</div>
       </div>
       <div style="max-height:454px; overflow-y:auto">
         <sc-for list="{{ mkRows }}" as="f" hint-placeholder-count="20">
-          <div style="display:grid; grid-template-columns:78px 78px 84px 84px 64px 64px 80px 88px 46px 80px 80px 52px 52px 52px 52px 52px; gap:0 6px; padding:6px 14px; font-size:10.5px; border-bottom:1px solid rgba(255,255,255,.035); align-items:center">
-            <div style="color:#6b6d76">{{ f.ts }}</div>
-            <div style="color:#7a7c84">{{ f.block }}</div>
-            <div style="color:#6E8BFF">{{ f.tx }}</div>
-            <div style="color:#5e6068">{{ f.to }}</div>
+          <div style="display:grid; grid-template-columns:78px 78px 84px 84px 64px 64px 80px 88px 46px 80px 80px 52px 52px 52px 52px 52px; gap:0 6px; padding:6px 14px; font-size:10.5px; border-bottom:1px solid var(--border-soft); align-items:center">
+            <div style="color:var(--dim2)">{{ f.ts }}</div>
+            <div style="color:var(--dim)">{{ f.block }}</div>
+            <div style="color:var(--link)">{{ f.tx }}</div>
+            <div style="color:var(--faint)">{{ f.to }}</div>
             <div style="{{ f.catStyle }}; font-size:9px">{{ f.cat }}</div>
             <div style="{{ f.protoStyle }}; font-weight:600">{{ f.proto }}</div>
-            <div style="color:#cdcfd6">{{ f.pair }}</div>
-            <div style="color:#5e6068">{{ f.pool }}</div>
+            <div style="color:var(--text2)">{{ f.pair }}</div>
+            <div style="color:var(--faint)">{{ f.pool }}</div>
             <div><span style="{{ f.sideStyle }}">{{ f.side }}</span></div>
-            <div style="text-align:right; color:#E6E7EA">{{ f.usd }}</div>
-            <div style="text-align:right; color:#9a9ba3">{{ f.exec }}</div>
+            <div style="text-align:right; color:var(--text)">{{ f.usd }}</div>
+            <div style="text-align:right; color:var(--text4)">{{ f.exec }}</div>
             <sc-for list="{{ f.cells }}" as="c" hint-placeholder-count="5"><div style="{{ c.css }}">{{ c.val }}</div></sc-for>
           </div>
         </sc-for>
       </div>
-      <div style="display:flex; justify-content:space-between; padding:8px 14px; border-top:1px solid rgba(255,255,255,.06); font-size:9px; color:#5e6068">
+      <div style="display:flex; justify-content:space-between; padding:8px 14px; border-top:1px solid var(--border2); font-size:9px; color:var(--faint)">
         <span>showing {{ mkCount }} rows</span><span>last refresh {{ mkRefresh }}</span>
       </div>
     </div>
 
     <!-- OUTLIER_FEED -->
-    <div style="position:relative; border:1px solid rgba(255,255,255,.07); background:#0A0C10; margin:0 18px 14px">
-      <div style="position:absolute; top:-1px; left:-1px; width:8px; height:8px; border-top:1px solid #836EF9; border-left:1px solid #836EF9"></div>
-      <div style="position:absolute; bottom:-1px; right:-1px; width:8px; height:8px; border-bottom:1px solid #836EF9; border-right:1px solid #836EF9"></div>
-      <div style="padding:9px 12px; border-bottom:1px solid rgba(255,255,255,.06); font-size:11px; letter-spacing:.03em"><span style="color:#F2566A">!</span> <span style="color:#E6E7EA; font-weight:600">OUTLIER_FEED</span> <span style="color:#6b6d76">sorted by |mk-0s P&amp;L| desc &middot; last 24h</span></div>
-      <div style="display:grid; grid-template-columns:84px 88px 96px 56px 100px 110px 120px 1fr 1fr; gap:0 8px; padding:9px 14px; font-size:8.5px; color:#5e6068; letter-spacing:.04em; border-bottom:1px solid rgba(255,255,255,.07)">
+    <div style="position:relative; border:1px solid var(--border); background:var(--panel); margin:0 18px 14px">
+      <div style="position:absolute; top:-1px; left:-1px; width:8px; height:8px; border-top:1px solid var(--accent); border-left:1px solid var(--accent)"></div>
+      <div style="position:absolute; bottom:-1px; right:-1px; width:8px; height:8px; border-bottom:1px solid var(--accent); border-right:1px solid var(--accent)"></div>
+      <div style="padding:9px 12px; border-bottom:1px solid var(--border2); font-size:11px; letter-spacing:.03em"><span style="color:var(--red)">!</span> <span style="color:var(--text); font-weight:600">OUTLIER_FEED</span> <span style="color:var(--dim2)">sorted by |mk-0s P&amp;L| desc &middot; last 24h</span></div>
+      <div style="display:grid; grid-template-columns:84px 88px 96px 56px 100px 110px 120px 1fr 1fr; gap:0 8px; padding:9px 14px; font-size:8.5px; color:var(--faint); letter-spacing:.04em; border-bottom:1px solid var(--border)">
         <div>WHEN</div><div>BLOCK</div><div>PAIR</div><div>SIDE</div><div style="text-align:right">USD</div><div style="text-align:right">MK-0S (BPS)</div><div style="text-align:right">MK-0S P&amp;L</div><div>TX</div><div>TO</div>
       </div>
       <sc-for list="{{ outRows }}" as="o" hint-placeholder-count="12">
-        <div style="display:grid; grid-template-columns:84px 88px 96px 56px 100px 110px 120px 1fr 1fr; gap:0 8px; padding:7px 14px; font-size:10.5px; border-bottom:1px solid rgba(255,255,255,.035); align-items:center">
-          <div style="color:#6b6d76">{{ o.when }}</div>
-          <div style="color:#7a7c84">{{ o.block }}</div>
-          <div style="color:#cdcfd6">{{ o.pair }}</div>
+        <div style="display:grid; grid-template-columns:84px 88px 96px 56px 100px 110px 120px 1fr 1fr; gap:0 8px; padding:7px 14px; font-size:10.5px; border-bottom:1px solid var(--border-soft); align-items:center">
+          <div style="color:var(--dim2)">{{ o.when }}</div>
+          <div style="color:var(--dim)">{{ o.block }}</div>
+          <div style="color:var(--text2)">{{ o.pair }}</div>
           <div><span style="{{ o.sideStyle }}">{{ o.side }}</span></div>
-          <div style="text-align:right; color:#E6E7EA">{{ o.usd }}</div>
+          <div style="text-align:right; color:var(--text)">{{ o.usd }}</div>
           <div style="{{ o.mk0Style }}">{{ o.mk0 }}</div>
           <div style="{{ o.pnlStyle }}; font-weight:600">{{ o.pnl }}</div>
-          <div style="color:#6E8BFF">{{ o.tx }}</div>
-          <div style="color:#5e6068">{{ o.to }}</div>
+          <div style="color:var(--link)">{{ o.tx }}</div>
+          <div style="color:var(--faint)">{{ o.to }}</div>
         </div>
       </sc-for>
     </div>
@@ -355,36 +382,36 @@
   <div>
     <div style="display:flex; align-items:flex-start; justify-content:space-between; padding:18px 18px 12px">
       <div>
-        <div style="font-size:14px; font-weight:600; letter-spacing:.06em; color:#E6E7EA">MARKOUT LEADERBOARD</div>
-        <div style="font-size:11px; color:#7a7c84; margin-top:6px; line-height:1.55; max-width:760px">Percentile distribution of markouts and the biggest single-swap winners / losers, per group, over the selected window. Markouts vs Bybit MONUSDT BBO mid; pool PnL = &#931;(markout_bps &times; size_usd / 10000).</div>
+        <div style="font-size:14px; font-weight:600; letter-spacing:.06em; color:var(--text)">MARKOUT LEADERBOARD</div>
+        <div style="font-size:11px; color:var(--dim); margin-top:6px; line-height:1.55; max-width:760px">Percentile distribution of markouts and the biggest single-swap winners / losers, per group, over the selected window. Markouts vs Bybit MONUSDT BBO mid; pool PnL = &#931;(markout_bps &times; size_usd / 10000).</div>
       </div>
       <div style="display:flex; gap:3px"><sc-for list="{{ lbWinPills }}" as="p" hint-placeholder-count="3"><div onClick="{{ p.onClick }}" style="{{ p.style }}">{{ p.label }}</div></sc-for></div>
     </div>
 
     <!-- controls -->
-    <div style="display:flex; align-items:center; gap:18px; flex-wrap:wrap; padding:2px 18px 16px; font-size:9px; color:#5e6068">
+    <div style="display:flex; align-items:center; gap:18px; flex-wrap:wrap; padding:2px 18px 16px; font-size:9px; color:var(--faint)">
       <div style="display:flex; align-items:center; gap:7px"><span style="letter-spacing:.06em">SHOW</span><div style="display:flex; gap:3px"><sc-for list="{{ lbShowPills }}" as="p" hint-placeholder-count="2"><div onClick="{{ p.onClick }}" style="{{ p.style }}">{{ p.label }}</div></sc-for></div></div>
       <div style="display:flex; align-items:center; gap:7px"><span style="letter-spacing:.06em">GROUP BY</span><div style="display:flex; gap:3px"><sc-for list="{{ lbGroupPills }}" as="p" hint-placeholder-count="4"><div onClick="{{ p.onClick }}" style="{{ p.style }}">{{ p.label }}</div></sc-for></div></div>
       <div style="display:flex; align-items:center; gap:7px"><span style="letter-spacing:.06em">HORIZON</span><div style="display:flex; gap:3px"><sc-for list="{{ lbHzPills }}" as="p" hint-placeholder-count="4"><div onClick="{{ p.onClick }}" style="{{ p.style }}">{{ p.label }}</div></sc-for></div></div>
       <div style="display:flex; align-items:center; gap:7px"><span style="letter-spacing:.06em">MARKOUTS</span><div style="display:flex; gap:3px"><sc-for list="{{ lbMkPills }}" as="p" hint-placeholder-count="2"><div onClick="{{ p.onClick }}" style="{{ p.style }}">{{ p.label }}</div></sc-for></div></div>
-      <div onClick="{{ lbReset }}" style="margin-left:auto; padding:3px 9px; border:1px solid rgba(255,255,255,.13); border-radius:4px; cursor:pointer; font-size:10px; color:#8b8c95">RESET FILTERS</div>
+      <div onClick="{{ lbReset }}" style="margin-left:auto; padding:3px 9px; border:1px solid var(--pill-border); border-radius:4px; cursor:pointer; font-size:10px; color:var(--dim)">RESET FILTERS</div>
     </div>
 
     <!-- PROTOCOL_LEADERBOARD -->
-    <div style="position:relative; border:1px solid rgba(255,255,255,.07); background:#0A0C10; margin:0 18px 14px">
-      <div style="position:absolute; top:-1px; left:-1px; width:8px; height:8px; border-top:1px solid #836EF9; border-left:1px solid #836EF9"></div>
-      <div style="position:absolute; bottom:-1px; right:-1px; width:8px; height:8px; border-bottom:1px solid #836EF9; border-right:1px solid #836EF9"></div>
-      <div style="padding:9px 12px; border-bottom:1px solid rgba(255,255,255,.06); font-size:11px; letter-spacing:.03em"><span style="color:#836EF9">$</span> <span style="color:#E6E7EA; font-weight:600">LEADERBOARD_{{ lbWinLbl }}</span> <span style="color:#6b6d76">grouped by {{ lbGroupLbl }} &middot; markout {{ lbHzLbl }}</span></div>
+    <div style="position:relative; border:1px solid var(--border); background:var(--panel); margin:0 18px 14px">
+      <div style="position:absolute; top:-1px; left:-1px; width:8px; height:8px; border-top:1px solid var(--accent); border-left:1px solid var(--accent)"></div>
+      <div style="position:absolute; bottom:-1px; right:-1px; width:8px; height:8px; border-bottom:1px solid var(--accent); border-right:1px solid var(--accent)"></div>
+      <div style="padding:9px 12px; border-bottom:1px solid var(--border2); font-size:11px; letter-spacing:.03em"><span style="color:var(--accent)">$</span> <span style="color:var(--text); font-weight:600">LEADERBOARD_{{ lbWinLbl }}</span> <span style="color:var(--dim2)">grouped by {{ lbGroupLbl }} &middot; markout {{ lbHzLbl }}</span></div>
       <div style="padding:4px 14px 12px; overflow-x:auto">
-        <div style="display:grid; grid-template-columns:34px 1.7fr 96px 64px 58px 58px 58px 58px 58px 1.5fr; gap:0 8px; padding:9px 6px; font-size:9px; color:#5e6068; letter-spacing:.04em; border-bottom:1px solid rgba(255,255,255,.07); min-width:980px">
+        <div style="display:grid; grid-template-columns:34px 1.7fr 96px 64px 58px 58px 58px 58px 58px 1.5fr; gap:0 8px; padding:9px 6px; font-size:9px; color:var(--faint); letter-spacing:.04em; border-bottom:1px solid var(--border); min-width:980px">
           <div>#</div><div>{{ lbColHdr }}</div><div style="text-align:right">VOLUME</div><div style="text-align:right">SWAPS</div><div style="text-align:right">P5</div><div style="text-align:right">P25</div><div style="text-align:right">P50</div><div style="text-align:right">P75</div><div style="text-align:right">P95</div><div style="text-align:right">POOL PNL</div>
         </div>
         <sc-for list="{{ lbRows }}" as="g" hint-placeholder-count="8">
-          <div style="display:grid; grid-template-columns:34px 1.7fr 96px 64px 58px 58px 58px 58px 58px 1.5fr; gap:0 8px; padding:11px 6px; font-size:11.5px; border-bottom:1px solid rgba(255,255,255,.04); align-items:center; min-width:980px">
-            <div style="color:#5e6068">{{ g.rank }}</div>
-            <div style="display:flex; align-items:center; gap:8px; overflow:hidden"><span style="width:9px; height:9px; border-radius:2px; background:{{ g.color }}; flex:none"></span><span style="color:#E6E7EA; white-space:nowrap; overflow:hidden; text-overflow:ellipsis">{{ g.name }}</span></div>
-            <div style="text-align:right; color:#E6E7EA">{{ g.vol }}</div>
-            <div style="text-align:right; color:#9a9ba3">{{ g.swaps }}</div>
+          <div style="display:grid; grid-template-columns:34px 1.7fr 96px 64px 58px 58px 58px 58px 58px 1.5fr; gap:0 8px; padding:11px 6px; font-size:11.5px; border-bottom:1px solid var(--border-soft); align-items:center; min-width:980px">
+            <div style="color:var(--faint)">{{ g.rank }}</div>
+            <div style="display:flex; align-items:center; gap:8px; overflow:hidden"><span style="width:9px; height:9px; border-radius:2px; background:{{ g.color }}; flex:none"></span><span style="color:var(--text); white-space:nowrap; overflow:hidden; text-overflow:ellipsis">{{ g.name }}</span></div>
+            <div style="text-align:right; color:var(--text)">{{ g.vol }}</div>
+            <div style="text-align:right; color:var(--text4)">{{ g.swaps }}</div>
             <div style="{{ g.p5css }}">{{ g.p5 }}</div>
             <div style="{{ g.p25css }}">{{ g.p25 }}</div>
             <div style="{{ g.p50css }}">{{ g.p50 }}</div>
@@ -397,33 +424,33 @@
     </div>
 
     <!-- TOP_SWAPS -->
-    <div style="position:relative; border:1px solid rgba(255,255,255,.07); background:#0A0C10; margin:0 18px 14px">
-      <div style="position:absolute; top:-1px; left:-1px; width:8px; height:8px; border-top:1px solid #836EF9; border-left:1px solid #836EF9"></div>
-      <div style="position:absolute; bottom:-1px; right:-1px; width:8px; height:8px; border-bottom:1px solid #836EF9; border-right:1px solid #836EF9"></div>
-      <div style="display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; padding:9px 12px; border-bottom:1px solid rgba(255,255,255,.06)">
-        <div style="font-size:11px; letter-spacing:.03em"><span style="color:#836EF9">&minus;</span> <span style="color:#E6E7EA; font-weight:600">TOP_SWAPS_BY_MARKOUT_USD</span> <span style="color:#6b6d76">{{ lbHzLbl }} markout &middot; {{ lbWinLbl }} window</span></div>
+    <div style="position:relative; border:1px solid var(--border); background:var(--panel); margin:0 18px 14px">
+      <div style="position:absolute; top:-1px; left:-1px; width:8px; height:8px; border-top:1px solid var(--accent); border-left:1px solid var(--accent)"></div>
+      <div style="position:absolute; bottom:-1px; right:-1px; width:8px; height:8px; border-bottom:1px solid var(--accent); border-right:1px solid var(--accent)"></div>
+      <div style="display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; padding:9px 12px; border-bottom:1px solid var(--border2)">
+        <div style="font-size:11px; letter-spacing:.03em"><span style="color:var(--accent)">&minus;</span> <span style="color:var(--text); font-weight:600">TOP_SWAPS_BY_MARKOUT_USD</span> <span style="color:var(--dim2)">{{ lbHzLbl }} markout &middot; {{ lbWinLbl }} window</span></div>
         <div style="display:flex; gap:10px">
           <div style="display:flex; gap:3px"><div onClick="{{ lbWinnersOn }}" style="{{ lbWinnersStyle }}">WINNERS</div><div onClick="{{ lbLosersOn }}" style="{{ lbLosersStyle }}">LOSERS</div></div>
           <div style="display:flex; gap:3px"><sc-for list="{{ lbTopPills }}" as="p" hint-placeholder-count="3"><div onClick="{{ p.onClick }}" style="{{ p.style }}">{{ p.label }}</div></sc-for></div>
         </div>
       </div>
       <div style="padding:0 14px 12px; overflow-x:auto">
-        <div style="display:grid; grid-template-columns:30px 76px 64px 82px 1.3fr 64px 88px 46px 1fr 1fr 76px 56px 80px; gap:0 8px; padding:9px 6px; font-size:8.5px; color:#5e6068; letter-spacing:.04em; border-bottom:1px solid rgba(255,255,255,.07); min-width:1140px">
+        <div style="display:grid; grid-template-columns:30px 76px 64px 82px 1.3fr 64px 88px 46px 1fr 1fr 76px 56px 80px; gap:0 8px; padding:9px 6px; font-size:8.5px; color:var(--faint); letter-spacing:.04em; border-bottom:1px solid var(--border); min-width:1140px">
           <div>#</div><div>BLOCK</div><div>AGE</div><div>TX</div><div>TO</div><div>CATEGORY</div><div>POOL</div><div>SIDE</div><div style="text-align:right">IN</div><div style="text-align:right">OUT</div><div style="text-align:right">EXEC PX</div><div style="text-align:right">MK BPS</div><div style="text-align:right">MK $</div>
         </div>
         <sc-for list="{{ topRows }}" as="r" hint-placeholder-count="14">
-          <div style="display:grid; grid-template-columns:30px 76px 64px 82px 1.3fr 64px 88px 46px 1fr 1fr 76px 56px 80px; gap:0 8px; padding:8px 6px; font-size:10.5px; border-bottom:1px solid rgba(255,255,255,.035); align-items:center; min-width:1140px">
-            <div style="color:#5e6068">{{ r.rank }}</div>
-            <div style="color:#7a7c84">{{ r.block }}</div>
-            <div style="color:#5e6068">{{ r.age }}</div>
-            <div style="color:#6E8BFF">{{ r.tx }}</div>
-            <div style="color:#7a7c84; white-space:nowrap; overflow:hidden; text-overflow:ellipsis">{{ r.to }}</div>
+          <div style="display:grid; grid-template-columns:30px 76px 64px 82px 1.3fr 64px 88px 46px 1fr 1fr 76px 56px 80px; gap:0 8px; padding:8px 6px; font-size:10.5px; border-bottom:1px solid var(--border-soft); align-items:center; min-width:1140px">
+            <div style="color:var(--faint)">{{ r.rank }}</div>
+            <div style="color:var(--dim)">{{ r.block }}</div>
+            <div style="color:var(--faint)">{{ r.age }}</div>
+            <div style="color:var(--link)">{{ r.tx }}</div>
+            <div style="color:var(--dim); white-space:nowrap; overflow:hidden; text-overflow:ellipsis">{{ r.to }}</div>
             <div style="{{ r.catStyle }}; font-size:9px">{{ r.cat }}</div>
-            <div style="color:#5e6068; white-space:nowrap; overflow:hidden; text-overflow:ellipsis">{{ r.pool }}</div>
+            <div style="color:var(--faint); white-space:nowrap; overflow:hidden; text-overflow:ellipsis">{{ r.pool }}</div>
             <div><span style="{{ r.sideStyle }}">{{ r.side }}</span></div>
-            <div style="text-align:right; color:#9a9ba3">{{ r.inAmt }}</div>
-            <div style="text-align:right; color:#9a9ba3">{{ r.outAmt }}</div>
-            <div style="text-align:right; color:#cdcfd6">{{ r.exec }}</div>
+            <div style="text-align:right; color:var(--text4)">{{ r.inAmt }}</div>
+            <div style="text-align:right; color:var(--text4)">{{ r.outAmt }}</div>
+            <div style="text-align:right; color:var(--text2)">{{ r.exec }}</div>
             <div style="{{ r.mkStyle }}">{{ r.mk }}</div>
             <div style="{{ r.pnlStyle }}">{{ r.pnl }}</div>
           </div>
@@ -440,18 +467,40 @@ class Component extends DCLogic {
   PAIRS = ['MON/USDC', 'MON/USDT0', 'MON/AUSD', 'MON/USD1'];
   SIZES = [100, 1000, 10000, 100000];
   VEN = ['LFJ', 'Clober', 'Vault', 'Bybit'];
-  COL = { LFJ: '#6E8BFF', Clober: '#45C8E8', Vault: '#9A88FF', Bybit: '#B9BCC6' };
+  get isLight() { return !this.state || this.state.theme !== 'dark'; }
+  get COL() {
+    return this.isLight
+      ? { LFJ: '#FF4D00', Clober: '#221E15', Vault: '#9C6B16', Bybit: '#8A8375' }
+      : { LFJ: '#6E8BFF', Clober: '#45C8E8', Vault: '#9A88FF', Bybit: '#B9BCC6' };
+  }
+  get SEM() {
+    return this.isLight
+      ? { green: { css: 'rgb(10,133,96)', rgb: '10,133,96' }, red: { css: 'rgb(201,43,72)', rgb: '201,43,72' } }
+      : { green: { css: 'rgb(53,208,160)', rgb: '53,208,160' }, red: { css: 'rgb(242,86,106)', rgb: '242,86,106' } };
+  }
+  get CH() {
+    return this.isLight
+      ? { grid: 'rgba(23,20,15,0.08)', grid2: 'rgba(23,20,15,0.05)', label: 'rgb(122,116,103)', label2: 'rgb(150,143,128)', ribbon: 0.10 }
+      : { grid: 'rgba(255,255,255,0.05)', grid2: 'rgba(255,255,255,0.035)', label: 'rgb(107,109,118)', label2: 'rgb(94,96,104)', ribbon: 0.08 };
+  }
   base = 0.01928;
   takerBps = 10;
   N = 120;
   slip = { LFJ: 1.3, Clober: 1.7, Vault: 0.5, Bybit: 0.22 };
   pairMult = { 'MON/USDC': 1.0, 'MON/USDT0': 1.15, 'MON/AUSD': 1.4, 'MON/USD1': 1.6 };
 
-  state = { tab: 'exec', pair: 'MON/USDC', size: 1000, frame: 0, ven: { LFJ: true, Clober: true, Vault: true, Bybit: true }, mkProto: 'ALL', mkSide: 'ALL', mkSize: 'ANY', mkPaused: false, clScope: 'venue', lbWin: '24H', lbShow: 'PROPAMM', lbGroup: 'PROTOCOL', lbHz: 'T+0S', lbMk: 'TAKER', lbWinners: true, lbTop: 25 };
+  state = { tab: 'exec', pair: 'MON/USDC', size: 1000, frame: 0, theme: (function () { try { return localStorage.getItem('pamm-theme') === 'dark' ? 'dark' : 'light'; } catch (e) { return 'light'; } })(), ven: { LFJ: true, Clober: true, Vault: true, Bybit: true }, mkProto: 'ALL', mkSide: 'ALL', mkSize: 'ANY', mkPaused: false, clScope: 'venue', lbWin: '24H', lbShow: 'PROPAMM', lbGroup: 'PROTOCOL', lbHz: 'T+0S', lbMk: 'TAKER', lbWinners: true, lbTop: 25 };
 
   setCanvas = (el) => { this.canvas = el; };
   setSel = (k, v) => { if (k === 'pair') this.pairSel = v; if (k === 'size') this.sizeSel = v; this.setState({ [k]: v }); this.reseedQuotes(); };
   toggleVen = (v) => { this.setState(s => ({ ven: { ...s.ven, [v]: !s.ven[v] } })); };
+  toggleTheme = () => {
+    const t = this.state.theme === 'dark' ? 'light' : 'dark';
+    try { localStorage.setItem('pamm-theme', t); } catch (e) {}
+    document.documentElement.dataset.theme = t;
+    this.setState({ theme: t });
+    requestAnimationFrame(() => this.draw());
+  };
 
   componentDidMount() {
     this.mon = this.base;
@@ -535,8 +584,8 @@ class Component extends DCLogic {
   txS() { return '0x' + this.rhex(4) + '\u2026' + this.rhex(4); }
   clockAt(a) { return new Date(Date.now() - a * 1000).toISOString().slice(11, 23); }
   fmtUsd(x) { return x >= 1e6 ? '$' + (x / 1e6).toFixed(2) + 'M' : x >= 1e3 ? '$' + (x / 1e3).toFixed(1) + 'k' : '$' + x.toFixed(2); }
-  protoCol(p) { return p === 'LFJ' ? '#6E8BFF' : p === 'Clober' ? '#45C8E8' : '#9A88FF'; }
-  catCol(c) { return c === 'ROUTER' ? '#E0A33E' : c === 'CEX/DEX' ? '#45C8E8' : c === 'AGG' ? '#9A88FF' : '#5e6068'; }
+  protoCol(p) { const C = this.COL; return p === 'LFJ' ? C.LFJ : p === 'Clober' ? C.Clober : C.Vault; }
+  catCol(c) { const C = this.COL; return c === 'ROUTER' ? 'var(--amber)' : c === 'CEX/DEX' ? C.Clober : c === 'AGG' ? C.Vault : 'var(--faint)'; }
   wpick(a, w) { const r = Math.random() * w.reduce((x, y) => x + y, 0); let c = 0; for (let i = 0; i < a.length; i++) { c += w[i]; if (r < c) return a[i]; } return a[a.length - 1]; }
   makeFill(ageT, big) {
     const pair = this.PAIRS[Math.floor(Math.random() * this.PAIRS.length)];
@@ -584,14 +633,14 @@ class Component extends DCLogic {
   lbVals() {
     if (!this.fills24) return {};
     const st = this.state;
-    const on = 'background:#836EF9;color:#fff;border:1px solid #836EF9;padding:3px 8px;border-radius:4px;cursor:pointer;font-size:10px;white-space:nowrap';
-    const off = 'background:transparent;color:#8b8c95;border:1px solid rgba(255,255,255,.13);padding:3px 8px;border-radius:4px;cursor:pointer;font-size:10px;white-space:nowrap';
+    const on = 'background:var(--accent);color:var(--accent-fg);border:1px solid var(--accent);padding:3px 8px;border-radius:4px;cursor:pointer;font-size:10px;white-space:nowrap';
+    const off = 'background:transparent;color:var(--dim);border:1px solid var(--pill-border);padding:3px 8px;border-radius:4px;cursor:pointer;font-size:10px;white-space:nowrap';
     const pills = (key, opts, vals) => opts.map((o, i) => ({ label: o, onClick: () => this.setMk(key, vals ? vals[i] : o), style: st[key] === (vals ? vals[i] : o) ? on : off }));
     const hzIdx = { 'T+0S': 0, 'T+10S': 2, 'T+30S': 3, 'T+60S': 4 }[st.lbHz];
     const winF = { '24H': 1, '7D': 5.6, '30D': 22 }[st.lbWin];
     const sign = st.lbMk === 'MAKER' ? -1 : 1;
     const keyFn = st.lbGroup === 'PROTOCOL' ? (f => f.proto) : st.lbGroup === 'CATEGORY' ? (f => f.cat === '\u2014' ? 'direct' : f.cat) : st.lbGroup === 'POOL' ? (f => f.pool) : (f => f.to);
-    const colorFor = n => st.lbGroup === 'PROTOCOL' ? this.protoCol(n) : st.lbGroup === 'CATEGORY' ? this.catCol(n === 'direct' ? '\u2014' : n) : '#9A88FF';
+    const colorFor = n => st.lbGroup === 'PROTOCOL' ? this.protoCol(n) : st.lbGroup === 'CATEGORY' ? this.catCol(n === 'direct' ? '\u2014' : n) : this.COL.Vault;
     const groups = {};
     this.fills24.forEach(f => { const k = keyFn(f); (groups[k] = groups[k] || []).push(f); });
     let arr = Object.entries(groups).map(([k, fs]) => {
@@ -602,44 +651,44 @@ class Component extends DCLogic {
       return { name: k, color: colorFor(k), vol, swaps: Math.round(fs.length * winF), p5: this.pct(mks, .05), p25: this.pct(mks, .25), p50: this.pct(mks, .5), p75: this.pct(mks, .75), p95: this.pct(mks, .95), pnl, sp };
     });
     arr.sort((a, b) => b.vol - a.vol); arr = arr.slice(0, 12);
-    const pcell = v => ({ v: (v >= 0 ? '+' : '') + v.toFixed(2), css: 'text-align:right;color:' + (v > 0.02 ? '#35D0A0' : v < -0.02 ? '#F2566A' : '#9a9ba3') });
+    const pcell = v => ({ v: (v >= 0 ? '+' : '') + v.toFixed(2), css: 'text-align:right;color:' + (v > 0.02 ? 'var(--green)' : v < -0.02 ? 'var(--red)' : 'var(--text4)') });
     const lbRows = arr.map((g, i) => ({
       rank: String(i + 1).padStart(2, '0'), name: g.name, color: g.color,
       vol: this.fmtUsd(g.vol), swaps: g.swaps.toLocaleString(),
       p5: pcell(g.p5).v, p5css: pcell(g.p5).css, p25: pcell(g.p25).v, p25css: pcell(g.p25).css, p50: pcell(g.p50).v, p50css: pcell(g.p50).css, p75: pcell(g.p75).v, p75css: pcell(g.p75).css, p95: pcell(g.p95).v, p95css: pcell(g.p95).css,
-      pnl: this.pnlFmt(g.pnl), pnlStyle: 'color:' + (g.pnl >= 0 ? '#35D0A0' : '#F2566A') + ';font-weight:600', spark: this.sparkPath(g.sp, 130, 26), sparkColor: g.pnl >= 0 ? '#35D0A0' : '#F2566A'
+      pnl: this.pnlFmt(g.pnl), pnlStyle: 'color:' + (g.pnl >= 0 ? 'var(--green)' : 'var(--red)') + ';font-weight:600', spark: this.sparkPath(g.sp, 130, 26), sparkColor: (g.pnl >= 0 ? this.SEM.green : this.SEM.red).css
     }));
     let tsw = this.fills24.map(f => { const mk = sign * f.mk[hzIdx]; return { f, mk, pnl: mk / 1e4 * f.usd }; });
     tsw = st.lbWinners ? tsw.filter(x => x.pnl > 0).sort((a, b) => b.pnl - a.pnl) : tsw.filter(x => x.pnl < 0).sort((a, b) => a.pnl - b.pnl);
-    const sideStyle = s => 'font-size:9px;font-weight:600;padding:1px 5px;border-radius:3px;border:1px solid ' + (s === 'BUY' ? 'rgba(53,208,160,.5)' : 'rgba(242,86,106,.5)') + ';color:' + (s === 'BUY' ? '#35D0A0' : '#F2566A');
+    const sideStyle = s => 'font-size:9px;font-weight:600;padding:1px 5px;border-radius:3px;border:1px solid ' + (s === 'BUY' ? 'var(--green-border)' : 'var(--red-border)') + ';color:' + (s === 'BUY' ? 'var(--green)' : 'var(--red)');
     const topRows = tsw.slice(0, st.lbTop).map((x, i) => {
       const f = x.f, base = f.usd / f.execPx, stable = f.pair.split('/')[1];
       return {
         rank: String(i + 1).padStart(2, '0'), block: f.block.toLocaleString(), age: this.humanAge(f.ageT), tx: f.tx, to: f.to, cat: f.cat, catStyle: 'color:' + this.catCol(f.cat), pool: f.pool, pair: f.pair, side: f.side, sideStyle: sideStyle(f.side),
         inAmt: f.side === 'BUY' ? this.fmtAmt(f.usd) + ' ' + stable : this.fmtAmt(base) + ' MON',
         outAmt: f.side === 'BUY' ? this.fmtAmt(base) + ' MON' : this.fmtAmt(f.usd) + ' ' + stable,
-        exec: f.execPx.toFixed(5), mk: (x.mk >= 0 ? '+' : '') + x.mk.toFixed(2), mkStyle: 'text-align:right;color:' + (x.mk >= 0 ? '#35D0A0' : '#F2566A'),
-        pnl: this.pnlFmt(x.pnl), pnlStyle: 'text-align:right;color:' + (x.pnl >= 0 ? '#35D0A0' : '#F2566A') + ';font-weight:600'
+        exec: f.execPx.toFixed(5), mk: (x.mk >= 0 ? '+' : '') + x.mk.toFixed(2), mkStyle: 'text-align:right;color:' + (x.mk >= 0 ? 'var(--green)' : 'var(--red)'),
+        pnl: this.pnlFmt(x.pnl), pnlStyle: 'text-align:right;color:' + (x.pnl >= 0 ? 'var(--green)' : 'var(--red)') + ';font-weight:600'
       };
     });
-    const wlBtn = (active, color) => 'padding:3px 10px;border-radius:4px;cursor:pointer;font-size:10px;border:1px solid ' + (active ? color + '88' : 'rgba(255,255,255,.13)') + ';background:' + (active ? color + '22' : 'transparent') + ';color:' + (active ? color : '#8b8c95');
+    const wlBtn = (active, sem) => 'padding:3px 10px;border-radius:4px;cursor:pointer;font-size:10px;border:1px solid ' + (active ? 'rgba(' + sem.rgb + ',.53)' : 'var(--pill-border)') + ';background:' + (active ? 'rgba(' + sem.rgb + ',.13)' : 'transparent') + ';color:' + (active ? sem.css : 'var(--dim)');
     return {
       lbRows, topRows, lbCount: arr.length, lbColHdr: st.lbGroup, lbWinLbl: st.lbWin, lbGroupLbl: st.lbGroup.toLowerCase(), lbHzLbl: st.lbHz,
       lbWinPills: pills('lbWin', ['24H', '7D', '30D']), lbShowPills: pills('lbShow', ['PROPAMM', 'ALL AMMS']),
       lbGroupPills: pills('lbGroup', ['PROTOCOL', 'POOL', 'TO ADDRESS', 'CATEGORY']), lbHzPills: pills('lbHz', ['T+0S', 'T+10S', 'T+30S', 'T+60S']),
       lbMkPills: pills('lbMk', ['TAKER', 'MAKER']), lbReset: this.lbReset,
       lbWinnersOn: () => this.setMk('lbWinners', true), lbLosersOn: () => this.setMk('lbWinners', false),
-      lbWinnersStyle: wlBtn(st.lbWinners, '#35D0A0'), lbLosersStyle: wlBtn(!st.lbWinners, '#F2566A'),
+      lbWinnersStyle: wlBtn(st.lbWinners, this.SEM.green), lbLosersStyle: wlBtn(!st.lbWinners, this.SEM.red),
       lbTopPills: [10, 25, 50].map(n => ({ label: 'TOP ' + n, onClick: () => this.setMk('lbTop', n), style: st.lbTop === n ? on : off })),
     };
   }
   mkVals() {
     if (!this.tape) return {};
     const st = this.state, H = [0, 5, 10, 30, 60];
-    const on = 'background:#836EF9;color:#fff;border:1px solid #836EF9;padding:3px 8px;border-radius:4px;cursor:pointer;font-size:10px;white-space:nowrap';
-    const off = 'background:transparent;color:#8b8c95;border:1px solid rgba(255,255,255,.13);padding:3px 8px;border-radius:4px;cursor:pointer;font-size:10px;white-space:nowrap';
+    const on = 'background:var(--accent);color:var(--accent-fg);border:1px solid var(--accent);padding:3px 8px;border-radius:4px;cursor:pointer;font-size:10px;white-space:nowrap';
+    const off = 'background:transparent;color:var(--dim);border:1px solid var(--pill-border);padding:3px 8px;border-radius:4px;cursor:pointer;font-size:10px;white-space:nowrap';
     const pills = (key, opts) => opts.map(o => ({ label: o, onClick: () => this.setMk(key, o), style: st[key] === o ? on : off }));
-    const sideStyle = s => 'font-size:9px;font-weight:600;padding:1px 5px;border-radius:3px;border:1px solid ' + (s === 'BUY' ? 'rgba(53,208,160,.5)' : 'rgba(242,86,106,.5)') + ';color:' + (s === 'BUY' ? '#35D0A0' : '#F2566A');
+    const sideStyle = s => 'font-size:9px;font-weight:600;padding:1px 5px;border-radius:3px;border:1px solid ' + (s === 'BUY' ? 'var(--green-border)' : 'var(--red-border)') + ';color:' + (s === 'BUY' ? 'var(--green)' : 'var(--red)');
     const flt = f => {
       if (st.mkSide === 'BUYS' && f.side !== 'BUY') return false;
       if (st.mkSide === 'SELLS' && f.side !== 'SELL') return false;
@@ -653,20 +702,20 @@ class Component extends DCLogic {
     const all = this.tape.filter(flt);
     const mkRows = all.slice(0, 52).map(f => {
       const age = this.simT - f.bornT;
-      const cells = H.map((h, i) => { if (age < h) return { val: '\u00b7', css: 'text-align:right;color:#3a3c44' }; const v = f.mk[i]; return { val: (v >= 0 ? '+' : '') + v.toFixed(2), css: 'text-align:right;color:' + (v >= 0 ? '#35D0A0' : '#F2566A') }; });
+      const cells = H.map((h, i) => { if (age < h) return { val: '\u00b7', css: 'text-align:right;color:var(--faint2)' }; const v = f.mk[i]; return { val: (v >= 0 ? '+' : '') + v.toFixed(2), css: 'text-align:right;color:' + (v >= 0 ? 'var(--green)' : 'var(--red)') }; });
       return { ts: f.ts, block: f.block.toLocaleString(), tx: f.tx, to: f.to, cat: f.cat, catStyle: 'color:' + this.catCol(f.cat), proto: f.proto.toUpperCase(), protoStyle: 'color:' + this.protoCol(f.proto), pair: f.pair, pool: f.pool, side: f.side, sideStyle: sideStyle(f.side), usd: this.fmtUsd(f.usd), exec: f.execPx.toFixed(5), cells };
     });
     const out = this.fills24.map(f => ({ f, pnl: f.mk[0] / 1e4 * f.usd })).sort((a, b) => Math.abs(b.pnl) - Math.abs(a.pnl)).slice(0, 18).map(({ f, pnl }) => ({
       when: f.ts.slice(0, 8), block: f.block.toLocaleString(), pair: f.pair, side: f.side, sideStyle: sideStyle(f.side), usd: this.fmtUsd(f.usd),
-      mk0: (f.mk[0] >= 0 ? '+' : '') + f.mk[0].toFixed(2), mk0Style: 'text-align:right;color:' + (f.mk[0] >= 0 ? '#35D0A0' : '#F2566A'),
-      pnl: (pnl >= 0 ? '+$' : '\u2212$') + Math.abs(pnl).toFixed(2), pnlStyle: 'text-align:right;color:' + (pnl >= 0 ? '#35D0A0' : '#F2566A'), tx: f.tx, to: f.to
+      mk0: (f.mk[0] >= 0 ? '+' : '') + f.mk[0].toFixed(2), mk0Style: 'text-align:right;color:' + (f.mk[0] >= 0 ? 'var(--green)' : 'var(--red)'),
+      pnl: (pnl >= 0 ? '+$' : '\u2212$') + Math.abs(pnl).toFixed(2), pnlStyle: 'text-align:right;color:' + (pnl >= 0 ? 'var(--green)' : 'var(--red)'), tx: f.tx, to: f.to
     }));
     return {
       mkRows, outRows: out, mkCount: all.length, mkRefresh: new Date().toISOString().slice(11, 19),
       mkProtoPills: pills('mkProto', ['ALL', 'LFJ', 'CLOBER', 'VAULT']),
       mkSidePills: pills('mkSide', ['ALL', 'BUYS', 'SELLS']),
       mkSizePills: pills('mkSize', ['ANY', '\u226510K', '\u2265100K', '\u2265500K']),
-      mkPauseStyle: (st.mkPaused ? 'background:rgba(242,86,106,.16);border:1px solid rgba(242,86,106,.5);color:#F2566A' : 'background:transparent;border:1px solid rgba(255,255,255,.13);color:#8b8c95') + ';padding:3px 9px;border-radius:4px;cursor:pointer;font-size:10px',
+      mkPauseStyle: (st.mkPaused ? 'background:var(--red-bg);border:1px solid var(--red-border);color:var(--red)' : 'background:transparent;border:1px solid var(--pill-border);color:var(--dim)') + ';padding:3px 9px;border-radius:4px;cursor:pointer;font-size:10px',
       mkPauseLabel: st.mkPaused ? '\u25B6 RESUME' : '\u23F8 PAUSE', togglePause: this.togglePause,
     };
   }
@@ -705,9 +754,10 @@ class Component extends DCLogic {
     if (!this.vol) return {};
     const days = this.vol.days, nd = days.length;
     const scope = this.state.clScope || 'venue';
+    const C = this.COL;
     const series = scope === 'vault'
-      ? [{ name: 'LFJ', color: '#6E8BFF', val: d => d.lfj }, { name: 'Clober \u00b7 Vault', color: '#9A88FF', val: d => d.vault }]
-      : [{ name: 'LFJ', color: '#6E8BFF', val: d => d.lfj }, { name: 'Clober', color: '#45C8E8', val: d => d.clob + d.vault }];
+      ? [{ name: 'LFJ', color: C.LFJ, val: d => d.lfj }, { name: 'Clober \u00b7 Vault', color: C.Vault, val: d => d.vault }]
+      : [{ name: 'LFJ', color: C.LFJ, val: d => d.lfj }, { name: 'Clober', color: C.Clober, val: d => d.clob + d.vault }];
     const dayTotal = d => series.reduce((a, s) => a + s.val(d), 0);
     const grand = days.reduce((a, d) => a + d.lfj + d.clob + d.vault, 0);
     const maxT = Math.max(...days.map(dayTotal));
@@ -740,13 +790,13 @@ class Component extends DCLogic {
     const axis = [0, Math.floor(nd * 0.25), Math.floor(nd * 0.5), Math.floor(nd * 0.75), nd - 1].map(i => ({ label: days[i].mmdd, left: (i / (nd - 1) * 100).toFixed(1) + '%' }));
     return {
       volBars, volMaxLabel: f(maxT), volMidLabel: f(maxT / 2), volAxis: axis,
-      kAll: f(allTot), k7: f(last7), k7chg: (chg7 >= 0 ? '\u25B2 ' : '\u25BC ') + Math.abs(chg7).toFixed(0) + '%', k7css: 'color:' + (chg7 >= 0 ? '#35D0A0' : '#F2566A'),
+      kAll: f(allTot), k7: f(last7), k7chg: (chg7 >= 0 ? '\u25B2 ' : '\u25BC ') + Math.abs(chg7).toFixed(0) + '%', k7css: 'color:' + (chg7 >= 0 ? 'var(--green)' : 'var(--red)'),
       kSwaps: swaps.toLocaleString(), kPeak: f(peakV), kPeakDay: peakDay,
-      kToday: f(todayT), kTodayChg: (todayChg >= 0 ? '\u25B2 ' : '\u25BC ') + Math.abs(todayChg).toFixed(0) + '%', kTodaycss: 'color:' + (todayChg >= 0 ? '#35D0A0' : '#F2566A'),
+      kToday: f(todayT), kTodayChg: (todayChg >= 0 ? '\u25B2 ' : '\u25BC ') + Math.abs(todayChg).toFixed(0) + '%', kTodaycss: 'color:' + (todayChg >= 0 ? 'var(--green)' : 'var(--red)'),
       legRows: totals.map(t => ({ name: t.name, color: t.color, vol: f(t.tot), share: share(t.tot) })),
       legTotal: f(allTot), cumLine, cumArea, cumSigma: f(allTot),
-      msBands, msTopName: series[series.length - 1].name, msTopPct: (series[series.length - 1].val(days[nd - 1]) / lt * 100).toFixed(1) + '%',
-      msBotName: series[0].name, msBotPct: (series[0].val(days[nd - 1]) / lt * 100).toFixed(1) + '%',
+      msBands, msTopName: series[series.length - 1].name, msTopPct: (series[series.length - 1].val(days[nd - 1]) / lt * 100).toFixed(1) + '%', msTopColor: this.isLight ? 'rgb(252,251,248)' : series[series.length - 1].color,
+      msBotName: series[0].name, msBotPct: (series[0].val(days[nd - 1]) / lt * 100).toFixed(1) + '%', msBotColor: this.isLight ? 'rgb(252,251,248)' : series[0].color,
       brk, brkTotalVol: f(allTot), brkTotalSwaps: swaps.toLocaleString(),
       volScopeNote: scope === 'vault' ? 'Clober = vault (propAMM) cut' : 'Clober = whole-venue',
     };
@@ -763,6 +813,7 @@ class Component extends DCLogic {
     const w = cv.clientWidth, h = cv.clientHeight; if (!w || !h) return;
     if (cv.width !== Math.round(w * dpr) || cv.height !== Math.round(h * dpr)) { cv.width = Math.round(w * dpr); cv.height = Math.round(h * dpr); }
     const ctx = cv.getContext('2d'); ctx.setTransform(dpr, 0, 0, dpr, 0, 0); ctx.clearRect(0, 0, w, h);
+    const CH = this.CH;
     const padL = 58, padR = 10, padT = 12, padB = 22;
     const active = this.VEN.filter(v => this.state.ven[v]);
     if (!active.length) return;
@@ -775,9 +826,9 @@ class Component extends DCLogic {
     const Y = p => padT + (1 - (p - mn) / (mx - mn)) * (h - padT - padB);
     ctx.font = '9px "JetBrains Mono", monospace';
     ctx.lineWidth = 1;
-    for (let g = 0; g <= 4; g++) { const p = mn + (mx - mn) * g / 4; const y = Y(p); ctx.strokeStyle = 'rgba(255,255,255,0.05)'; ctx.beginPath(); ctx.moveTo(padL, y); ctx.lineTo(w - padR, y); ctx.stroke(); ctx.fillStyle = '#6b6d76'; ctx.textAlign = 'right'; ctx.fillText(p.toFixed(5), padL - 6, y + 3); }
+    for (let g = 0; g <= 4; g++) { const p = mn + (mx - mn) * g / 4; const y = Y(p); ctx.strokeStyle = CH.grid; ctx.beginPath(); ctx.moveTo(padL, y); ctx.lineTo(w - padR, y); ctx.stroke(); ctx.fillStyle = CH.label; ctx.textAlign = 'right'; ctx.fillText(p.toFixed(5), padL - 6, y + 3); }
     ctx.textAlign = 'center';
-    for (let s = 0; s <= 60; s += 10) { const i = (1 - s / 60) * (N - 1); const x = X(i); ctx.strokeStyle = 'rgba(255,255,255,0.035)'; ctx.beginPath(); ctx.moveTo(x, padT); ctx.lineTo(x, h - padB); ctx.stroke(); ctx.fillStyle = '#5e6068'; ctx.fillText('-' + s + 's', x, h - 7); }
+    for (let s = 0; s <= 60; s += 10) { const i = (1 - s / 60) * (N - 1); const x = X(i); ctx.strokeStyle = CH.grid2; ctx.beginPath(); ctx.moveTo(x, padT); ctx.lineTo(x, h - padB); ctx.stroke(); ctx.fillStyle = CH.label2; ctx.fillText('-' + s + 's', x, h - 7); }
     // FILLS first — widest band underneath so tighter venues stay legible on top; stepped ribbon (staircase top + bottom)
     const byW = active.slice().sort((a, b) => this.hs[b] - this.hs[a]);
     byW.forEach(v => {
@@ -787,7 +838,7 @@ class Component extends DCLogic {
       for (let i = 1; i < n; i++) { ctx.lineTo(X(i), Y(S.ask[i - 1])); ctx.lineTo(X(i), Y(S.ask[i])); }
       ctx.lineTo(X(n - 1), Y(S.bid[n - 1]));
       for (let i = n - 1; i > 0; i--) { ctx.lineTo(X(i - 1), Y(S.bid[i])); ctx.lineTo(X(i - 1), Y(S.bid[i - 1])); }
-      ctx.closePath(); ctx.fillStyle = this.hex(c, 0.08); ctx.fill();
+      ctx.closePath(); ctx.fillStyle = this.hex(c, CH.ribbon); ctx.fill();
     });
     // STROKES on top — solid = ask, dashed = bid, both stepped
     active.forEach(v => {
@@ -802,22 +853,22 @@ class Component extends DCLogic {
     const st = this.state;
     if (st.tab === 'exec' && this._lastTab !== 'exec') requestAnimationFrame(() => this.draw());  // repaint on return to exec tab
     this._lastTab = st.tab;
-    const pillOn = 'background:#836EF9;color:#fff;border:1px solid #836EF9;padding:4px 9px;border-radius:4px;cursor:pointer;font-size:11px;white-space:nowrap';
-    const pillOff = 'background:transparent;color:#8b8c95;border:1px solid rgba(255,255,255,.13);padding:4px 9px;border-radius:4px;cursor:pointer;font-size:11px;white-space:nowrap';
+    const pillOn = 'background:var(--accent);color:var(--accent-fg);border:1px solid var(--accent);padding:4px 9px;border-radius:4px;cursor:pointer;font-size:11px;white-space:nowrap';
+    const pillOff = 'background:transparent;color:var(--dim);border:1px solid var(--pill-border);padding:4px 9px;border-radius:4px;cursor:pointer;font-size:11px;white-space:nowrap';
 
     const tabs = [['exec', 'EXECUTION'], ['volume', 'VOLUME'], ['markouts', 'MARKOUTS'], ['leaderboard', 'LEADERBOARD']].map((t, i) => ({
       id: t[0], label: t[1], num: i + 1, onClick: () => this.setState({ tab: t[0] }),
-      style: 'font-size:11px;padding:6px 12px;cursor:pointer;border-bottom:2px solid ' + (st.tab === t[0] ? '#836EF9' : 'transparent') + ';color:' + (st.tab === t[0] ? '#fff' : '#6b6d76')
+      style: 'font-size:11px;padding:6px 12px;cursor:pointer;white-space:nowrap;border-bottom:2px solid ' + (st.tab === t[0] ? 'var(--accent)' : 'transparent') + ';color:' + (st.tab === t[0] ? 'var(--text-strong)' : 'var(--dim2)')
     }));
     const pairs = this.PAIRS.map(p => ({ name: p, onClick: () => this.setSel('pair', p), style: st.pair === p ? pillOn : pillOff }));
     const sizes = this.SIZES.map(s => ({ label: this.sizeLabel(s), onClick: () => this.setSel('size', s), style: st.size === s ? pillOn : pillOff }));
     const venues = this.VEN.map(v => ({
       label: v === 'Bybit' ? 'BYBIT (taker)' : v.toUpperCase(), onClick: () => this.toggleVen(v),
-      style: 'display:flex;align-items:center;gap:6px;padding:4px 9px;border-radius:4px;cursor:pointer;font-size:11px;white-space:nowrap;border:1px solid ' + (st.ven[v] ? this.hex(this.COL[v], 0.5) : 'rgba(255,255,255,.1)') + ';color:' + (st.ven[v] ? '#E6E7EA' : '#5e6068') + ';background:' + (st.ven[v] ? this.hex(this.COL[v], 0.12) : 'transparent'),
-      dot: 'width:7px;height:7px;border-radius:50%;background:' + (st.ven[v] ? this.COL[v] : '#3a3c44')
+      style: 'display:flex;align-items:center;gap:6px;padding:4px 9px;border-radius:4px;cursor:pointer;font-size:11px;white-space:nowrap;border:1px solid ' + (st.ven[v] ? this.hex(this.COL[v], 0.5) : 'var(--pill-border)') + ';color:' + (st.ven[v] ? 'var(--text)' : 'var(--faint)') + ';background:' + (st.ven[v] ? this.hex(this.COL[v], 0.12) : 'transparent'),
+      dot: 'width:7px;height:7px;border-radius:50%;background:' + (st.ven[v] ? this.COL[v] : 'var(--faint2)')
     }));
-    const scOn = 'background:#836EF9;color:#fff;border:1px solid #836EF9;padding:3px 8px;border-radius:4px;cursor:pointer;font-size:10px;white-space:nowrap';
-    const scOff = 'background:transparent;color:#8b8c95;border:1px solid rgba(255,255,255,.13);padding:3px 8px;border-radius:4px;cursor:pointer;font-size:10px;white-space:nowrap';
+    const scOn = 'background:var(--accent);color:var(--accent-fg);border:1px solid var(--accent);padding:3px 8px;border-radius:4px;cursor:pointer;font-size:10px;white-space:nowrap';
+    const scOff = 'background:transparent;color:var(--dim);border:1px solid var(--pill-border);padding:3px 8px;border-radius:4px;cursor:pointer;font-size:10px;white-space:nowrap';
     const clScopePills = [['venue', 'WHOLE-VENUE'], ['vault', 'VAULT']].map(o => ({ label: o[1], onClick: () => this.setMk('clScope', o[0]), style: (st.clScope || 'venue') === o[0] ? scOn : scOff }));
 
     let legend = [], depth = [], ticks = [], statRows = [];
@@ -828,8 +879,8 @@ class Component extends DCLogic {
     const tight = leg.length ? leg[0].name : null;
     legend = leg.map(r => ({
       name: r.name, color: r.color, spread: r.spread.toFixed(2), bid: this.sgn(r.bid), ask: this.sgn(r.ask),
-      starcss: 'font-size:9px;color:' + (r.name === tight ? '#35D0A0' : 'transparent'),
-      spreadcss: 'color:' + (r.name === tight ? '#35D0A0' : '#E6E7EA') + ';font-weight:600'
+      starcss: 'font-size:9px;color:' + (r.name === tight ? 'var(--green)' : 'transparent'),
+      spreadcss: 'color:' + (r.name === tight ? 'var(--green)' : 'var(--text)') + ';font-weight:600'
     }));
 
     const AX = 22;
@@ -844,19 +895,19 @@ class Component extends DCLogic {
       });
       segsBid.sort((a, b) => b.w - a.w); segsAsk.sort((a, b) => b.w - a.w);
       return {
-        label: this.sizeLabel(sz), rowcss: sz === this.sizeSel ? 'background:rgba(131,110,249,.06)' : '',
+        label: this.sizeLabel(sz), rowcss: sz === this.sizeSel ? 'background:var(--accent-row)' : '',
         segsBid: segsBid.map(s => ({ style: 'position:absolute;top:2px;height:16px;right:50%;width:' + s.w.toFixed(2) + '%;background:' + this.hex(s.color, 0.9) + ';border-radius:2px 0 0 2px' })),
         segsAsk: segsAsk.map(s => ({ style: 'position:absolute;top:2px;height:16px;left:50%;width:' + s.w.toFixed(2) + '%;background:' + this.hex(s.color, 0.9) + ';border-radius:0 2px 2px 0' }))
       };
     });
-    ticks = [-20, -15, -10, -5, 0, 5, 10, 15, 20].map(t => ({ label: (t > 0 ? '+' : '') + t, style: 'position:absolute;top:0;left:' + (50 + t / AX * 50) + '%;transform:translateX(-50%);font-size:8.5px;color:' + (t === 0 ? '#35D0A0' : '#5e6068') }));
+    ticks = [-20, -15, -10, -5, 0, 5, 10, 15, 20].map(t => ({ label: (t > 0 ? '+' : '') + t, style: 'position:absolute;top:0;left:' + (50 + t / AX * 50) + '%;transform:translateX(-50%);font-size:8.5px;color:' + (t === 0 ? 'var(--green)' : 'var(--faint)') }));
 
     let stats = act.map(v => { const a = this.samples[v]; return { name: v, color: this.COL[v], p5: this.pct(a, .05), p25: this.pct(a, .25), p50: this.pct(a, .5), p75: this.pct(a, .75), p95: this.pct(a, .95), avg: a.length ? a.reduce((x, y) => x + y, 0) / a.length : 0, sd: this.std(a), n: a.length }; });
     const tstat = stats.length ? stats.reduce((m, r) => r.p50 < m.p50 ? r : m, stats[0]).name : null;
     statRows = stats.map(r => ({
       name: r.name, color: r.color, p5: r.p5.toFixed(3), p25: r.p25.toFixed(3), p50: r.p50.toFixed(3), p75: r.p75.toFixed(3), p95: r.p95.toFixed(3), avg: r.avg.toFixed(3), sd: r.sd.toFixed(4), n: r.n,
-      starcss: 'font-size:9px;color:' + (r.name === tstat ? '#35D0A0' : 'transparent'),
-      p50css: 'color:' + (r.name === tstat ? '#35D0A0' : '#E6E7EA') + ';font-weight:600'
+      starcss: 'font-size:9px;color:' + (r.name === tstat ? 'var(--green)' : 'transparent'),
+      p50css: 'color:' + (r.name === tstat ? 'var(--green)' : 'var(--text)') + ';font-weight:600'
     }));
     }
 
@@ -865,6 +916,7 @@ class Component extends DCLogic {
       ...(st.tab === 'markouts' ? this.mkVals() : {}),
       ...(st.tab === 'leaderboard' ? this.lbVals() : {}),
       tabs, pairs, sizes, venues, clScopePills, legend, depth, ticks, statRows, setCanvas: this.setCanvas,
+      toggleTheme: this.toggleTheme, themeLabel: st.theme === 'dark' ? 'BRIGHT' : 'DARK',
       block: this.block ? this.block.toLocaleString() : '\u2014',
       clock: new Date().toISOString().slice(11, 19),
       monPx: this.mon ? this.mon.toFixed(5) : '\u2014',

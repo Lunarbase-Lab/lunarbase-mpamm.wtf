@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { C, SANS } from '../theme';
+import { C, SANS, LOGO_PURPLE } from '../theme';
 import { useDashboard, type Tab } from '../store';
 import { clockSec, fmtInt } from '../lib/format';
 
@@ -25,16 +25,17 @@ export function TopBar() {
   return (
     <div style={{
       display: 'flex', alignItems: 'center', gap: 16, height: 42, padding: '0 16px',
-      borderBottom: '1px solid rgba(255,255,255,.08)', position: 'sticky', top: 0, zIndex: 50, background: C.bg,
+      borderBottom: `1px solid ${C.line}`, position: 'sticky', top: 0, zIndex: 50, background: C.panel,
     }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 9 }}>
+        {/* Monad product logomark — stays purple in both themes (brand mark, not the theme accent). */}
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
-          <circle cx="12" cy="12" r="10.5" stroke={C.purple} strokeWidth="1.3" />
-          <polygon points="12,6 18,12 12,18 6,12" stroke={C.purple} strokeWidth="1.3" fill="none" />
-          <circle cx="12" cy="12" r="1.7" fill={C.purple} />
+          <circle cx="12" cy="12" r="10.5" stroke={LOGO_PURPLE} strokeWidth="1.3" />
+          <polygon points="12,6 18,12 12,18 6,12" stroke={LOGO_PURPLE} strokeWidth="1.3" fill="none" />
+          <circle cx="12" cy="12" r="1.7" fill={LOGO_PURPLE} />
         </svg>
-        <span style={{ fontWeight: 700, fontSize: 13, letterSpacing: '.01em', fontFamily: SANS }}>propAMM</span>
-        <span style={{ fontSize: 8.5, color: C.purpleL, border: '1px solid rgba(131,110,249,.4)', borderRadius: 3, padding: '2px 6px', letterSpacing: '.08em' }}>
+        <span style={{ fontWeight: 700, fontSize: 13, letterSpacing: '.01em', fontFamily: SANS, color: C.text }}>propAMM</span>
+        <span style={{ fontSize: 8.5, color: C.accent2, border: `1px solid var(--accent-border)`, borderRadius: 3, padding: '2px 6px', letterSpacing: '.08em' }}>
           {d.state?.source === 'live' ? 'MONAD MAINNET' : 'MONAD · SIM'}
         </span>
       </div>
@@ -42,15 +43,18 @@ export function TopBar() {
       <div style={{ display: 'flex', gap: 1, marginLeft: 8 }}>
         {TABS.map((t, i) => (
           <div key={t.id} onClick={() => d.set('tab', t.id)} style={{
-            fontSize: 11, padding: '6px 12px', cursor: 'pointer',
-            borderBottom: `2px solid ${d.tab === t.id ? C.purple : 'transparent'}`,
-            color: d.tab === t.id ? '#fff' : C.faint,
+            fontSize: 11, padding: '6px 12px', cursor: 'pointer', whiteSpace: 'nowrap',
+            borderBottom: `2px solid ${d.tab === t.id ? C.accent : 'transparent'}`,
+            color: d.tab === t.id ? C.textStrong : C.dim2,
           }}>[{i + 1}] {t.label}</div>
         ))}
-        <div style={{ fontSize: 11, padding: '6px 12px', color: C.faint2, cursor: 'default' }}>[5] DOCS ↗</div>
       </div>
 
-      <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 15, fontSize: 10, color: C.faint }}>
+      <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 15, fontSize: 10, color: C.dim2 }}>
+        <div onClick={d.toggleTheme} title="Toggle theme" style={{
+          display: 'flex', alignItems: 'center', gap: 5, border: `1px solid var(--pill-border)`,
+          borderRadius: 4, padding: '3px 8px', cursor: 'pointer', letterSpacing: '.06em', userSelect: 'none',
+        }}>◐ {d.theme === 'dark' ? 'BRIGHT' : 'DARK'}</div>
         <span style={{ display: 'flex', alignItems: 'center', gap: 5, color: liveColor }}>
           <span style={{ width: 6, height: 6, borderRadius: '50%', background: liveColor, animation: 'blink 1.6s infinite' }} />
           {d.conn === 'live' ? 'live' : d.conn === 'reconnecting' ? 'reconnecting' : 'connecting'}

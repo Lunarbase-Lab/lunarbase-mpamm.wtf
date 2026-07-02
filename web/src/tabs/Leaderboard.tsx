@@ -1,7 +1,7 @@
 import { useMemo } from 'react';
 import type { Fill } from '@shared';
 import { useDashboard } from '../store';
-import { C, hexA } from '../theme';
+import { C, COL, SEM, type Theme } from '../theme';
 import { Pills, SideTag } from '../components/ui';
 import { fmtUsd, fmtAmt, fmtInt, pnlFmt, percentile, sparkPath, humanAge, shortHex } from '../lib/format';
 
@@ -13,13 +13,15 @@ const WIN_MS: Record<string, number> = { '24H': DAY, '7D': 7 * DAY, '30D': 30 * 
 function displayProto(f: Fill): string {
   return f.scope === 'vault' ? 'VAULT' : f.protocol.toUpperCase();
 }
-function protoCol(n: string): string {
-  return n === 'LFJ' ? C.blue : n === 'CLOBER' ? C.cyan : C.purpleL;
+function protoCol(n: string, theme: Theme): string {
+  const col = COL[theme];
+  return n === 'LFJ' ? col.LFJ : n === 'CLOBER' ? col.Clober : col.Vault;
 }
 // CATEGORY colour (DCLogic.catCol). The contract's 'DIRECT' maps to the
-// design's '—' bucket, which falls through to the faint2 default.
-function catCol(c: string): string {
-  return c === 'ROUTER' ? C.amber : c === 'CEX/DEX' ? C.cyan : c === 'AGG' ? C.purpleL : C.faint2;
+// design's '—' bucket, which falls through to the faint default.
+function catCol(c: string, theme: Theme): string {
+  const col = COL[theme];
+  return c === 'ROUTER' ? C.amber : c === 'CEX/DEX' ? col.Clober : c === 'AGG' ? col.Vault : C.faint2;
 }
 // display label for a fill category — DIRECT renders as the em-dash.
 function catLabel(c: string): string {
@@ -68,9 +70,9 @@ export function LeaderboardTab() {
           : lbGroup === 'POOL' ? f.pool
             : f.to;
     const colorFor = (n: string): string =>
-      lbGroup === 'PROTOCOL' ? protoCol(n)
-        : lbGroup === 'CATEGORY' ? catCol(n === 'direct' ? '—' : n)
-          : C.purpleL;
+      lbGroup === 'PROTOCOL' ? protoCol(n, d.theme)
+        : lbGroup === 'CATEGORY' ? catCol(n === 'direct' ? '—' : n, d.theme)
+          : COL[d.theme].Vault;
 
     const groups: Record<string, Fill[]> = {};
     for (const f of windowedHz) {
@@ -94,7 +96,7 @@ export function LeaderboardTab() {
     arr = arr.slice(0, 12);
     return arr;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [windowedHz, lbGroup, lbMk, d.frame]);
+  }, [windowedHz, lbGroup, lbMk, d.frame, d.theme]);
 
   // TOP_SWAPS rows — biggest single-swap winners/losers per DCLogic.lbVals().
   const topRows = useMemo(() => {
@@ -148,7 +150,7 @@ export function LeaderboardTab() {
           <Pills options={['TAKER', 'MAKER']} value={lbMk} onChange={(v) => d.set('lbMk', v)} sm />
         </div>
         <div onClick={() => d.resetLb()} style={{
-          marginLeft: 'auto', padding: '3px 9px', border: '1px solid rgba(255,255,255,.13)', borderRadius: 4,
+          marginLeft: 'auto', padding: '3px 9px', border: '1px solid var(--pill-border)', borderRadius: 4,
           cursor: 'pointer', fontSize: 10, color: C.dim2,
         }}>RESET FILTERS</div>
       </div>
@@ -186,7 +188,8 @@ export function LeaderboardTab() {
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 10 }}>
                   <span style={{ color: g.pnl >= 0 ? C.green : C.red, fontWeight: 600 }}>{pnlFmt(g.pnl)}</span>
                   <svg width="130" height="26" viewBox="0 0 130 26" preserveAspectRatio="none" style={{ flex: 'none' }}>
-                    <path d={sparkPath(g.sp, 130, 26)} fill="none" stroke={g.pnl >= 0 ? C.green : C.red} strokeWidth={1.4} vectorEffect="non-scaling-stroke" />
+                    {/* resolved rgb (not var()) so it's valid as an SVG stroke attribute */}
+                    <path d={sparkPath(g.sp, 130, 26)} fill="none" stroke={g.pnl >= 0 ? SEM[d.theme].green.css : SEM[d.theme].red.css} strokeWidth={1.4} vectorEffect="non-scaling-stroke" />
                   </svg>
                 </div>
               </div>
@@ -207,8 +210,8 @@ export function LeaderboardTab() {
           </div>
           <div style={{ display: 'flex', gap: 10 }}>
             <div style={{ display: 'flex', gap: 3 }}>
-              <div onClick={() => d.set('lbWinners', true)} style={wlBtn(lbWinners, C.green)}>WINNERS</div>
-              <div onClick={() => d.set('lbWinners', false)} style={wlBtn(!lbWinners, C.red)}>LOSERS</div>
+              <div onClick={() => d.set('lbWinners', true)} style={wlBtn(lbWinners, SEM[d.theme].green)}>WINNERS</div>
+              <div onClick={() => d.set('lbWinners', false)} style={wlBtn(!lbWinners, SEM[d.theme].red)}>LOSERS</div>
             </div>
             <Pills
               options={[{ label: 'TOP 10', value: 10 }, { label: 'TOP 25', value: 25 }, { label: 'TOP 50', value: 50 }]}
@@ -234,9 +237,9 @@ export function LeaderboardTab() {
                 <div style={{ color: C.faint2 }}>{String(i + 1).padStart(2, '0')}</div>
                 <div style={{ color: C.dim3 }}>{fmtInt(f.blockNumber)}</div>
                 <div style={{ color: C.faint2 }}>{humanAge((Date.now() - f.ts) / 1000)}</div>
-                <div style={{ color: C.blue }}>{shortHex(f.txHash)}</div>
+                <div style={{ color: C.link }}>{shortHex(f.txHash)}</div>
                 <div style={{ color: C.dim3, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{f.to}</div>
-                <div style={{ color: catCol(f.category), fontSize: 9 }}>{catLabel(f.category)}</div>
+                <div style={{ color: catCol(f.category, d.theme), fontSize: 9 }}>{catLabel(f.category)}</div>
                 <div style={{ color: C.faint2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{f.pool}</div>
                 <div><SideTag side={f.side} /></div>
                 <div style={{ textAlign: 'right', color: C.dim }}>{inAmt}</div>
@@ -253,12 +256,13 @@ export function LeaderboardTab() {
   );
 }
 
-// WINNERS/LOSERS toggle button (DCLogic.wlBtn).
-function wlBtn(active: boolean, color: string): React.CSSProperties {
+// WINNERS/LOSERS toggle button (DCLogic.wlBtn) — themed via SEM (rgb for the
+// translucent border/bg, css for the text).
+function wlBtn(active: boolean, sem: { css: string; rgb: string }): React.CSSProperties {
   return {
     padding: '3px 10px', borderRadius: 4, cursor: 'pointer', fontSize: 10,
-    border: `1px solid ${active ? hexA(color, 0.53) : 'rgba(255,255,255,.13)'}`,
-    background: active ? hexA(color, 0.13) : 'transparent',
-    color: active ? color : C.dim2,
+    border: `1px solid ${active ? `rgba(${sem.rgb},.53)` : 'var(--pill-border)'}`,
+    background: active ? `rgba(${sem.rgb},.13)` : 'transparent',
+    color: active ? sem.css : C.dim2,
   };
 }

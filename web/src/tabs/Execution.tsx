@@ -1,7 +1,7 @@
 import { useMemo } from 'react';
-import { SIZES_USD, VENUE_COLOR, type Venue, type QuoteRow } from '@shared';
+import { SIZES_USD, type Venue, type QuoteRow } from '@shared';
 import { useDashboard, VENUES } from '../store';
-import { C, hexA, pill } from '../theme';
+import { C, hexA, pill, COL } from '../theme';
 import { Panel, PanelHead, Field } from '../components/ui';
 import { QuoteCanvas } from '../components/QuoteCanvas';
 import { sgn, sizeLabel, percentile, stdev } from '../lib/format';
@@ -13,6 +13,7 @@ export function ExecutionTab() {
   const pair = d.pair, size = d.size;
   const markets = d.state?.markets ?? ['MON/USDC', 'MON/USDT0', 'MON/AUSD', 'MON/USD1'];
   const active = VENUES.filter((v) => d.venues[v]);
+  const col = COL[d.theme]; // theme-aware venue colors (swatches / bars / pills)
   const taker = (d.state?.takerBps ?? 10).toFixed(1);
 
   const row = (v: Venue, s: number): QuoteRow | undefined =>
@@ -23,7 +24,7 @@ export function ExecutionTab() {
     const leg = active.map((v) => {
       const r = row(v, size);
       return {
-        name: v, color: VENUE_COLOR[v], spread: r?.spreadBps ?? 0, bid: r?.bidBps ?? 0, ask: r?.askBps ?? 0,
+        name: v, color: col[v], spread: r?.spreadBps ?? 0, bid: r?.bidBps ?? 0, ask: r?.askBps ?? 0,
         // realized buy-MON cost vs Bybit-as-taker, + = on-chain worse (spec §4.2)
         vsCex: r?.cexAskBps, has: !!r,
         // a one-sided quote has only one executable side (the other is thin/backstop);
@@ -37,7 +38,7 @@ export function ExecutionTab() {
     leg.sort((a, b) => rank(a) - rank(b) || a.spread - b.spread);
     return leg;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [d.quotes, d.venues, pair, size, d.frame]);
+  }, [d.quotes, d.venues, pair, size, d.frame, d.theme]);
   // tightest = tightest genuinely-executable quote (full-size + two-sided)
   const tight = legend.find((x) => !x.oneSided && x.full)?.name;
 
@@ -51,8 +52,8 @@ export function ExecutionTab() {
       const wb = Math.min(50, Math.abs(Math.min(0, r.bidBps)) / AX * 50);
       const wa = Math.min(50, Math.max(0, r.askBps) / AX * 50);
       // dim a venue's bar at a size it can't fill fully (filledFull=false)
-      segsBid.push({ w: wb, color: VENUE_COLOR[v], full: r.filledFull });
-      segsAsk.push({ w: wa, color: VENUE_COLOR[v], full: r.filledFull });
+      segsBid.push({ w: wb, color: col[v], full: r.filledFull });
+      segsAsk.push({ w: wa, color: col[v], full: r.filledFull });
     }
     segsBid.sort((a, b) => b.w - a.w); segsAsk.sort((a, b) => b.w - a.w);
     return { label: sizeLabel(sz), highlight: sz === size, segsBid, segsAsk };
@@ -64,7 +65,7 @@ export function ExecutionTab() {
     const rows = active.map((v) => {
       const a = d.samples[v] ?? [];
       return {
-        name: v, color: VENUE_COLOR[v],
+        name: v, color: col[v],
         p5: percentile(a, .05), p25: percentile(a, .25), p50: percentile(a, .5),
         p75: percentile(a, .75), p95: percentile(a, .95),
         avg: a.length ? a.reduce((x, y) => x + y, 0) / a.length : 0, sd: stdev(a), n: a.length,
@@ -73,7 +74,7 @@ export function ExecutionTab() {
     const tightest = rows.length ? rows.reduce((m, r) => (r.p50 < m.p50 ? r : m), rows[0]).name : null;
     return { rows, tightest };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [d.frame, d.venues]);
+  }, [d.frame, d.venues, d.theme]);
 
   // hint: an active propAMM venue with no executable quote at the selected size
   // but a real one at another size (Clober/Vault books are thin — often only the
@@ -87,7 +88,7 @@ export function ExecutionTab() {
     }).filter(Boolean);
     return notes.length ? notes.join(' · ') : null;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [d.quotes, d.venues, pair, size, d.frame]);
+  }, [d.quotes, d.venues, pair, size, d.frame, d.theme]);
 
   return (
     <div>
@@ -120,10 +121,10 @@ export function ExecutionTab() {
                   <div key={v} onClick={() => d.toggleVenue(v)} style={{
                     display: 'flex', alignItems: 'center', gap: 6, padding: '4px 9px', borderRadius: 4, cursor: 'pointer',
                     fontSize: 11, whiteSpace: 'nowrap',
-                    border: `1px solid ${on ? hexA(VENUE_COLOR[v], 0.5) : 'rgba(255,255,255,.1)'}`,
-                    color: on ? C.text : C.faint2, background: on ? hexA(VENUE_COLOR[v], 0.12) : 'transparent',
+                    border: `1px solid ${on ? hexA(col[v], 0.5) : 'var(--pill-border)'}`,
+                    color: on ? C.text : C.faint2, background: on ? hexA(col[v], 0.12) : 'transparent',
                   }}>
-                    <span style={{ width: 7, height: 7, borderRadius: '50%', background: on ? VENUE_COLOR[v] : C.ghost }} />
+                    <span style={{ width: 7, height: 7, borderRadius: '50%', background: on ? col[v] : C.ghost }} />
                     {v === 'Bybit' ? 'BYBIT (taker)' : v.toUpperCase()}
                   </div>
                 );
@@ -139,7 +140,7 @@ export function ExecutionTab() {
           right={<div style={{ fontSize: 9, color: C.faint2 }}>solid = ask · dashed = bid · ★ = tightest · vs CEX = realized buy vs Bybit-taker (+ = worse)</div>} />
         <div style={{ position: 'relative', padding: '8px 8px 4px' }}>
           <QuoteCanvas />
-          <div style={{ position: 'absolute', top: 14, right: 16, background: 'rgba(10,12,16,.82)', border: '1px solid rgba(255,255,255,.1)', padding: '8px 10px', minWidth: 286, backdropFilter: 'blur(3px)' }}>
+          <div style={{ position: 'absolute', top: 14, right: 16, background: C.overlay, border: `1px solid ${C.line}`, padding: '8px 10px', minWidth: 286, backdropFilter: 'blur(3px)' }}>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 48px 42px 42px 56px', gap: '2px 8px', fontSize: 8.5, color: C.faint2, letterSpacing: '.05em', paddingBottom: 5, borderBottom: `1px solid ${C.line}` }}>
               <div>VENUE</div><div style={{ textAlign: 'right' }}>SPREAD</div><div style={{ textAlign: 'right' }}>BID</div><div style={{ textAlign: 'right' }}>ASK</div><div style={{ textAlign: 'right' }}>vs CEX</div>
             </div>
@@ -149,9 +150,9 @@ export function ExecutionTab() {
                   <span style={{ width: 8, height: 8, borderRadius: 2, background: r.color }} />
                   <span style={{ color: C.text2 }}>{r.name}</span>
                   {r.oneSided
-                    ? <span title="only one side is executable at this size — the other is thin / far-tick backstop" style={{ fontSize: 7.5, color: C.amber, border: `1px solid ${hexA(C.amber, 0.45)}`, borderRadius: 3, padding: '0 3px', letterSpacing: '.04em' }}>1-SIDED</span>
+                    ? <span title="only one side is executable at this size — the other is thin / far-tick backstop" style={{ fontSize: 7.5, color: C.amber, border: `1px solid color-mix(in srgb, var(--amber) 45%, transparent)`, borderRadius: 3, padding: '0 3px', letterSpacing: '.04em' }}>1-SIDED</span>
                     : !r.full
-                      ? <span title="liquidity exhausts before the full notional — the price shown is for a partial fill, not executable at the full size" style={{ fontSize: 7.5, color: C.amber, border: `1px solid ${hexA(C.amber, 0.45)}`, borderRadius: 3, padding: '0 3px', letterSpacing: '.04em' }}>PARTIAL</span>
+                      ? <span title="liquidity exhausts before the full notional — the price shown is for a partial fill, not executable at the full size" style={{ fontSize: 7.5, color: C.amber, border: `1px solid color-mix(in srgb, var(--amber) 45%, transparent)`, borderRadius: 3, padding: '0 3px', letterSpacing: '.04em' }}>PARTIAL</span>
                       : <span style={{ fontSize: 9, color: r.name === tight ? C.green : 'transparent' }}>★</span>}
                 </div>
                 <div style={{ textAlign: 'right', color: r.oneSided || !r.full ? C.faint2 : r.name === tight ? C.green : C.text, fontWeight: 600 }}>{r.oneSided ? '—' : r.spread.toFixed(2)}</div>
@@ -180,10 +181,10 @@ export function ExecutionTab() {
             <div style={{ flex: 1, textAlign: 'center', fontSize: 9, color: C.faint2, letterSpacing: '.1em' }}>ASKS — above mid</div>
           </div>
           {depth.map((rowd) => (
-            <div key={rowd.label} style={{ display: 'flex', alignItems: 'center', gap: 10, height: 34, background: rowd.highlight ? 'rgba(131,110,249,.06)' : undefined }}>
+            <div key={rowd.label} style={{ display: 'flex', alignItems: 'center', gap: 10, height: 34, background: rowd.highlight ? 'var(--accent-row)' : undefined }}>
               <div style={{ width: 54, textAlign: 'right', fontSize: 11, color: C.dim }}>{rowd.label}</div>
               <div style={{ position: 'relative', flex: 1, height: 20 }}>
-                <div style={{ position: 'absolute', left: '50%', top: -3, bottom: -3, width: 1, background: 'rgba(53,208,160,.55)', zIndex: 5 }} />
+                <div style={{ position: 'absolute', left: '50%', top: -3, bottom: -3, width: 1, background: 'var(--green-line)', zIndex: 5 }} />
                 {rowd.segsBid.map((s, i) => <div key={'b' + i} style={{ position: 'absolute', top: 2, height: 16, right: '50%', width: `${s.w.toFixed(2)}%`, background: hexA(s.color, s.full ? 0.9 : 0.32), borderRadius: '2px 0 0 2px' }} />)}
                 {rowd.segsAsk.map((s, i) => <div key={'a' + i} style={{ position: 'absolute', top: 2, height: 16, left: '50%', width: `${s.w.toFixed(2)}%`, background: hexA(s.color, s.full ? 0.9 : 0.32), borderRadius: '0 2px 2px 0' }} />)}
               </div>

@@ -1,62 +1,80 @@
-/** Design tokens lifted verbatim from propAMM.dc.html so the React port is
- *  pixel-faithful. */
+import type { CSSProperties } from 'react';
+import type { Venue } from '@shared';
+
+/**
+ * Theming. All DOM colors flow through CSS custom properties (defined in
+ * index.css: bright on `:root`, dark under `:root[data-theme="dark"]`), so a
+ * theme flip re-skins the DOM instantly with no React re-render. The `C` keys
+ * keep their historical names (components didn't need renaming); each maps to a
+ * design token. Values that can't use var() — canvas + SVG presentation
+ * attributes — read the theme-aware COL / SEM / CH getters below instead.
+ */
+export type Theme = 'light' | 'dark';
 
 export const C = {
-  bg: '#08090B',
-  panel: '#0A0C10',
-  text: '#E6E7EA',
-  text2: '#cdcfd6',
-  text3: '#b9bac2',
-  dim: '#9a9ba3',
-  dim2: '#8b8c95',
-  dim3: '#7a7c84',
-  faint: '#6b6d76',
-  faint2: '#5e6068',
-  faint3: '#4a4c54',
-  ghost: '#3a3c44',
-  line: 'rgba(255,255,255,.07)',
-  line2: 'rgba(255,255,255,.06)',
-  line3: 'rgba(255,255,255,.04)',
-  hair: 'rgba(255,255,255,.035)',
-
-  purple: '#836EF9',
-  purpleL: '#9A88FF',
-  lilac: '#c4b6ff',
-  lilac2: '#cdd3ff',
-  green: '#35D0A0',
-  red: '#F2566A',
-  blue: '#6E8BFF',
-  cyan: '#45C8E8',
-  amber: '#E0A33E',
-  bybit: '#B9BCC6',
+  bg: 'var(--bg)', panel: 'var(--panel)', overlay: 'var(--overlay)',
+  text: 'var(--text)', textStrong: 'var(--text-strong)', text2: 'var(--text2)', text3: 'var(--text3)',
+  dim: 'var(--text4)', dim2: 'var(--dim)', dim3: 'var(--dim3)',
+  faint: 'var(--dim2)', faint2: 'var(--faint)', faint3: 'var(--faint3)', ghost: 'var(--faint2)',
+  line: 'var(--border)', line2: 'var(--border2)', line3: 'var(--border-soft)', hair: 'var(--border-soft)',
+  accent: 'var(--accent)', accent2: 'var(--accent2)', accentFg: 'var(--accent-fg)',
+  // aliases kept for existing call sites: brackets/glyphs/pills/tab-underline use
+  // the theme accent; the badge / cumulative-volume line use accent2.
+  purple: 'var(--accent)', purpleL: 'var(--accent2)',
+  green: 'var(--green)', red: 'var(--red)', amber: 'var(--amber)', link: 'var(--link)',
 } as const;
 
 export const MONO = "'JetBrains Mono','SF Mono',monospace";
 export const SANS = "'Space Grotesk',sans-serif";
 
-/** rgba() from a #rrggbb hex + alpha (DCLogic.hex). */
+/** The Monad product logomark stays purple in BOTH themes (brand mark, not the theme accent). */
+export const LOGO_PURPLE = '#836EF9';
+
+// ── theme-aware getters: canvas + SVG-attribute colors can't use var() ──────
+/** Venue line/ribbon/swatch/bar colors (design COL). */
+export const COL: Record<Theme, Record<Venue, string>> = {
+  light: { LFJ: '#FF4D00', Clober: '#221E15', Vault: '#9C6B16', Bybit: '#8A8375' },
+  dark: { LFJ: '#6E8BFF', Clober: '#45C8E8', Vault: '#9A88FF', Bybit: '#B9BCC6' },
+};
+/** Semantic green/red in css + "r,g,b" forms for SVG strokes / alpha math (design SEM). */
+export const SEM: Record<Theme, { green: { css: string; rgb: string }; red: { css: string; rgb: string } }> = {
+  light: { green: { css: 'rgb(10,133,96)', rgb: '10,133,96' }, red: { css: 'rgb(201,43,72)', rgb: '201,43,72' } },
+  dark: { green: { css: 'rgb(53,208,160)', rgb: '53,208,160' }, red: { css: 'rgb(242,86,106)', rgb: '242,86,106' } },
+};
+/** Quote-canvas chrome: grid lines, axis labels, ribbon fill alpha (design CH). */
+export const CH: Record<Theme, { grid: string; grid2: string; label: string; label2: string; ribbon: number }> = {
+  light: { grid: 'rgba(23,20,15,0.08)', grid2: 'rgba(23,20,15,0.05)', label: 'rgb(122,116,103)', label2: 'rgb(150,143,128)', ribbon: 0.10 },
+  dark: { grid: 'rgba(255,255,255,0.05)', grid2: 'rgba(255,255,255,0.035)', label: 'rgb(107,109,118)', label2: 'rgb(94,96,104)', ribbon: 0.08 },
+};
+/** Protocol/venue display color, theme-aware (design protoCol): LFJ / Clober / Vault. */
+export function protoCol(name: string, theme: Theme): string {
+  const c = COL[theme];
+  const u = name.toUpperCase();
+  return u === 'LFJ' ? c.LFJ : u === 'CLOBER' ? c.Clober : c.Vault;
+}
+
+/** rgba() from a #rrggbb hex + alpha — for the venue-color getters (hex inputs only). */
 export function hexA(hex: string, a: number): string {
   const n = parseInt(hex.slice(1), 16);
   return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`;
 }
 
-/** Decorative corner brackets used on every panel in the design. */
-export const cornerTL: React.CSSProperties = {
+/** Decorative accent corner brackets used on every panel. */
+export const cornerTL: CSSProperties = {
   position: 'absolute', top: -1, left: -1, width: 8, height: 8,
-  borderTop: `1px solid ${C.purple}`, borderLeft: `1px solid ${C.purple}`,
+  borderTop: `1px solid ${C.accent}`, borderLeft: `1px solid ${C.accent}`,
 };
-export const cornerBR: React.CSSProperties = {
+export const cornerBR: CSSProperties = {
   position: 'absolute', bottom: -1, right: -1, width: 8, height: 8,
-  borderBottom: `1px solid ${C.purple}`, borderRight: `1px solid ${C.purple}`,
+  borderBottom: `1px solid ${C.accent}`, borderRight: `1px solid ${C.accent}`,
 };
 
-/** Selected/unselected pill (DCLogic pillOn/pillOff). `sm` matches the smaller
- *  10px pills used in the volume/markout/leaderboard controls. */
-export function pill(active: boolean, sm = false): React.CSSProperties {
+/** Selected/unselected pill (design pillOn/pillOff → accent / accent-fg). */
+export function pill(active: boolean, sm = false): CSSProperties {
   return {
-    background: active ? C.purple : 'transparent',
-    color: active ? '#fff' : C.dim2,
-    border: `1px solid ${active ? C.purple : 'rgba(255,255,255,.13)'}`,
+    background: active ? C.accent : 'transparent',
+    color: active ? C.accentFg : C.dim2,
+    border: `1px solid ${active ? C.accent : 'var(--pill-border)'}`,
     padding: sm ? '3px 8px' : '4px 9px',
     borderRadius: 4,
     cursor: 'pointer',

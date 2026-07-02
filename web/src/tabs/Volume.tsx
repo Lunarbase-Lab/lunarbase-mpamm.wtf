@@ -1,7 +1,7 @@
 import { useMemo } from 'react';
 import type { DailyVolume } from '@shared';
 import { useDashboard } from '../store';
-import { C } from '../theme';
+import { C, COL, pill } from '../theme';
 import { fMillions } from '../lib/format';
 
 /** MM-DD from a 'YYYY-MM-DD' UTC day. */
@@ -22,15 +22,18 @@ export function VolumeTab() {
   const vm = useMemo(() => {
     const days = d.volume;
     const nd = days.length;
+    const col = COL[d.theme]; // theme-aware venue colors (bars / bands / breakdown)
+    // market-share in-chart labels: cream over the saturated bands in bright, the band color in dark.
+    const msLabelColor = (bandColor: string) => (d.theme === 'light' ? 'rgb(252,251,248)' : bandColor);
 
     const series: SeriesDef[] = scope === 'vault'
       ? [
-        { name: 'LFJ', color: C.blue, val: (x) => x.lfj, swaps: (x) => x.lfjSwaps },
-        { name: 'Clober · Vault', color: C.purpleL, val: (x) => x.cloberVault, swaps: (x) => x.cloberVaultSwaps },
+        { name: 'LFJ', color: col.LFJ, val: (x) => x.lfj, swaps: (x) => x.lfjSwaps },
+        { name: 'Clober · Vault', color: col.Vault, val: (x) => x.cloberVault, swaps: (x) => x.cloberVaultSwaps },
       ]
       : [
-        { name: 'LFJ', color: C.blue, val: (x) => x.lfj, swaps: (x) => x.lfjSwaps },
-        { name: 'Clober', color: C.cyan, val: (x) => x.cloberVenue, swaps: (x) => x.cloberSwaps },
+        { name: 'LFJ', color: col.LFJ, val: (x) => x.lfj, swaps: (x) => x.lfjSwaps },
+        { name: 'Clober', color: col.Clober, val: (x) => x.cloberVenue, swaps: (x) => x.cloberSwaps },
       ];
 
     const f = (m: number) => fMillions(m);
@@ -47,8 +50,8 @@ export function VolumeTab() {
         legRows: series.map((s) => ({ name: s.name, color: s.color, vol: f(0), share: '0.0%' })),
         legTotal: f(0), cumLine: '', cumArea: '', cumSigma: f(0),
         msBands: [] as { path: string; color: string }[],
-        msTopName: series[series.length - 1].name, msTopPct: '0.0%',
-        msBotName: series[0].name, msBotPct: '0.0%',
+        msTopName: series[series.length - 1].name, msTopPct: '0.0%', msTopColor: msLabelColor(series[series.length - 1].color),
+        msBotName: series[0].name, msBotPct: '0.0%', msBotColor: msLabelColor(series[0].color),
         brk: series.map((s) => ({
           name: s.name, color: s.color, vol: f(0), share: '0.0%', shareW: '0.0',
           swaps: '0', peakV: f(0), peakDay: '—',
@@ -152,13 +155,15 @@ export function VolumeTab() {
       msBands,
       msTopName: series[series.length - 1].name,
       msTopPct: (series[series.length - 1].val(days[nd - 1]) / lt * 100).toFixed(1) + '%',
+      msTopColor: msLabelColor(series[series.length - 1].color),
       msBotName: series[0].name,
       msBotPct: (series[0].val(days[nd - 1]) / lt * 100).toFixed(1) + '%',
+      msBotColor: msLabelColor(series[0].color),
       brk, brkTotalVol: f(allTot), brkTotalSwaps: brkSwapTotal.toLocaleString(),
       volScopeNote: scope === 'vault' ? 'Clober = vault (propAMM) cut' : 'Clober = whole-venue',
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [d.volume, scope]);
+  }, [d.volume, scope, d.theme]);
 
   const scopePills: { label: string; value: 'venue' | 'vault' }[] = [
     { label: 'WHOLE-VENUE', value: 'venue' },
@@ -180,12 +185,7 @@ export function VolumeTab() {
             {scopePills.map((p) => {
               const active = scope === p.value;
               return (
-                <div key={p.value} onClick={() => d.set('clScope', p.value)} style={{
-                  background: active ? C.purple : 'transparent',
-                  color: active ? '#fff' : C.dim2,
-                  border: `1px solid ${active ? C.purple : 'rgba(255,255,255,.13)'}`,
-                  padding: '3px 8px', borderRadius: 4, cursor: 'pointer', fontSize: 10, whiteSpace: 'nowrap', userSelect: 'none',
-                }}>{p.label}</div>
+                <div key={p.value} onClick={() => d.set('clScope', p.value)} style={pill(active, true)}>{p.label}</div>
               );
             })}
           </div>
@@ -231,7 +231,7 @@ export function VolumeTab() {
         <div style={{ position: 'relative', padding: '16px 18px 8px' }}>
           <div style={{ position: 'absolute', top: 14, left: 18, fontSize: 8.5, color: C.faint2 }}>{vm.volMaxLabel}</div>
           <div style={{ position: 'absolute', top: 88, left: 18, fontSize: 8.5, color: C.faint2 }}>{vm.volMidLabel}</div>
-          <div style={{ display: 'flex', alignItems: 'flex-end', gap: 1.5, height: 150, paddingLeft: 42, borderBottom: '1px solid rgba(255,255,255,.1)' }}>
+          <div style={{ display: 'flex', alignItems: 'flex-end', gap: 1.5, height: 150, paddingLeft: 42, borderBottom: `1px solid ${C.line}` }}>
             {vm.volBars.map((b, i) => (
               <div key={i} style={{ display: 'flex', flexDirection: 'column-reverse', flex: 1, gap: 1, opacity: b.op }}>
                 {b.segs.map((s, j) => <div key={j} style={{ height: `${s.h}px`, background: s.color }} />)}
@@ -244,7 +244,7 @@ export function VolumeTab() {
             ))}
           </div>
           {/* legend box */}
-          <div style={{ position: 'absolute', top: 14, right: 16, background: 'rgba(10,12,16,.82)', border: '1px solid rgba(255,255,255,.1)', padding: '8px 10px', minWidth: 200 }}>
+          <div style={{ position: 'absolute', top: 14, right: 16, background: C.overlay, border: `1px solid ${C.line}`, padding: '8px 10px', minWidth: 200 }}>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 70px 44px', gap: '3px 8px', fontSize: 8.5, color: C.faint2, letterSpacing: '.05em', paddingBottom: 5, borderBottom: `1px solid ${C.line}` }}>
               <div>PROTOCOL</div><div style={{ textAlign: 'right' }}>ALL-TIME</div><div style={{ textAlign: 'right' }}>SHARE</div>
             </div>
@@ -277,13 +277,14 @@ export function VolumeTab() {
           <div style={{ position: 'relative', padding: '14px 14px 10px' }}>
             <svg viewBox="0 0 1000 260" preserveAspectRatio="none" style={{ display: 'block', width: '100%', height: 230 }}>
               <defs>
+                {/* SVG presentation attrs can't use var() — theme via style instead. */}
                 <linearGradient id="cumg" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stopColor={C.purple} stopOpacity="0.32" />
-                  <stop offset="100%" stopColor={C.purple} stopOpacity="0.02" />
+                  <stop offset="0%" style={{ stopColor: 'var(--accent)' }} stopOpacity="0.32" />
+                  <stop offset="100%" style={{ stopColor: 'var(--accent)' }} stopOpacity="0.02" />
                 </linearGradient>
               </defs>
               <path d={vm.cumArea} fill="url(#cumg)" />
-              <path d={vm.cumLine} fill="none" stroke={C.purpleL} strokeWidth="2" vectorEffect="non-scaling-stroke" />
+              <path d={vm.cumLine} fill="none" style={{ stroke: 'var(--accent2)', strokeWidth: 2 }} vectorEffect="non-scaling-stroke" />
             </svg>
             <div style={{ position: 'absolute', top: 14, right: 16, fontSize: 11, color: C.purpleL }}>Σ {vm.cumSigma}</div>
           </div>
@@ -297,8 +298,8 @@ export function VolumeTab() {
             <svg viewBox="0 0 1000 260" preserveAspectRatio="none" style={{ display: 'block', width: '100%', height: 230 }}>
               {vm.msBands.map((band, i) => <path key={i} d={band.path} fill={band.color} fillOpacity="0.82" />)}
             </svg>
-            <div style={{ position: 'absolute', top: 18, right: 16, fontSize: 9, color: C.purpleL }}>{vm.msTopName} {vm.msTopPct}</div>
-            <div style={{ position: 'absolute', bottom: 34, right: 16, fontSize: 9, color: C.lilac2 }}>{vm.msBotName} {vm.msBotPct}</div>
+            <div style={{ position: 'absolute', top: 18, right: 16, fontSize: 9, color: vm.msTopColor }}>{vm.msTopName} {vm.msTopPct}</div>
+            <div style={{ position: 'absolute', bottom: 34, right: 16, fontSize: 9, color: vm.msBotColor }}>{vm.msBotName} {vm.msBotPct}</div>
           </div>
         </div>
       </div>
@@ -322,7 +323,7 @@ export function VolumeTab() {
               </div>
               <div style={{ textAlign: 'right', color: C.text }}>{r.vol}</div>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                <div style={{ flex: 1, height: 5, background: 'rgba(255,255,255,.06)', borderRadius: 3, overflow: 'hidden' }}>
+                <div style={{ flex: 1, height: 5, background: C.line2, borderRadius: 3, overflow: 'hidden' }}>
                   <div style={{ height: '100%', width: `${r.shareW}%`, background: r.color }} />
                 </div>
                 <span style={{ color: C.dim, width: 40, textAlign: 'right' }}>{r.share}</span>

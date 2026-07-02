@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react';
-import { VENUE_COLOR, type Venue } from '@shared';
+import { type Venue } from '@shared';
 import { useDashboard, VENUES } from '../store';
-import { hexA } from '../theme';
+import { hexA, COL, CH } from '../theme';
 
 const N = 120;
 
@@ -42,6 +42,7 @@ export function QuoteCanvas() {
     ctx.clearRect(0, 0, w, h);
 
     const padL = 58, padR = 10, padT = 12, padB = 22;
+    const col = COL[d.theme], ch = CH[d.theme]; // theme-aware canvas colors (can't use var())
     const active = VENUES.filter((v) => d.venues[v]);
     if (!active.length) return;
 
@@ -61,9 +62,9 @@ export function QuoteCanvas() {
     ctx.lineWidth = 1;
     for (let g = 0; g <= 4; g++) {
       const p = mn + (mx - mn) * g / 4, y = Y(p);
-      ctx.strokeStyle = 'rgba(255,255,255,0.05)';
+      ctx.strokeStyle = ch.grid;
       ctx.beginPath(); ctx.moveTo(padL, y); ctx.lineTo(w - padR, y); ctx.stroke();
-      ctx.fillStyle = '#6b6d76'; ctx.textAlign = 'right'; ctx.fillText(p.toFixed(5), padL - 6, y + 3);
+      ctx.fillStyle = ch.label; ctx.textAlign = 'right'; ctx.fillText(p.toFixed(5), padL - 6, y + 3);
     }
     ctx.textAlign = 'center';
     // time axis spans (N-1) samples at the service's real quote cadence (audit I6).
@@ -73,9 +74,9 @@ export function QuoteCanvas() {
     for (let k = 0; k <= TICKS; k++) {
       const i = (k / TICKS) * (N - 1), x = X(i);
       const secAgo = Math.round((1 - k / TICKS) * spanSec);
-      ctx.strokeStyle = 'rgba(255,255,255,0.035)';
+      ctx.strokeStyle = ch.grid2;
       ctx.beginPath(); ctx.moveTo(x, padT); ctx.lineTo(x, h - padB); ctx.stroke();
-      ctx.fillStyle = '#5e6068'; ctx.fillText('-' + secAgo + 's', x, h - 7);
+      ctx.fillStyle = ch.label2; ctx.fillText('-' + secAgo + 's', x, h - 7);
     }
 
     const stepPath = (arr: number[]) => {
@@ -103,21 +104,21 @@ export function QuoteCanvas() {
       ctx.lineTo(X(n - 1), Y(s.bid[n - 1]));
       for (let i = n - 1; i > 0; i--) { ctx.lineTo(X(i - 1), Y(s.bid[i])); ctx.lineTo(X(i - 1), Y(s.bid[i - 1])); } // stepped bottom (bid)
       ctx.closePath();
-      ctx.fillStyle = hexA(VENUE_COLOR[v], 0.08); ctx.fill();
+      ctx.fillStyle = hexA(col[v], ch.ribbon); ctx.fill();
     }
 
     // STROKES on top — solid stepped ask, dashed stepped bid (each side drawn
     // independently so a one-sided venue still shows its real line).
     for (const v of active) {
       const s = d.series[v];
-      ctx.strokeStyle = VENUE_COLOR[v];
+      ctx.strokeStyle = col[v];
       if (s.ask.length >= 2) { ctx.lineWidth = 1.5; ctx.setLineDash([]); stepPath(s.ask); ctx.stroke(); }
       if (s.bid.length >= 2) { ctx.lineWidth = 1.1; ctx.setLineDash([3, 3]); stepPath(s.bid); ctx.stroke(); ctx.setLineDash([]); }
     }
   };
 
-  // repaint on the data cadence + on venue/pair/size changes (survives remount)
-  useEffect(() => { paintRef.current(); }, [d.frame, d.venues, d.pair, d.size, d.series]);
+  // repaint on the data cadence + on venue/pair/size/theme changes (survives remount)
+  useEffect(() => { paintRef.current(); }, [d.frame, d.venues, d.pair, d.size, d.series, d.theme]);
 
   // mount: paint now + backups for late layout, and repaint on resize
   useEffect(() => {

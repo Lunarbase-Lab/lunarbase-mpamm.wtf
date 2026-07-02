@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { Fill } from '@shared';
 import { useDashboard } from '../store';
-import { C } from '../theme';
+import { C, COL, type Theme } from '../theme';
 import { Pills, SideTag } from '../components/ui';
 import { fmtUsd, clockMs, clockSec, fmtInt, shortHex } from '../lib/format';
 
@@ -13,11 +13,13 @@ const OUT_GRID = '84px 88px 96px 56px 100px 110px 120px 1fr 1fr';
 function displayProto(f: Fill): string {
   return f.scope === 'vault' ? 'VAULT' : f.protocol.toUpperCase();
 }
-function protoColor(p: string): string {
-  return p === 'LFJ' ? C.blue : p === 'CLOBER' ? C.cyan : C.purpleL;
+function protoColor(p: string, theme: Theme): string {
+  const col = COL[theme];
+  return p === 'LFJ' ? col.LFJ : p === 'CLOBER' ? col.Clober : col.Vault;
 }
-function catColor(c: string): string {
-  return c === 'ROUTER' ? C.amber : c === 'CEX/DEX' ? C.cyan : c === 'AGG' ? C.purpleL : C.faint2;
+function catColor(c: string, theme: Theme): string {
+  const col = COL[theme];
+  return c === 'ROUTER' ? C.amber : c === 'CEX/DEX' ? col.Clober : c === 'AGG' ? col.Vault : C.faint2;
 }
 /** category display — DIRECT renders as an em dash. */
 function catLabel(c: string): string {
@@ -78,7 +80,7 @@ export function MarkoutsTab() {
       <div style={{ padding: '18px 18px 14px' }}>
         <div style={{ fontSize: 14, fontWeight: 600, letterSpacing: '.06em', color: C.text }}>SWAP MARKOUTS</div>
         <div style={{ fontSize: 11, color: C.dim3, marginTop: 6, lineHeight: 1.55, maxWidth: 880 }}>
-          On-chain swaps joined to the Bybit <span style={{ color: C.bybit }}>MONUSDT</span> reference BBO for markouts at 0 / 5 / 10 / 30 / 60 seconds.{' '}
+          On-chain swaps joined to the Bybit <span style={{ color: COL[d.theme].Bybit }}>MONUSDT</span> reference BBO for markouts at 0 / 5 / 10 / 30 / 60 seconds.{' '}
           <span style={{ color: C.green }}>Positive bps</span> = the taker got a favorable fill vs the CEX reference; <span style={{ color: C.red }}>negative</span> = adverse. Later horizons fill in as each swap ages past them.
         </div>
       </div>
@@ -105,8 +107,8 @@ export function MarkoutsTab() {
               onClick={() => d.set('mkPaused', !d.mkPaused)}
               style={{
                 padding: '3px 9px', borderRadius: 4, cursor: 'pointer', fontSize: 10, userSelect: 'none', whiteSpace: 'nowrap',
-                background: d.mkPaused ? 'rgba(242,86,106,.16)' : 'transparent',
-                border: `1px solid ${d.mkPaused ? 'rgba(242,86,106,.5)' : 'rgba(255,255,255,.13)'}`,
+                background: d.mkPaused ? 'var(--red-bg)' : 'transparent',
+                border: `1px solid ${d.mkPaused ? 'var(--red-border)' : 'var(--pill-border)'}`,
                 color: d.mkPaused ? C.red : C.dim2,
               }}
             >
@@ -129,10 +131,10 @@ export function MarkoutsTab() {
               <div key={f.id} style={{ display: 'grid', gridTemplateColumns: TAPE_GRID, gap: '0 6px', padding: '6px 14px', fontSize: 10.5, borderBottom: `1px solid ${C.hair}`, alignItems: 'center' }}>
                 <div style={{ color: C.faint }}>{clockMs(f.ts)}</div>
                 <div style={{ color: C.dim3 }}>{fmtInt(f.blockNumber)}</div>
-                <div style={{ color: C.blue }}>{shortHex(f.txHash)}</div>
+                <div style={{ color: C.link }}>{shortHex(f.txHash)}</div>
                 <div style={{ color: C.faint2 }}>{f.to}</div>
-                <div style={{ color: catColor(f.category), fontSize: 9 }}>{catLabel(f.category)}</div>
-                <div style={{ color: protoColor(dp), fontWeight: 600 }}>{dp}</div>
+                <div style={{ color: catColor(f.category, d.theme), fontSize: 9 }}>{catLabel(f.category)}</div>
+                <div style={{ color: protoColor(dp, d.theme), fontWeight: 600 }}>{dp}</div>
                 <div style={{ color: C.text2 }}>{f.market}</div>
                 <div style={{ color: C.faint2 }}>{f.pool}</div>
                 <div><SideTag side={f.side} /></div>
@@ -180,7 +182,7 @@ export function MarkoutsTab() {
               <div style={{ textAlign: 'right', color: C.text }}>{fmtUsd(f.usd)}</div>
               <div style={{ textAlign: 'right', color: mk0 >= 0 ? C.green : C.red }}>{(mk0 >= 0 ? '+' : '') + mk0.toFixed(2)}</div>
               <div style={{ textAlign: 'right', color: pnl >= 0 ? C.green : C.red, fontWeight: 600 }}>{(pnl >= 0 ? '+$' : '−$') + Math.abs(pnl).toFixed(2)}</div>
-              <div style={{ color: C.blue }}>{shortHex(f.txHash)}</div>
+              <div style={{ color: C.link }}>{shortHex(f.txHash)}</div>
               <div style={{ color: C.faint2 }}>{f.to}</div>
             </div>
           );

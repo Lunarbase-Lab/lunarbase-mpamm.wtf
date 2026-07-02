@@ -1,8 +1,14 @@
 import { createContext, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import type { MarketState, QuoteSnapshot, QuoteRow, Fill, DailyVolume, Venue } from '@shared';
 import { fetchMarkets, fetchFills, connectStream } from './lib/api';
+import type { Theme } from './theme';
 
 export const VENUES: Venue[] = ['LFJ', 'Clober', 'Vault', 'Bybit'];
+
+/** Read the persisted theme, matching the pre-paint script in index.html. */
+const initialTheme = (): Theme => {
+  try { return localStorage.getItem('pamm-theme') === 'dark' ? 'dark' : 'light'; } catch { return 'light'; }
+};
 export type Tab = 'exec' | 'volume' | 'markouts' | 'leaderboard';
 const N = 120; // canvas rolling window (≈60s @ 500ms)
 
@@ -10,6 +16,7 @@ export interface Series { bid: number[]; ask: number[]; }
 
 interface UiState {
   tab: Tab;
+  theme: Theme;
   pair: string;
   size: number;
   venues: Record<Venue, boolean>;
@@ -32,6 +39,7 @@ interface Dashboard extends UiState {
   // setters
   set: <K extends keyof UiState>(k: K, v: UiState[K]) => void;
   toggleVenue: (v: Venue) => void;
+  toggleTheme: () => void;
   resetLb: () => void;
 }
 
@@ -59,7 +67,7 @@ function rowFor(q: QuoteSnapshot | null, venue: Venue, market: string, size: num
 
 export function DashboardProvider({ children }: { children: ReactNode }) {
   const [ui, setUi] = useState<UiState>({
-    tab: 'exec', pair: 'MON/USDC', size: 100,
+    tab: 'exec', theme: initialTheme(), pair: 'MON/USDC', size: 100,
     venues: { LFJ: true, Clober: true, Vault: true, Bybit: true },
     clScope: 'venue',
     mkProto: 'ALL', mkSide: 'ALL', mkSize: 'ANY', mkPaused: false,
@@ -167,6 +175,17 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
     series: seriesRef.current, samples: samplesRef.current,
     set: (k, v) => setUi((s) => ({ ...s, [k]: v })),
     toggleVenue: (v) => setUi((s) => ({ ...s, venues: { ...s.venues, [v]: !s.venues[v] } })),
+    toggleTheme: () => {
+      const theme: Theme = ui.theme === 'dark' ? 'light' : 'dark';
+      // Side effects in the handler — NOT the state updater, which React may
+      // defer or double-invoke. Set the html attr so the DOM re-skins instantly
+      // via CSS vars, and persist the choice.
+      try { localStorage.setItem('pamm-theme', theme); } catch { /* private mode */ }
+      document.documentElement.dataset.theme = theme;
+      setUi((s) => ({ ...s, theme }));
+      // canvas colors come from JS getters (not var()), so force a repaint.
+      setFrame((f) => f + 1);
+    },
     resetLb: () => setUi((s) => ({ ...s, lbWin: '24H', lbShow: 'PROPAMM', lbGroup: 'PROTOCOL', lbHz: 'T+0S', lbMk: 'TAKER', lbWinners: true, lbTop: 25 })),
   }), [ui, conn, state, quotes, volume, fills, frame]);
 

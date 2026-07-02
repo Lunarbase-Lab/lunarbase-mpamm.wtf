@@ -67,7 +67,7 @@ export function SideTag({ side }: { side: string }) {
   return (
     <span style={{
       fontSize: 9, fontWeight: 600, padding: '1px 5px', borderRadius: 3,
-      border: `1px solid ${buy ? 'rgba(53,208,160,.5)' : 'rgba(242,86,106,.5)'}`,
+      border: `1px solid ${buy ? 'var(--green-border)' : 'var(--red-border)'}`,
       color: buy ? C.green : C.red,
     }}>{side.toUpperCase()}</span>
   );
