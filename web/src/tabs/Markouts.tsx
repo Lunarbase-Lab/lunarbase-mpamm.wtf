@@ -125,7 +125,15 @@ export function MarkoutsTab() {
             const dp = displayProto(f);
             const age = (Date.now() - f.ts) / 1000;
             return (
-              <div key={f.id} style={{ display: 'grid', gridTemplateColumns: TAPE_GRID, gap: '0 6px', padding: '6px 14px', fontSize: 10.5, borderBottom: `1px solid ${C.hair}`, alignItems: 'center' }}>
+              <a
+                key={f.id}
+                href={`https://monadscan.com/tx/${f.txHash}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                title={f.txHash}
+                className="tape-row"
+                style={{ display: 'grid', gridTemplateColumns: TAPE_GRID, gap: '0 6px', padding: '6px 14px', fontSize: 10.5, borderBottom: `1px solid ${C.hair}`, alignItems: 'center' }}
+              >
                 <div style={{ color: C.faint }}>{clockMs(f.ts)}</div>
                 <div style={{ color: C.dim3 }}>{fmtInt(f.blockNumber)}</div>
                 <div style={{ color: C.link }}>{shortHex(f.txHash)}</div>
@@ -142,7 +150,7 @@ export function MarkoutsTab() {
                   if (age < h || v == null) return <div key={h} style={{ textAlign: 'right', color: C.ghost }}>{'·'}</div>;
                   return <div key={h} style={{ textAlign: 'right', color: v >= 0 ? C.green : C.red }}>{(v >= 0 ? '+' : '') + v.toFixed(2)}</div>;
                 })}
-              </div>
+              </a>
             );
           })}
         </div>

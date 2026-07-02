@@ -45,3 +45,6 @@ html, body { margin: 0; background: var(--bg); }
 @keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: .25; } }
 @keyframes flashIn { 0% { background: var(--accent-dim); } 100% { background: transparent; } }
 .flash { animation: flashIn 1s ease-out; }
+/* SWAP_TAPE rows link out to the block explorer (whole row clickable) */
+.tape-row { text-decoration: none; color: inherit; }
+.tape-row:hover { background: var(--accent-row); }
