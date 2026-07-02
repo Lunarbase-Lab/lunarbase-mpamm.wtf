@@ -1,17 +1,17 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { Fill } from '@shared';
 import { useDashboard } from '../store';
-import { C, COL, type Theme } from '../theme';
+import { C, COL, VAULT_LABEL, type Theme } from '../theme';
 import { Pills, SideTag } from '../components/ui';
 import { fmtUsd, clockMs, clockSec, fmtInt, shortHex } from '../lib/format';
 
 const H = [0, 5, 10, 30, 60];
-const TAPE_GRID = '78px 78px 84px 84px 64px 64px 80px 88px 46px 80px 80px 52px 52px 52px 52px 52px';
+const TAPE_GRID = '78px 78px 84px 84px 64px 92px 80px 88px 46px 80px 80px 52px 52px 52px 52px 52px';
 const OUT_GRID = '84px 88px 96px 56px 100px 110px 120px 1fr 1fr';
 
-/** displayProto: vault scope wins, else the protocol upper-cased. */
+/** displayProto: vault scope wins ("CLOBER VAULT"), else the protocol upper-cased. */
 function displayProto(f: Fill): string {
-  return f.scope === 'vault' ? 'VAULT' : f.protocol.toUpperCase();
+  return f.scope === 'vault' ? VAULT_LABEL.toUpperCase() : f.protocol.toUpperCase();
 }
 function protoColor(p: string, theme: Theme): string {
   const col = COL[theme];
@@ -97,7 +97,7 @@ export function MarkoutsTab() {
             <span style={{ color: C.text, fontWeight: 600 }}>SWAP_TAPE</span>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
-            <Pills options={['ALL', 'LFJ', 'VAULT']} value={d.mkProto} onChange={(v) => d.set('mkProto', v)} sm />
+            <Pills options={['ALL', 'LFJ', VAULT_LABEL.toUpperCase()]} value={d.mkProto} onChange={(v) => d.set('mkProto', v)} sm />
             <Pills options={['ALL', 'BUYS', 'SELLS']} value={d.mkSide} onChange={(v) => d.set('mkSide', v)} sm />
             <Pills options={['ANY', '≥10K', '≥100K', '≥500K']} value={d.mkSize} onChange={(v) => d.set('mkSize', v)} sm />
             <div

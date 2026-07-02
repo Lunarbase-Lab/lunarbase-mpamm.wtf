@@ -30,6 +30,10 @@ export const SANS = "'Space Grotesk',sans-serif";
 /** The Monad product logomark stays purple in BOTH themes (brand mark, not the theme accent). */
 export const LOGO_PURPLE = '#836EF9';
 
+/** User-facing name for Clober's oracle-vault (the propAMM maker). "Vault" alone reads
+ * ambiguously, so surface it as "Clober Vault" everywhere; upper-cased in dense contexts. */
+export const VAULT_LABEL = 'Clober Vault';
+
 // ── theme-aware getters: canvas + SVG-attribute colors can't use var() ──────
 /** Venue line/ribbon/swatch/bar colors (design COL). */
 export const COL: Record<Theme, Record<Venue, string>> = {

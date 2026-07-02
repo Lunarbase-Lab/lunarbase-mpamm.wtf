@@ -1,7 +1,7 @@
 import { useMemo } from 'react';
 import type { Fill } from '@shared';
 import { useDashboard } from '../store';
-import { C, COL, SEM, type Theme } from '../theme';
+import { C, COL, SEM, VAULT_LABEL, type Theme } from '../theme';
 import { Pills, SideTag } from '../components/ui';
 import { fmtUsd, fmtAmt, fmtInt, pnlFmt, percentile, sparkPath, humanAge, shortHex } from '../lib/format';
 
@@ -11,7 +11,7 @@ const WIN_MS: Record<string, number> = { '24H': DAY, '7D': 7 * DAY, '30D': 30 * 
 
 // PROTOCOL display name + colour (DCLogic.protoCol against the displayProto).
 function displayProto(f: Fill): string {
-  return f.scope === 'vault' ? 'VAULT' : f.protocol.toUpperCase();
+  return f.scope === 'vault' ? VAULT_LABEL.toUpperCase() : f.protocol.toUpperCase();
 }
 function protoCol(n: string, theme: Theme): string {
   const col = COL[theme];

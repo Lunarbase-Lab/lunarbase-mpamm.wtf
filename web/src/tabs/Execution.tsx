@@ -1,7 +1,7 @@
 import { useMemo } from 'react';
 import { SIZES_USD, type Venue, type QuoteRow } from '@shared';
 import { useDashboard, DISPLAY_VENUES } from '../store';
-import { C, hexA, pill, COL } from '../theme';
+import { C, hexA, pill, COL, VAULT_LABEL } from '../theme';
 import { Panel, PanelHead, Field } from '../components/ui';
 import { QuoteCanvas } from '../components/QuoteCanvas';
 import { sgn, sizeLabel, percentile, stdev } from '../lib/format';
@@ -125,7 +125,7 @@ export function ExecutionTab() {
                     color: on ? C.text : C.faint2, background: on ? hexA(col[v], 0.12) : 'transparent',
                   }}>
                     <span style={{ width: 7, height: 7, borderRadius: '50%', background: on ? col[v] : C.ghost }} />
-                    {v === 'Bybit' ? 'BYBIT (taker)' : v.toUpperCase()}
+                    {v === 'Bybit' ? 'BYBIT (taker)' : v === 'Vault' ? VAULT_LABEL.toUpperCase() : v.toUpperCase()}
                   </div>
                 );
               })}
@@ -148,7 +148,7 @@ export function ExecutionTab() {
               <div key={r.name} style={{ display: 'grid', gridTemplateColumns: '1fr 48px 42px 42px 56px', gap: '2px 8px', fontSize: 11, padding: '4px 0', alignItems: 'center' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                   <span style={{ width: 8, height: 8, borderRadius: 2, background: r.color }} />
-                  <span style={{ color: C.text2 }}>{r.name}</span>
+                  <span style={{ color: C.text2 }}>{r.name === 'Vault' ? VAULT_LABEL : r.name}</span>
                   {r.oneSided
                     ? <span title="only one side is executable at this size — the other is thin / far-tick backstop" style={{ fontSize: 7.5, color: C.amber, border: `1px solid color-mix(in srgb, var(--amber) 45%, transparent)`, borderRadius: 3, padding: '0 3px', letterSpacing: '.04em' }}>1-SIDED</span>
                     : !r.full

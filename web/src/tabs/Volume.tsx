@@ -1,7 +1,7 @@
 import { useMemo } from 'react';
 import type { DailyVolume } from '@shared';
 import { useDashboard } from '../store';
-import { C, COL } from '../theme';
+import { C, COL, VAULT_LABEL } from '../theme';
 import { fMillions } from '../lib/format';
 
 /** MM-DD from a 'YYYY-MM-DD' UTC day. */
@@ -28,7 +28,7 @@ export function VolumeTab() {
     // propAMM venues only: LFJ + Clober's oracle-vault cut (independent Clober excluded).
     const series: SeriesDef[] = [
       { name: 'LFJ', color: col.LFJ, val: (x) => x.lfj, swaps: (x) => x.lfjSwaps },
-      { name: 'Vault', color: col.Vault, val: (x) => x.cloberVault, swaps: (x) => x.cloberVaultSwaps },
+      { name: VAULT_LABEL, color: col.Vault, val: (x) => x.cloberVault, swaps: (x) => x.cloberVaultSwaps },
     ];
 
     const f = (m: number) => fMillions(m);
@@ -53,7 +53,7 @@ export function VolumeTab() {
           first: s.name.indexOf('Vault') >= 0 ? '2026-05-15' : '2026-05-13',
         })),
         brkTotalVol: f(0), brkTotalSwaps: '0',
-        volScopeNote: 'Clober = oracle-vault (propAMM) cut',
+        volScopeNote: 'Clober Vault = swaps the vault settled as maker',
       };
     }
 
@@ -155,7 +155,7 @@ export function VolumeTab() {
       msBotPct: (series[0].val(days[nd - 1]) / lt * 100).toFixed(1) + '%',
       msBotColor: msLabelColor(series[0].color),
       brk, brkTotalVol: f(allTot), brkTotalSwaps: brkSwapTotal.toLocaleString(),
-      volScopeNote: 'Clober = oracle-vault (propAMM) cut',
+      volScopeNote: 'Clober Vault = swaps the vault settled as maker',
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [d.volume, d.theme]);
@@ -165,7 +165,7 @@ export function VolumeTab() {
       <div style={{ padding: '18px 18px 14px' }}>
         <div style={{ fontSize: 14, fontWeight: 600, letterSpacing: '.06em', color: C.text }}>PROPAMM VOLUME</div>
         <div style={{ fontSize: 11, color: C.dim3, marginTop: 6, lineHeight: 1.55, maxWidth: 760 }}>
-          All-time daily notional traded on tracked propAMM pools, split by protocol. Volume is the USD-stable quote leg of each landed swap; buckets are UTC days and today's bucket is partial. Vault = Clober's oracle-vault (propAMM) cut.
+          All-time daily notional traded on tracked propAMM pools, split by protocol. Volume is the USD-stable quote leg of each landed swap; buckets are UTC days and today's bucket is partial. Clober Vault = notional the Clober oracle-vault (the propAMM) settled as the resting market-maker.
         </div>
       </div>
 
