@@ -138,17 +138,22 @@ export function ExecutionTab() {
       <Panel style={{ margin: '0 18px 14px' }}>
         <PanelHead icon="~" title="QUOTE" sub={`${pair} · ${sizeLabel(size)} · last 60s`}
           right={<div style={{ fontSize: 9, color: C.faint2 }}>solid = ask · dashed = bid · ★ = tightest · vs CEX = realized buy vs Bybit-taker (+ = worse)</div>} />
-        <div style={{ position: 'relative', padding: '8px 8px 4px' }}>
-          <QuoteCanvas />
-          <div style={{ position: 'absolute', top: 14, right: 16, background: C.overlay, border: `1px solid ${C.line}`, padding: '8px 10px', minWidth: 286, backdropFilter: 'blur(3px)' }}>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 48px 42px 42px 56px', gap: '2px 8px', fontSize: 8.5, color: C.faint2, letterSpacing: '.05em', paddingBottom: 5, borderBottom: `1px solid ${C.line}` }}>
+        {/* flex row: the plot ends where the legend column begins, so quotes can
+            never render underneath it (no absolute overlay). The canvas re-measures
+            its own clientWidth each repaint, so it adapts to the narrower slot. */}
+        <div style={{ display: 'flex', gap: 8, padding: '8px 8px 4px', alignItems: 'stretch' }}>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <QuoteCanvas />
+          </div>
+          <div style={{ flex: 'none', width: 316, background: C.panel, border: `1px solid ${C.line}`, padding: '8px 10px' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 42px 42px 42px 50px', gap: '2px 6px', fontSize: 8.5, color: C.faint2, letterSpacing: '.05em', paddingBottom: 5, borderBottom: `1px solid ${C.line}` }}>
               <div>VENUE</div><div style={{ textAlign: 'right' }}>SPREAD</div><div style={{ textAlign: 'right' }}>BID</div><div style={{ textAlign: 'right' }}>ASK</div><div style={{ textAlign: 'right' }}>vs CEX</div>
             </div>
             {legend.map((r) => (
-              <div key={r.name} style={{ display: 'grid', gridTemplateColumns: '1fr 48px 42px 42px 56px', gap: '2px 8px', fontSize: 11, padding: '4px 0', alignItems: 'center' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                  <span style={{ width: 8, height: 8, borderRadius: 2, background: r.color }} />
-                  <span style={{ color: C.text2 }}>{r.name === 'Vault' ? VAULT_LABEL : r.name}</span>
+              <div key={r.name} style={{ display: 'grid', gridTemplateColumns: '1fr 42px 42px 42px 50px', gap: '2px 6px', fontSize: 11, padding: '4px 0', alignItems: 'center' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                  <span style={{ width: 8, height: 8, borderRadius: 2, background: r.color, flex: 'none' }} />
+                  <span style={{ color: C.text2, whiteSpace: 'nowrap' }}>{r.name === 'Vault' ? VAULT_LABEL : r.name}</span>
                   {r.oneSided
                     ? <span title="only one side is executable at this size — the other is thin / far-tick backstop" style={{ fontSize: 7.5, color: C.amber, border: `1px solid color-mix(in srgb, var(--amber) 45%, transparent)`, borderRadius: 3, padding: '0 3px', letterSpacing: '.04em' }}>1-SIDED</span>
                     : !r.full
