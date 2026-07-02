@@ -27,8 +27,8 @@ export const C = {
 export const MONO = "'JetBrains Mono','SF Mono',monospace";
 export const SANS = "'Space Grotesk',sans-serif";
 
-/** The Monad product logomark stays purple in BOTH themes (brand mark, not the theme accent). */
-export const LOGO_PURPLE = '#836EF9';
+/** Official Monad Purple — the product logomark stays this in BOTH themes (brand mark, not the theme accent). */
+export const LOGO_PURPLE = '#6E54FF';
 
 /** User-facing name for Clober's oracle-vault (the propAMM maker). "Vault" alone reads
  * ambiguously, so surface it as "Clober Vault" everywhere; upper-cased in dense contexts. */
