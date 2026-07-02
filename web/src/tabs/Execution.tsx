@@ -169,19 +169,23 @@ export function ExecutionTab() {
           </div>
           {/* width/vs-CEX column is our approved divergence; venue names come
               straight from the registry. Layout matches the design. */}
-          <div style={{ flex: 'none', width: 316, margin: '6px 8px 0 14px', background: C.overlay, border: `1px solid ${C.line}`, padding: '8px 10px' }}>
+          <div style={{ flex: 'none', width: 334, margin: '6px 8px 0 14px', background: C.overlay, border: `1px solid ${C.line}`, padding: '8px 10px' }}>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 42px 42px 42px 50px', gap: '2px 6px', fontSize: 8.5, color: C.faint2, letterSpacing: '.05em', paddingBottom: 5, borderBottom: `1px solid ${C.line}` }}>
               <div>VENUE</div><div style={{ textAlign: 'right' }}>SPREAD</div><div style={{ textAlign: 'right' }}>BID</div><div style={{ textAlign: 'right' }}>ASK</div><div style={{ textAlign: 'right' }}>vs CEX</div>
             </div>
             {legend.map((r) => (
               <div key={r.id} style={{ display: 'grid', gridTemplateColumns: '1fr 42px 42px 42px 50px', gap: '2px 6px', fontSize: 11, padding: '4px 0', alignItems: 'center' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
                   <span style={{ width: 8, height: 8, borderRadius: 2, background: r.color, flex: 'none' }} />
-                  <span style={{ color: C.text2, whiteSpace: 'nowrap' }}>{r.name}</span>
-                  {/* one-sided venues need no badge — the n/a bid/ask already shows it */}
+                  <span style={{ color: C.text2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', minWidth: 0 }}>{r.name}</span>
+                  {/* keep the venue cell on ONE line so the numeric cells stay aligned across rows
+                      (a wrapped name grows the row and drops the numbers below the name's baseline).
+                      one-sided venues need no badge — the n/a bid/ask already shows it. */}
                   {!r.full
-                    ? <span title="liquidity exhausts before the full notional — the price shown is for a partial fill, not executable at the full size" style={{ fontSize: 7.5, color: C.amber, border: `1px solid color-mix(in srgb, var(--amber) 45%, transparent)`, borderRadius: 3, padding: '0 3px', letterSpacing: '.04em' }}>PARTIAL</span>
-                    : <span style={{ fontSize: 9, color: r.id === tight ? C.green : 'transparent' }}>★</span>}
+                    ? <span title="liquidity exhausts before the full notional — the price shown is for a partial fill, not executable at the full size" style={{ flex: 'none', fontSize: 7.5, color: C.amber, border: `1px solid color-mix(in srgb, var(--amber) 45%, transparent)`, borderRadius: 3, padding: '0 3px', letterSpacing: '.04em' }}>PARTIAL</span>
+                    : r.id === tight
+                      ? <span style={{ flex: 'none', fontSize: 9, color: C.green }}>★</span>
+                      : null}
                 </div>
                 <div style={{ textAlign: 'right', color: r.oneSided || !r.full ? C.faint2 : r.id === tight ? C.green : C.text, fontWeight: 600 }}>{r.oneSided ? '—' : r.spread.toFixed(2)}</div>
                 <div style={{ textAlign: 'right', color: r.hasBid ? C.red : C.faint2 }}>{r.hasBid ? sgn(r.bid) : 'n/a'}</div>
@@ -238,10 +242,10 @@ export function ExecutionTab() {
           </div>
           {stats.rows.map((r) => (
             <div key={r.id} style={{ display: 'grid', gridTemplateColumns: '1.4fr repeat(7, 1fr) 0.8fr', gap: 6, padding: '8px 6px', fontSize: 11.5, borderBottom: `1px solid ${C.line3}`, alignItems: 'center' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
-                <span style={{ width: 8, height: 8, borderRadius: 2, background: r.color }} />
-                <span style={{ color: C.text2 }}>{r.name}</span>
-                <span style={{ fontSize: 9, color: r.id === stats.tightest ? C.green : 'transparent' }}>★</span>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 7, minWidth: 0 }}>
+                <span style={{ width: 8, height: 8, borderRadius: 2, background: r.color, flex: 'none' }} />
+                <span style={{ color: C.text2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', minWidth: 0 }}>{r.name}</span>
+                {r.id === stats.tightest ? <span style={{ flex: 'none', fontSize: 9, color: C.green }}>★</span> : null}
               </div>
               <div style={{ textAlign: 'right', color: C.dim }}>{r.p5.toFixed(3)}</div>
               <div style={{ textAlign: 'right', color: C.dim }}>{r.p25.toFixed(3)}</div>
