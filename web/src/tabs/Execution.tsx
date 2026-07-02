@@ -14,7 +14,7 @@ export function ExecutionTab() {
   const markets = d.state?.markets ?? ['MON/USDC', 'MON/USDT0', 'MON/AUSD', 'MON/USD1'];
   // toggle chips: every propAMM venue + the CEX reference (if the registry has one).
   const chips: VenueMeta[] = d.reference ? [...d.displayVenues, d.reference] : d.displayVenues;
-  // active = chips the user has enabled (all display venues default on).
+  // active = chips the user has enabled (all registry venues default on).
   const active = chips.filter((v) => d.venueToggles[v.id]);
   const taker = (d.state?.takerBps ?? 10).toFixed(1);
   // reference (CEX benchmark) labels — name + a "(taker)" suffix when it's walked
@@ -85,15 +85,16 @@ export function ExecutionTab() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [d.frame, d.venueToggles, d.venues, d.theme]);
 
-  // hint: an active propAMM venue with no executable quote at the selected size
-  // but a real one at another size (thin books — often only the smallest size is
-  // two-sided/one-sided-real) so it doesn't read as "missing".
+  // hint: active propAMM venues without a selected-size quote should read as
+  // unavailable/thin liquidity, not as a broken chart.
   const hint = useMemo(() => {
     const q = d.quotes; if (!q) return null;
     const notes = active.filter((v) => v.role === 'venue').map((v) => {
       if (q.rows.some((r) => r.venueId === v.id && r.market === pair && r.sizeUsd === size)) return null;
       const at = SIZES_USD.filter((s) => q.rows.some((r) => r.venueId === v.id && r.market === pair && r.sizeUsd === s));
-      return at.length ? `${v.name} quotes ${pair} at ${at.map(sizeLabel).join(' / ')}` : null;
+      return at.length
+        ? `${v.name} quotes ${pair} at ${at.map(sizeLabel).join(' / ')}, not ${sizeLabel(size)}`
+        : `${v.name} has no live ${pair} quote`;
     }).filter(Boolean);
     return notes.length ? notes.join(' · ') : null;
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -184,7 +185,7 @@ export function ExecutionTab() {
         </div>
         {hint && (
           <div style={{ padding: '0 14px 10px', fontSize: 9.5, color: C.faint2, lineHeight: 1.5 }}>
-            ⓘ {hint} — no executable quote at {sizeLabel(size)} (thin / one-sided book at this size).
+            ⓘ {hint}
           </div>
         )}
       </Panel>

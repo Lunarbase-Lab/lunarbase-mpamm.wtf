@@ -17,8 +17,8 @@ interface UiState {
   theme: Theme;
   pair: string;
   size: number;
-  // per-venue on/off, keyed by VenueMeta.id (defaults every role==='venue' id to
-  // true once the registry arrives; the reference is opt-in like any other chip).
+  // per-venue on/off, keyed by VenueMeta.id. Defaults all registry venues on so
+  // the reference benchmark still renders when no propAMM venue has a quote.
   venueToggles: Record<string, boolean>;
   // markouts
   mkProto: string; mkSide: string; mkSize: string; mkPaused: boolean;
@@ -143,8 +143,8 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
   };
 
   // adopt a fresh registry: re-key the per-venue buffers and default a toggle for
-  // every propAMM venue (role==='venue') to on the first time we see it. Called on
-  // the initial snapshot and on every `state` stream message, so venues that
+  // every registry venue to on the first time we see it. Called on the initial
+  // snapshot and on every `state` stream message, so venues that
   // appear/disappear at runtime are handled without hardcoding.
   const adoptVenues = (venues: VenueMeta[]) => {
     idsRef.current = venues.map((v) => v.id);
@@ -152,7 +152,7 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
       const next = { ...s.venueToggles };
       let changed = false;
       for (const v of venues) {
-        if (!(v.id in next)) { next[v.id] = v.role === 'venue'; changed = true; }
+        if (!(v.id in next)) { next[v.id] = true; changed = true; }
       }
       return changed ? { ...s, venueToggles: next } : s;
     });
