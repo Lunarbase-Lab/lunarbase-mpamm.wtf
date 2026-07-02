@@ -295,6 +295,7 @@ export class LiveDataSource extends BaseSource {
     const perAdapter = await Promise.all(ADAPTERS.map(async (a) => {
       const bundle: LogBundle = {};
       const all: any[] = [];
+      const failed = new Set<string>(); // source keys whose fetch failed (surfaced to decode)
       await Promise.all(a.logSources().map(async (s) => {
         try {
           const logs = (await getLogsChunked({ address: s.address, fromBlock: from, toBlock: head, events: s.events as any })) as any[];
@@ -302,6 +303,7 @@ export class LiveDataSource extends BaseSource {
           all.push(...logs);
         } catch {
           bundle[s.key] = [];
+          failed.add(s.key);
           // 'fills' + 'state' sources hold the cursor; only 'attribution' is tolerated.
           if (s.kind !== 'attribution') {
             requiredFailed = true;
@@ -309,7 +311,7 @@ export class LiveDataSource extends BaseSource {
           }
         }
       }));
-      return { a, bundle, all };
+      return { a, bundle, all, failed };
     }));
 
     // ATOMIC (review #1): if any required (fills/state) source failed, skip the
@@ -326,8 +328,8 @@ export class LiveDataSource extends BaseSource {
     const tsOf = (bn: bigint) => blockTs.get(String(bn)) ?? Date.now();
 
     const fresh: Fill[] = [];
-    for (const { a, bundle } of perAdapter) {
-      try { fresh.push(...this.ownVenues(a, await a.decode(this.ctx, bundle, tsOf), 'fill')); }
+    for (const { a, bundle, failed } of perAdapter) {
+      try { fresh.push(...this.ownVenues(a, await a.decode(this.ctx, bundle, tsOf, failed), 'fill')); }
       catch (e) { this.noteOnce(`${a.venues()[0]?.name ?? 'venue'} decode error: ${(e as Error).message}`); }
     }
 

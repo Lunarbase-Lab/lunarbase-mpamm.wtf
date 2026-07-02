@@ -210,21 +210,27 @@ const ev = (abi: readonly unknown[], name: string) => abi.find((x: any) => x.typ
  * backfill(), so LFJ history accumulates forward from first run.
  */
 export function createLfjAdapter(): VenueAdapter {
-  let markets: LbMarket[] = [];
-  let byAddr = new Map<string, LbMarket>();
+  const byMarket = new Map<string, LbMarket>(); // current pick per market — source of truth for tailing
+  const byAddr = new Map<string, LbMarket>();   // accumulates every pair seen — for decode lookups
   return {
     venues: () => [LFJ_VENUE],
     async discover(ctx: AdapterContext) {
-      markets = await discoverLfj(ctx.client);
-      byAddr = new Map(markets.map((m) => [m.pair.toLowerCase(), m]));
-      ctx.log(`LFJ: ${markets.length} market(s)`);
+      // MERGE, never replace (review #3): LFJ pairs come from a factory READ (not
+      // a log source), so there's no cursor-holding discovery. A partial/transient
+      // multicall must therefore only ADD/refresh pairs — never shrink the tailed
+      // set (which would advance the cursor past omitted pairs' swaps) and never
+      // drop an address a concurrent tail may still decode against.
+      const found = await discoverLfj(ctx.client);
+      for (const m of found) { byMarket.set(m.market, m); byAddr.set(m.pair.toLowerCase(), m); }
+      ctx.log(`LFJ: ${byMarket.size} market(s)`);
     },
     quote(ctx, sizesUsd) {
-      return quoteLfj(ctx.client, markets, sizesUsd, ctx.referenceMid(), ctx.pricer);
+      return quoteLfj(ctx.client, [...byMarket.values()], sizesUsd, ctx.referenceMid(), ctx.pricer);
     },
     logSources() {
-      if (!markets.length) return [];
-      return [{ key: 'swap', address: markets.map((m) => m.pair), events: [ev(lbPairAbi, 'Swap')] }];
+      const pairs = [...byMarket.values()].map((m) => m.pair);
+      if (!pairs.length) return [];
+      return [{ key: 'swap', address: pairs, events: [ev(lbPairAbi, 'Swap')], kind: 'fills' as const }];
     },
     decode(_ctx: AdapterContext, logs: LogBundle, tsOf) {
       const out: Fill[] = [];

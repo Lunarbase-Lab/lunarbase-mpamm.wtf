@@ -13,8 +13,10 @@
 /** buy/sell of the base asset (MON). */
 export type Side = 'buy' | 'sell';
 
-/** Routing classification for a fill, shown in the tape/leaderboard. */
-export type FillCategory = 'DIRECT' | 'ROUTER' | 'AGG' | 'CEX/DEX';
+/** Routing classification for a fill, shown in the tape/leaderboard. `UNKNOWN`
+ *  = the attribution source was unavailable when the fill was decoded, so we
+ *  can't say whether it was direct or routed (never guessed as DIRECT). */
+export type FillCategory = 'DIRECT' | 'ROUTER' | 'AGG' | 'CEX/DEX' | 'UNKNOWN';
 
 export type DataSourceMode = 'live' | 'sim';
 

@@ -74,8 +74,12 @@ export interface VenueAdapter {
   /** the contract logs the core should fetch each cycle (read after `discover`). */
   logSources(): LogSource[];
   /** decode this adapter's fetched logs into normalized fills. Owns any
-   *  venue-specific correlation (router maps, mid-run pool discovery, filtering). */
-  decode(ctx: AdapterContext, logs: LogBundle, tsOf: (bn: bigint) => number): Fill[] | Promise<Fill[]>;
+   *  venue-specific correlation (router maps, mid-run pool discovery, filtering).
+   *  `failedSources` holds the keys of any `'attribution'` sources whose fetch
+   *  failed this cycle (required-source failures never reach decode — the cycle is
+   *  skipped). Use it to avoid a confident label when attribution is unavailable
+   *  (e.g. tag a fill `UNKNOWN` instead of `DIRECT`). */
+  decode(ctx: AdapterContext, logs: LogBundle, tsOf: (bn: bigint) => number, failedSources: Set<string>): Fill[] | Promise<Fill[]>;
 }
 
 /**

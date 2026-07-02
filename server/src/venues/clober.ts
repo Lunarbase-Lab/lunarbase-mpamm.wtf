@@ -270,7 +270,7 @@ export function cloberTickToPrice(tick: number, monIsBase: boolean, stableDecima
  */
 export function decodeCloberTake(
   log: { args: any; transactionHash: string; blockNumber: bigint; logIndex: number },
-  books: Map<string, CloberBook>, tsMs: number, router?: RouterInfo,
+  books: Map<string, CloberBook>, tsMs: number, router?: RouterInfo, attributionUnavailable = false,
 ): Fill | null {
   const a = log.args; if (!a) return null;
   const bookId = String(a.bookId);
@@ -308,7 +308,9 @@ export function decodeCloberTake(
     // deterministic id (txHash:logIndex) so re-tail/gap-fill/restart dedupes.
     id: `clb-${log.transactionHash.toLowerCase()}-${log.logIndex}`,
     venueId: CLOBER_VAULT_VENUE.id,
-    market: `MON/${stableSym}`, side, category: router?.category ?? 'DIRECT',
+    // routed → the router's class; else DIRECT — unless the attribution source was
+    // unavailable this cycle, in which case we don't know (UNKNOWN, not a false DIRECT).
+    market: `MON/${stableSym}`, side, category: router?.category ?? (attributionUnavailable ? 'UNKNOWN' : 'DIRECT'),
     usd, baseAmount, execPx,
     txHash: log.transactionHash, to: router?.to ?? shortHex(a.user ?? ZERO),
     pool: `book ${bookId.slice(0, 8)}`,
@@ -402,12 +404,13 @@ export function createCloberVaultAdapter(): VenueAdapter {
         { key: 'router', address: ADDR.routerGateway as `0x${string}`, events: [ev(routerGatewayAbi, 'Swap')], kind: 'attribution' as const },
       ];
     },
-    decode(_ctx: AdapterContext, logs: LogBundle, tsOf) {
+    decode(_ctx: AdapterContext, logs: LogBundle, tsOf, failed: Set<string>) {
       mergeVaultBooks(logs.vaultOpen ?? [], logs.bmOpen ?? []);
       const routerMap = buildRouterMap(logs.router ?? []);
+      const attributionUnavailable = failed.has('router'); // router logs failed → don't assert DIRECT
       const out: Fill[] = [];
       for (const l of logs.take ?? []) {
-        const f = decodeCloberTake(l, books, tsOf(l.blockNumber), routerMap.get(String(l.transactionHash).toLowerCase()));
+        const f = decodeCloberTake(l, books, tsOf(l.blockNumber), routerMap.get(String(l.transactionHash).toLowerCase()), attributionUnavailable);
         if (f) out.push(f);
       }
       return out;

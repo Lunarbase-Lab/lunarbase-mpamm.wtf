@@ -85,7 +85,10 @@ export function createTemplateAdapter(): VenueAdapter {
     // Turn your fetched logs into normalized fills. `logs[key]` matches your
     // logSources keys; `tsOf(blockNumber)` → block timestamp (ms). Own any
     // venue-specific correlation here (router maps, mid-run pool discovery, …).
-    decode(_ctx: AdapterContext, logs: LogBundle, tsOf: (bn: bigint) => number): Fill[] {
+    // `failedSources` holds the keys of any 'attribution' sources that failed this
+    // cycle — use it to avoid a confident label (e.g. category 'UNKNOWN' instead of
+    // 'DIRECT' when your router/attribution source was unavailable).
+    decode(_ctx: AdapterContext, logs: LogBundle, tsOf: (bn: bigint) => number, _failedSources: Set<string>): Fill[] {
       const out: Fill[] = [];
       for (const l of logs.swap ?? []) {
         // decode l → usd (stable leg), baseAmount (MON), execPx (quote-per-base), side, market:
