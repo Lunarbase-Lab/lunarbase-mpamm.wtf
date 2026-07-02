@@ -1,6 +1,6 @@
+import type { PublicClient } from 'viem';
 import type { QuoteRow, Side, Fill, VenueMeta } from '@shared';
 import { TOKENS } from '@shared';
-import { publicClient } from '../chain/rpc.js';
 import { lbFactoryAbi, lbPairAbi } from '../chain/abis.js';
 import { ADDR } from '@shared';
 import { fromUnits, toUnits, shortHex } from '../util.js';
@@ -24,7 +24,7 @@ const WMON = TOKENS.WMON;
 
 /** Discover LBPairs for WMON × each stable via LBFactory.getAllLBPairs.
  *  Picks the deepest (smallest binStep, first) pair per stable. */
-export async function discoverLfj(): Promise<LbMarket[]> {
+export async function discoverLfj(client: PublicClient): Promise<LbMarket[]> {
   const stables = Object.values(TOKENS).filter((t) => t.stable);
   const calls = stables.map((s) => ({
     address: ADDR.lbFactory as `0x${string}`,
@@ -32,7 +32,7 @@ export async function discoverLfj(): Promise<LbMarket[]> {
     functionName: 'getAllLBPairs' as const,
     args: [WMON.address, s.address] as const,
   }));
-  const res = await publicClient.multicall({ contracts: calls, allowFailure: true });
+  const res = await client.multicall({ contracts: calls, allowFailure: true });
 
   const out: LbMarket[] = [];
   for (let i = 0; i < stables.length; i++) {
@@ -58,7 +58,7 @@ export async function discoverLfj(): Promise<LbMarket[]> {
     { address: m.pair, abi: lbPairAbi, functionName: 'getTokenX' as const },
     { address: m.pair, abi: lbPairAbi, functionName: 'getTokenY' as const },
   ]);
-  const tok = await publicClient.multicall({ contracts: tokCalls, allowFailure: true });
+  const tok = await client.multicall({ contracts: tokCalls, allowFailure: true });
   for (let i = 0; i < out.length; i++) {
     const x = tok[i * 2], _y = tok[i * 2 + 1];
     if (x.status === 'success') {
@@ -81,6 +81,7 @@ interface QuoteLeg {
 /** Quote LFJ for every market × size, both sides, in a single Multicall3
  *  round-trip (spec §5.1). Returns one QuoteRow per (market,size). */
 export async function quoteLfj(
+  client: PublicClient,
   markets: LbMarket[],
   sizesUsd: readonly number[],
   monUsd: number,
@@ -118,7 +119,7 @@ export async function quoteLfj(
     functionName: 'getSwapOut' as const,
     args: [l.amountIn, l.swapForY] as const,
   }));
-  const res = await publicClient.multicall({ contracts, allowFailure: true });
+  const res = await client.multicall({ contracts, allowFailure: true });
 
   // fold the two legs of each (market,size) into a QuoteRow
   const rowByKey = new Map<string, QuoteRow>();
@@ -214,12 +215,12 @@ export function createLfjAdapter(): VenueAdapter {
   return {
     venues: () => [LFJ_VENUE],
     async discover(ctx: AdapterContext) {
-      markets = await discoverLfj();
+      markets = await discoverLfj(ctx.client);
       byAddr = new Map(markets.map((m) => [m.pair.toLowerCase(), m]));
       ctx.log(`LFJ: ${markets.length} market(s)`);
     },
     quote(ctx, sizesUsd) {
-      return quoteLfj(markets, sizesUsd, ctx.referenceMid(), ctx.pricer);
+      return quoteLfj(ctx.client, markets, sizesUsd, ctx.referenceMid(), ctx.pricer);
     },
     logSources() {
       if (!markets.length) return [];

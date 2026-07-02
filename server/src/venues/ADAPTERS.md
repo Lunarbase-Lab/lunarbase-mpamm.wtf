@@ -48,7 +48,13 @@ Everything you need is on `ctx` (`AdapterContext`) — **use it instead of impor
 - **Frontend:** `venues()` is served in `state.venues` (+ `GET /api/venues`); the UI renders your venue with zero client-side knowledge of it.
 
 ## Notes
-- **Multiple venues from one adapter:** return several `VenueMeta` from `venues()` and tag each fill/quote with the right `id` (e.g. a protocol that surfaces both a "spot" and a "vault" venue).
+- **Multiple venues from one adapter:** return several `VenueMeta` from `venues()` and tag each fill/quote with the right `id` (e.g. a protocol that surfaces both a "spot" and a "vault" venue). The core **validates** this: a fill/quote whose `venueId` isn't one your `venues()` declared is dropped with a note (never silently stored).
+- **Unique ids:** venue `id`s must be unique across every adapter + the reference and lowercase kebab-case. The registry is validated at startup — a duplicate/invalid id **throws** (fail-loud), so a collision can't silently merge two venues.
+- **Required vs optional log sources:** a `LogSource` is **required** by default — if its fetch fails, the core does NOT advance its block cursor, so the range is re-tailed next cycle instead of losing fills. Mark **auxiliary** sources (router attribution, mid-run pool discovery) `optional: true` so their transient failure is tolerated. Put the fill-producing event(s) in required sources.
+- **backfill().fills** are persisted to the DB, so they show up in the DB-backed leaderboard/tape (`queryFills`). Their volume must come from `backfill().days` (fills are not re-aggregated), and they should be from **closed** days (before the live cursor).
 - **Stateful discovery:** `discover()` and `decode()` may mutate closure state (e.g. fold newly-`Open`ed pools from a log source into your cache) — see `clober.ts`'s `mergeVaultBooks`.
-- **Degrade gracefully:** throw/return empty on RPC or subgraph failure; the core tolerates it (your rows are simply absent that tick) and the rest of the dashboard keeps working.
+- **Degrade gracefully:** throw/return empty on RPC or subgraph failure; the core tolerates it and the rest of the dashboard keeps working.
 - **The CEX reference** (Bybit) is a separate `ReferenceAdapter` (`role: 'reference'`), not a venue adapter. There's exactly one.
+
+## Scope & limits
+This makes **venues** pluggable on the **tracked pair/asset universe** (`MARKETS` + `SIZES_USD` in `@shared`, benchmarked against the one CEX reference). A new MON/stable venue is "one adapter + one registry line". A new **pair or asset** (a different base/quote, or a venue with no CEX reference) is a larger change — `MARKETS` is still global, the live state serves that set, and the reference walks it — so it's **not** yet a one-line add. If you need that, open an issue: it means making the market universe registry-driven too (per-adapter markets + a reference per asset).

@@ -1,6 +1,6 @@
+import type { PublicClient } from 'viem';
 import type { QuoteRow, Fill, Side, FillCategory, VenueMeta } from '@shared';
 import { ADDR, TOKENS, isMonAddress, isMonSymbol } from '@shared';
-import { publicClient, getLogsChunked } from '../chain/rpc.js';
 import { bookViewerAbi, bookManagerAbi, liquidityVaultAbi, routerGatewayAbi, CLOBER_MIN_PRICE } from '../chain/abis.js';
 import { fromUnits, toUnits, shortHex } from '../util.js';
 import type { UsdPricer } from '../pricer.js';
@@ -83,14 +83,14 @@ export function cloberBookFromOpen(a: any, vault: Set<string>): CloberBook | nul
 
 /** Build a book cache + vault set from recent Open logs, then assemble the
  *  MON/stable markets we can quote. `lookback` blocks back from head. */
-export async function discoverClober(lookback = 4000): Promise<{ books: Map<string, CloberBook>; markets: CloberMarket[]; vault: Set<string> }> {
-  const head = await publicClient.getBlockNumber();
+export async function discoverClober(client: PublicClient, getLogs: AdapterContext['getLogs'], lookback = 4000): Promise<{ books: Map<string, CloberBook>; markets: CloberMarket[]; vault: Set<string> }> {
+  const head = await client.getBlockNumber();
   const from = head > BigInt(lookback) ? head - BigInt(lookback) : 0n;
   const books = new Map<string, CloberBook>();
   const vault = new Set<string>();
 
   try {
-    const vlogs = (await getLogsChunked({
+    const vlogs = (await getLogs({
       address: ADDR.liquidityVault as `0x${string}`, fromBlock: from, toBlock: head,
       events: liquidityVaultAbi.filter((x: any) => x.type === 'event'),
     })) as any[];
@@ -101,7 +101,7 @@ export async function discoverClober(lookback = 4000): Promise<{ books: Map<stri
   } catch { /* tolerate */ }
 
   try {
-    const opens = (await getLogsChunked({
+    const opens = (await getLogs({
       address: ADDR.bookManager as `0x${string}`, fromBlock: from, toBlock: head,
       events: bookManagerAbi.filter((x: any) => x.type === 'event' && x.name === 'Open'),
     })) as any[];
@@ -165,7 +165,7 @@ export async function discoverCloberViaSubgraph(
 
 /** Quote Clober for each market × size via BookViewer.getExpectedOutput. */
 export async function quoteClober(
-  markets: CloberMarket[], sizesUsd: readonly number[], monUsd: number, pricer: UsdPricer,
+  client: PublicClient, markets: CloberMarket[], sizesUsd: readonly number[], monUsd: number, pricer: UsdPricer,
 ): Promise<QuoteRow[]> {
   if (!markets.length || monUsd <= 0) return [];
   type Leg = { market: string; size: number; side: Side; book: CloberBook; inDec: number; outDec: number; reqBase: bigint };
@@ -191,7 +191,7 @@ export async function quoteClober(
     functionName: 'getExpectedOutput' as const,
     args: [{ id: l.book.bookId, limitPrice: CLOBER_MIN_PRICE, baseAmount: l.reqBase, minQuoteAmount: 0n, hookData: '0x' as `0x${string}` }] as const,
   }));
-  const res = await publicClient.multicall({ contracts, allowFailure: true });
+  const res = await client.multicall({ contracts, allowFailure: true });
 
   const rowByKey = new Map<string, QuoteRow>();
   const fullByKey = new Map<string, { bid: boolean; ask: boolean }>();
@@ -373,7 +373,7 @@ export function createCloberVaultAdapter(): VenueAdapter {
         ctx.log(`Clober Vault: subgraph discovery (${disc.vault.size} vault book(s))`);
       } catch {
         ctx.log('Clober Vault: subgraph discovery failed; trying recent Open logs');
-        try { disc = await discoverClober(2000); } catch { disc = { books: new Map(), markets: [], vault: new Set() }; }
+        try { disc = await discoverClober(ctx.client, ctx.getLogs, 2000); } catch { disc = { books: new Map(), markets: [], vault: new Set() }; }
       }
       vault = disc.vault;
       books = new Map([...disc.books].filter(([, b]) => b.isVault));   // keep only vault books
@@ -386,14 +386,17 @@ export function createCloberVaultAdapter(): VenueAdapter {
       return { days: [...seed].map(([utcDay, cd]) => ({ utcDay, byVenue: { [CLOBER_VAULT_VENUE.id]: { usd: cd.vault } } })) };
     },
     quote(ctx, sizesUsd) {
-      return quoteClober(markets, sizesUsd, ctx.referenceMid(), ctx.pricer);
+      return quoteClober(ctx.client, markets, sizesUsd, ctx.referenceMid(), ctx.pricer);
     },
     logSources() {
+      // 'take' is the fill-producing source (required — a fetch failure holds the
+      // cursor); router/opens are auxiliary (attribution + new-book discovery) and
+      // tolerated on failure (review #1).
       return [
         { key: 'take', address: ADDR.bookManager as `0x${string}`, events: [ev(bookManagerAbi, 'Take')] },
-        { key: 'router', address: ADDR.routerGateway as `0x${string}`, events: [ev(routerGatewayAbi, 'Swap')] },
-        { key: 'bmOpen', address: ADDR.bookManager as `0x${string}`, events: [ev(bookManagerAbi, 'Open')] },
-        { key: 'vaultOpen', address: ADDR.liquidityVault as `0x${string}`, events: [ev(liquidityVaultAbi, 'Open')] },
+        { key: 'router', address: ADDR.routerGateway as `0x${string}`, events: [ev(routerGatewayAbi, 'Swap')], optional: true },
+        { key: 'bmOpen', address: ADDR.bookManager as `0x${string}`, events: [ev(bookManagerAbi, 'Open')], optional: true },
+        { key: 'vaultOpen', address: ADDR.liquidityVault as `0x${string}`, events: [ev(liquidityVaultAbi, 'Open')], optional: true },
       ];
     },
     decode(_ctx: AdapterContext, logs: LogBundle, tsOf) {

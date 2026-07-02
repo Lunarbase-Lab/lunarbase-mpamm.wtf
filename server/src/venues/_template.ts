@@ -68,8 +68,13 @@ export function createTemplateAdapter(): VenueAdapter {
     // Declare the contract logs the core fetches each cycle (read AFTER discover,
     // so pool addresses are known). `events` are viem AbiEvent objects. The core
     // getLogs's these over the new block range and returns them to decode() by key.
+    // Fill-producing sources are REQUIRED (if the fetch fails the core holds the
+    // cursor and retries — no lost fills); mark auxiliary sources `optional: true`.
     logSources() {
-      // return [{ key: 'swap', address: MY_POOL_ADDRESS, events: [ev(myAbi, 'Swap')] }];
+      // return [
+      //   { key: 'swap', address: MY_POOL_ADDRESS, events: [ev(myAbi, 'Swap')] },
+      //   { key: 'router', address: ROUTER_ADDRESS, events: [ev(routerAbi, 'Swap')], optional: true },
+      // ];
       void ev;
       return [];
     },

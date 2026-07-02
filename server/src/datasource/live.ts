@@ -8,8 +8,8 @@ import { publicClient, getLogsChunked, probeChain } from '../chain/rpc.js';
 import { UsdPricer } from '../pricer.js';
 import { VolumeStore } from '../db.js';
 import { utcDay, annotateCex } from '../util.js';
-import { ADAPTERS, REFERENCE, venueMeta } from '../venues/registry.js';
-import type { AdapterContext, LogBundle } from '../venues/adapter.js';
+import { ADAPTERS, REFERENCE, venueMeta, venueIds, validateRegistry } from '../venues/registry.js';
+import type { AdapterContext, LogBundle, VenueAdapter } from '../venues/adapter.js';
 
 /**
  * LiveDataSource — real Monad RPC + CEX reference, run as a persist-forward
@@ -53,8 +53,15 @@ export class LiveDataSource extends BaseSource {
   private persistTimer?: ReturnType<typeof setInterval>;
   private notes: string[] = [];
   private block = 0;
+  /** all registered venue ids — a fill/quote carrying an unknown id is dropped
+   *  (a plugin bug must not silently store data the UI can't render). */
+  private knownVenueIds = new Set<string>();
 
   async start(): Promise<void> {
+    // Fail loud on a misconfigured registry (duplicate/invalid venue id) before
+    // touching the network — a colliding id would silently merge two venues.
+    validateRegistry();
+    this.knownVenueIds = venueIds();
     // Fail fast on an unreachable/wrong chain (spec §8) rather than half-start.
     const probe = await probeChain();
     if (!probe.ok) throw new Error(`Monad RPC sanity check failed (${probe.reason}). Set DATA_SOURCE=sim to run offline.`);
@@ -111,27 +118,40 @@ export class LiveDataSource extends BaseSource {
     // 2. per-adapter historical backfill (deep-history seed, e.g. a subgraph).
     const today = utcDay();
     let seeded = 0;
+    const seededFills: Fill[] = [];
     for (const a of ADAPTERS) {
       if (!a.backfill) continue;
+      const allowed = new Set(a.venues().map((v) => v.id)); // ids this adapter may emit
       try {
         const bf = await a.backfill(this.ctx, config.seedSinceUtc);
         for (const bd of bf.days ?? []) {
           if (bd.utcDay >= today) continue; // today is owned by live tailing
           let row = this.days.find((d) => d.utcDay === bd.utcDay);
           if (!row) { row = this.emptyDay(bd.utcDay, false); this.days.push(row); }
-          for (const [venueId, vd] of Object.entries(bd.byVenue)) row.byVenue[venueId] = { usd: vd.usd, swaps: vd.swaps ?? 0 };
+          for (const [venueId, vd] of Object.entries(bd.byVenue)) {
+            if (!allowed.has(venueId)) { this.notes.push(`dropped backfill volume for foreign venue '${venueId}'`); continue; }
+            row.byVenue[venueId] = { usd: vd.usd, swaps: vd.swaps ?? 0 };
+          }
           row.partial = false;
           seeded++;
         }
-        for (const f of bf.fills ?? []) if (!this.countedIds.has(f.id)) { this.countedIds.add(f.id); this.fills.push(f); }
+        // historical fills → the DB, so the DB-backed leaderboard/tape queries
+        // (queryFills) actually see them (review #2). Their volume is carried by
+        // bf.days, so they are NOT ingested (no double-count), and their
+        // closed-day blocks sit before the live tail cursor (never re-decoded).
+        for (const f of bf.fills ?? []) {
+          if (!allowed.has(f.venueId)) { this.notes.push(`dropped backfill fill for foreign venue '${f.venueId}'`); continue; }
+          seededFills.push(f);
+        }
       } catch (e) {
         this.notes.push(`${a.venues()[0]?.name ?? 'venue'} backfill unavailable (${(e as Error).message}); history grows forward`);
       }
     }
+    if (seededFills.length) this.store.upsertFills(seededFills);
     if (seeded) this.notes.push(`seeded ${seeded} closed day-row(s) from adapter backfill; on-chain-only venues accumulate forward`);
     this.days.sort((a, b) => (a.utcDay < b.utcDay ? -1 : 1));
     this.today(); // ensure today's partial bucket, rolling any stale "today" closed
-    this.reconcileSwapCounts(); // derive per-venue swap counts from retained fills
+    this.reconcileSwapCounts(); // derive per-venue swap counts from retained + backfilled fills
     this.store.upsertMany(this.days);
 
     // 3. resume point — same-day gap-fill, else start at tip
@@ -164,6 +184,20 @@ export class LiveDataSource extends BaseSource {
   /** A fresh zeroed daily bucket (venue slices fill in as fills land). */
   private emptyDay(day: string, partial: boolean): DailyVolume {
     return { utcDay: day, byVenue: {}, partial };
+  }
+
+  /** push a note at most once — per-tick drop reasons must not spam state.notes. */
+  private noteOnce(msg: string): void { if (!this.notes.includes(msg)) this.notes.push(msg); }
+
+  /** keep only items whose venueId is one this adapter declared — a foreign id
+   *  (plugin bug) is dropped with a one-time note, never silently stored (review #3). */
+  private ownVenues<T extends { venueId: string }>(a: VenueAdapter, items: T[], kind: string): T[] {
+    const allowed = new Set(a.venues().map((v) => v.id));
+    return items.filter((x) => {
+      if (allowed.has(x.venueId)) return true;
+      this.noteOnce(`${a.venues()[0]?.name ?? 'adapter'} emitted a ${kind} for foreign venue '${x.venueId}' — dropped`);
+      return false;
+    });
   }
 
   /**
@@ -210,9 +244,11 @@ export class LiveDataSource extends BaseSource {
     const head = await publicClient.getBlockNumber();
     this.block = Number(head);
 
-    const venueRows = (await Promise.all(
-      ADAPTERS.map((a) => (a.quote ? a.quote(this.ctx, config.sizesUsd).catch(() => [] as QuoteRow[]) : Promise.resolve([] as QuoteRow[]))),
-    )).flat();
+    const venueRows = (await Promise.all(ADAPTERS.map(async (a) => {
+      if (!a.quote) return [] as QuoteRow[];
+      const rows = await a.quote(this.ctx, config.sizesUsd).catch(() => [] as QuoteRow[]);
+      return this.ownVenues(a, rows, 'quote'); // drop rows for ids the adapter didn't declare
+    }))).flat();
     const refRows = REFERENCE.quote(this.ctx, config.sizesUsd);
     annotateCex(venueRows, refRows); // spec §4.2 (audit I1)
     this.quotes = { block: this.block, monUsd, ts: Date.now(), rows: [...venueRows, ...refRows] };
@@ -229,14 +265,27 @@ export class LiveDataSource extends BaseSource {
     if (head <= this.lastBlock) return;
     const from = this.lastBlock + 1n;
 
-    // fetch every adapter's declared log sources into a per-adapter bundle.
+    // Fetch every adapter's declared log sources into a per-adapter bundle. Track
+    // whether any REQUIRED (fill-producing) source failed: if so we must NOT
+    // advance the cursor, or a transient RPC error would look like "no logs" and
+    // silently lose those fills forever (review #1). Optional (auxiliary) sources
+    // — router attribution, mid-run pool discovery — are tolerated on failure.
+    let requiredFailed = false;
     const perAdapter = await Promise.all(ADAPTERS.map(async (a) => {
       const bundle: LogBundle = {};
       const all: any[] = [];
       await Promise.all(a.logSources().map(async (s) => {
-        const logs = (await getLogsChunked({ address: s.address, fromBlock: from, toBlock: head, events: s.events as any }).catch(() => [] as unknown[])) as any[];
-        bundle[s.key] = logs;
-        all.push(...logs);
+        try {
+          const logs = (await getLogsChunked({ address: s.address, fromBlock: from, toBlock: head, events: s.events as any })) as any[];
+          bundle[s.key] = logs;
+          all.push(...logs);
+        } catch {
+          bundle[s.key] = [];
+          if (!s.optional) {
+            requiredFailed = true;
+            this.noteOnce(`${a.venues()[0]?.name ?? 'venue'} log source '${s.key}' failed — holding cursor, retrying`);
+          }
+        }
       }));
       return { a, bundle, all };
     }));
@@ -249,11 +298,13 @@ export class LiveDataSource extends BaseSource {
 
     const fresh: Fill[] = [];
     for (const { a, bundle } of perAdapter) {
-      try { fresh.push(...(await a.decode(this.ctx, bundle, tsOf))); }
-      catch (e) { this.notes.push(`${a.venues()[0]?.name ?? 'venue'} decode error: ${(e as Error).message}`); }
+      try { fresh.push(...this.ownVenues(a, await a.decode(this.ctx, bundle, tsOf), 'fill')); }
+      catch (e) { this.noteOnce(`${a.venues()[0]?.name ?? 'venue'} decode error: ${(e as Error).message}`); }
     }
 
-    this.lastBlock = head;
+    // Advance the cursor ONLY if every required source succeeded — else leave it,
+    // so this range is re-tailed next cycle (fills dedupe by id, no re-count).
+    if (!requiredFailed) this.lastBlock = head;
     fresh.sort((a, b) => a.blockNumber - b.blockNumber);
     for (const f of fresh) this.ingest(f);
   }
@@ -268,6 +319,9 @@ export class LiveDataSource extends BaseSource {
   }
 
   private ingest(f: Fill): void {
+    // never store a fill for a venue the registry doesn't know (its volume would
+    // be invisible in the UI / could merge into another venue) — review #3.
+    if (!this.knownVenueIds.has(f.venueId)) { this.noteOnce(`dropped fill for unknown venue '${f.venueId}'`); return; }
     // Idempotent (H1): a fill already counted — a re-tail / gap-fill / restart
     // re-decode of the same on-chain event (deterministic id) — must never
     // advance the volume buckets again.

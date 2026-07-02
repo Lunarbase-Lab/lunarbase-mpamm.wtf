@@ -38,6 +38,12 @@ export interface LogSource {
   key: string;
   address: `0x${string}` | `0x${string}`[];
   events: readonly unknown[];
+  /** true for AUXILIARY sources (router attribution, mid-run pool discovery)
+   *  whose failure is tolerable — the core skips them and moves on. Leave false
+   *  (the default) for FILL-PRODUCING sources: if any required source fails, the
+   *  core does NOT advance its block cursor, so the range is re-tailed next cycle
+   *  instead of silently losing those fills. */
+  optional?: boolean;
 }
 
 /** Logs delivered to `decode()`, keyed by `LogSource.key`. */

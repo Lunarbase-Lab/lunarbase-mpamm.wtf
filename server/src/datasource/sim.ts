@@ -6,7 +6,7 @@ import {
 } from '@shared';
 import { config } from '../config.js';
 import { clamp, utcDay, nextId, annotateCex } from '../util.js';
-import { venueMeta } from '../venues/registry.js';
+import { venueMeta, validateRegistry } from '../venues/registry.js';
 
 /**
  * SimDataSource — a venue-agnostic simulator for offline/dev (`DATA_SOURCE=sim`).
@@ -67,6 +67,7 @@ export class SimDataSource extends BaseSource {
   }
 
   async start(): Promise<void> {
+    validateRegistry(); // fail loud on a duplicate/invalid venue id (dev parity with live)
     this.initEntities();
     for (let i = 0; i < 220; i++) this.mutate();   // warm the walk so opening quotes look settled
     this.seedHistory();
