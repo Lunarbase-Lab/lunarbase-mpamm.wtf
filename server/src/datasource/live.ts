@@ -117,14 +117,9 @@ export class LiveDataSource extends BaseSource {
     // Resume markout aging across a restart (M1): a fill persisted with only its
     // early horizons (T+0/T+5) must go back on the pending queue if a later
     // horizon is still in the future, or ageMarkouts (which only walks `pending`)
-    // would leave those cells null forever. Horizons that elapsed unobserved
-    // during the downtime stay null — ageMarkouts won't fabricate them.
+    // would leave those cells null forever. Same predicate as ingest (M2).
     const bootMs = Date.now();
-    for (const f of this.fills) {
-      if (MARKOUT_HORIZONS.some((h, i) => f.markoutsBps[i] == null && bootMs < f.ts + h * 1000)) {
-        this.pending.add(f);
-      }
-    }
+    for (const f of this.fills) if (this.hasFutureMarkoutHorizon(f, bootMs)) this.pending.add(f);
 
     // 2. refresh closed Clober days from the subgraph (cheap deep-history seed)
     const today = utcDay();
@@ -352,9 +347,13 @@ export class LiveDataSource extends BaseSource {
       const dropped = this.fills.shift();
       if (dropped) this.countedIds.delete(dropped.id);
     }
-    // Markouts only for genuinely-live fills (we observed the Bybit mid across
-    // their horizons). Replayed/old fills keep markoutsBps=null (audit B2).
-    if (Date.now() - f.ts < 10_000) this.pending.add(f);
+    // Keep aging any fill that still has a recoverable (future) markout horizon.
+    // This covers fresh live fills AND same-day gap-filled fills decoded 10-60s
+    // late after a short downtime, whose later horizons (e.g. T+60) are still
+    // ahead (M2). No `< 10s` heuristic: ageMarkouts' earliestMid guard already
+    // refuses to fabricate horizons that elapsed unobserved, so `pending` can
+    // safely hold any still-recoverable fill.
+    if (this.hasFutureMarkoutHorizon(f)) this.pending.add(f);
     this.dirty.add(f);
     // Bucket by the fill's execution day, not wall-clock (audit B2). Closed
     // Clober days are subgraph-authoritative and refreshed each boot, so the
@@ -379,6 +378,15 @@ export class LiveDataSource extends BaseSource {
       this.days.sort((a, b) => (a.utcDay < b.utcDay ? -1 : 1));
     }
     return d;
+  }
+
+  /** True while a fill still has a null markout horizon whose mark time is in the
+   *  future — i.e. still observable, so it's worth keeping on the pending queue.
+   *  Shared by the restart requeue (M1) and live ingest (M2) so both keep exactly
+   *  the recoverable fills aging; ageMarkouts separately refuses to fabricate any
+   *  horizon that already elapsed unobserved. */
+  private hasFutureMarkoutHorizon(f: Fill, now = Date.now()): boolean {
+    return MARKOUT_HORIZONS.some((h, i) => f.markoutsBps[i] == null && now < f.ts + h * 1000);
   }
 
   /** Join each pending fill to the Bybit mid at each horizon as it ages. */
