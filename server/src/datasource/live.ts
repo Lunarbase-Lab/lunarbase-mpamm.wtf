@@ -51,6 +51,7 @@ export class LiveDataSource extends BaseSource {
   private lastBlock = 0n;
   private timer?: ReturnType<typeof setInterval>;
   private persistTimer?: ReturnType<typeof setInterval>;
+  private rediscoverTimer?: ReturnType<typeof setInterval>;
   private notes: string[] = [];
   private block = 0;
   /** all registered venue ids — a fill/quote carrying an unknown id is dropped
@@ -78,14 +79,26 @@ export class LiveDataSource extends BaseSource {
     await this.poll().catch(() => undefined);
     this.timer = setInterval(() => { void this.tick(); }, config.quoteIntervalMs);
     this.persistTimer = setInterval(() => this.persist(), config.persistMs);
+    this.rediscoverTimer = setInterval(() => { void this.rediscover(); }, config.rediscoverMs);
   }
 
   stop(): void {
     if (this.timer) clearInterval(this.timer);
     if (this.persistTimer) clearInterval(this.persistTimer);
+    if (this.rediscoverTimer) clearInterval(this.rediscoverTimer);
     this.persist();
     REFERENCE.stop();
     this.store.close();
+  }
+
+  /** Periodically re-run each adapter's discover() so mid-run or missed pool
+   *  state self-heals from its authoritative source (review #2). Adapters merge
+   *  (never wipe) their cache, so a transient failure here is harmless. */
+  private async rediscover(): Promise<void> {
+    for (const a of ADAPTERS) {
+      try { await a.discover(this.ctx); }
+      catch (e) { this.noteOnce(`${a.venues()[0]?.name ?? 'venue'} re-discovery failed: ${(e as Error).message}`); }
+    }
   }
 
   getState(): MarketState {
@@ -147,7 +160,15 @@ export class LiveDataSource extends BaseSource {
         this.notes.push(`${a.venues()[0]?.name ?? 'venue'} backfill unavailable (${(e as Error).message}); history grows forward`);
       }
     }
-    if (seededFills.length) this.store.upsertFills(seededFills);
+    if (seededFills.length) {
+      this.store.upsertFills(seededFills);
+      // Backfill-fills markout contract (review #3): only a fill whose horizons are
+      // still in the FUTURE may be aged against the live mid. Historical closed-day
+      // fills (horizons elapsed) are NOT queued — their markouts stay as the adapter
+      // supplied them (typically null), so they're tape-visible but excluded from
+      // markout/leaderboard stats (never fabricated from a much-later mid).
+      for (const f of seededFills) if (this.hasFutureMarkoutHorizon(f, bootMs)) this.pending.add(f);
+    }
     if (seeded) this.notes.push(`seeded ${seeded} closed day-row(s) from adapter backfill; on-chain-only venues accumulate forward`);
     this.days.sort((a, b) => (a.utcDay < b.utcDay ? -1 : 1));
     this.today(); // ensure today's partial bucket, rolling any stale "today" closed
@@ -281,7 +302,8 @@ export class LiveDataSource extends BaseSource {
           all.push(...logs);
         } catch {
           bundle[s.key] = [];
-          if (!s.optional) {
+          // 'fills' + 'state' sources hold the cursor; only 'attribution' is tolerated.
+          if (s.kind !== 'attribution') {
             requiredFailed = true;
             this.noteOnce(`${a.venues()[0]?.name ?? 'venue'} log source '${s.key}' failed — holding cursor, retrying`);
           }
@@ -289,6 +311,13 @@ export class LiveDataSource extends BaseSource {
       }));
       return { a, bundle, all };
     }));
+
+    // ATOMIC (review #1): if any required (fills/state) source failed, skip the
+    // ENTIRE cycle — do NOT resolve timestamps, decode, mutate adapter state,
+    // ingest, emit, or advance the cursor. The identical range is re-tailed next
+    // cycle once every required source is back, so a fill is never partially
+    // decoded, and dedupe (countedIds) is never relied on across a held range.
+    if (requiredFailed) return;
 
     // resolve block timestamps once for every block that carries a log (audit B2).
     const blocks = new Set<bigint>();
@@ -302,9 +331,8 @@ export class LiveDataSource extends BaseSource {
       catch (e) { this.noteOnce(`${a.venues()[0]?.name ?? 'venue'} decode error: ${(e as Error).message}`); }
     }
 
-    // Advance the cursor ONLY if every required source succeeded — else leave it,
-    // so this range is re-tailed next cycle (fills dedupe by id, no re-count).
-    if (!requiredFailed) this.lastBlock = head;
+    // every required source succeeded → advance the cursor and ingest.
+    this.lastBlock = head;
     fresh.sort((a, b) => a.blockNumber - b.blockNumber);
     for (const f of fresh) this.ingest(f);
   }

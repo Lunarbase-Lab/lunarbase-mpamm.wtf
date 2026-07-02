@@ -375,8 +375,10 @@ export function createCloberVaultAdapter(): VenueAdapter {
         ctx.log('Clober Vault: subgraph discovery failed; trying recent Open logs');
         try { disc = await discoverClober(ctx.client, ctx.getLogs, 2000); } catch { disc = { books: new Map(), markets: [], vault: new Set() }; }
       }
-      vault = disc.vault;
-      books = new Map([...disc.books].filter(([, b]) => b.isVault));   // keep only vault books
+      // MERGE (don't replace): a periodic re-discovery can only ADD/refresh vault
+      // books, never wipe the cache on a transient subgraph/RPC failure (review #2).
+      for (const id of disc.vault) vault.add(id);
+      for (const [id, b] of disc.books) if (b.isVault) books.set(id, b);
       markets = assembleCloberMarkets(books);
     },
     async backfill(ctx: AdapterContext, sinceUtc: string) {
@@ -389,14 +391,15 @@ export function createCloberVaultAdapter(): VenueAdapter {
       return quoteClober(ctx.client, markets, sizesUsd, ctx.referenceMid(), ctx.pricer);
     },
     logSources() {
-      // 'take' is the fill-producing source (required — a fetch failure holds the
-      // cursor); router/opens are auxiliary (attribution + new-book discovery) and
-      // tolerated on failure (review #1).
       return [
-        { key: 'take', address: ADDR.bookManager as `0x${string}`, events: [ev(bookManagerAbi, 'Take')] },
-        { key: 'router', address: ADDR.routerGateway as `0x${string}`, events: [ev(routerGatewayAbi, 'Swap')], optional: true },
-        { key: 'bmOpen', address: ADDR.bookManager as `0x${string}`, events: [ev(bookManagerAbi, 'Open')], optional: true },
-        { key: 'vaultOpen', address: ADDR.liquidityVault as `0x${string}`, events: [ev(liquidityVaultAbi, 'Open')], optional: true },
+        { key: 'take', address: ADDR.bookManager as `0x${string}`, events: [ev(bookManagerAbi, 'Take')], kind: 'fills' as const },
+        // Opens are decoding STATE — a missed vault-book Open makes that book's later
+        // Takes undecodable, so an Opens fetch failure HOLDS the cursor (review #2),
+        // it is not tolerated as mere decoration.
+        { key: 'bmOpen', address: ADDR.bookManager as `0x${string}`, events: [ev(bookManagerAbi, 'Open')], kind: 'state' as const },
+        { key: 'vaultOpen', address: ADDR.liquidityVault as `0x${string}`, events: [ev(liquidityVaultAbi, 'Open')], kind: 'state' as const },
+        // router tags are attribution only — a Take still decodes (as DIRECT) without them.
+        { key: 'router', address: ADDR.routerGateway as `0x${string}`, events: [ev(routerGatewayAbi, 'Swap')], kind: 'attribution' as const },
       ];
     },
     decode(_ctx: AdapterContext, logs: LogBundle, tsOf) {

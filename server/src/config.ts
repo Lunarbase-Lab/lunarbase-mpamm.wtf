@@ -48,6 +48,9 @@ export const config = {
   seedSinceUtc: env.SEED_SINCE_UTC ?? HISTORY_START_UTC,
   /** Snapshot persistence cadence (ms). */
   persistMs: num('PERSIST_MS', 5000),
+  /** Periodic re-discovery cadence (ms) — re-runs each adapter's discover() so
+   *  mid-run/missed pool state self-heals from its authoritative source. */
+  rediscoverMs: num('REDISCOVER_MS', 600_000),
   /** Max same-day gap to fill from getLogs on restart (else start at tip). */
   gapFillMaxBlocks: num('GAPFILL_MAX_BLOCKS', 200000),
   /** Decoded fills are persisted; rows older than this are pruned. The
