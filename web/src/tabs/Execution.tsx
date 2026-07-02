@@ -156,11 +156,10 @@ export function ExecutionTab() {
                 <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
                   <span style={{ width: 8, height: 8, borderRadius: 2, background: r.color, flex: 'none' }} />
                   <span style={{ color: C.text2, whiteSpace: 'nowrap' }}>{r.name === 'Vault' ? VAULT_LABEL : r.name}</span>
-                  {r.oneSided
-                    ? <span title="only one side is executable at this size — the other is thin / far-tick backstop" style={{ fontSize: 7.5, color: C.amber, border: `1px solid color-mix(in srgb, var(--amber) 45%, transparent)`, borderRadius: 3, padding: '0 3px', letterSpacing: '.04em' }}>1-SIDED</span>
-                    : !r.full
-                      ? <span title="liquidity exhausts before the full notional — the price shown is for a partial fill, not executable at the full size" style={{ fontSize: 7.5, color: C.amber, border: `1px solid color-mix(in srgb, var(--amber) 45%, transparent)`, borderRadius: 3, padding: '0 3px', letterSpacing: '.04em' }}>PARTIAL</span>
-                      : <span style={{ fontSize: 9, color: r.name === tight ? C.green : 'transparent' }}>★</span>}
+                  {/* one-sided venues need no badge — the n/a bid/ask already shows it */}
+                  {!r.full
+                    ? <span title="liquidity exhausts before the full notional — the price shown is for a partial fill, not executable at the full size" style={{ fontSize: 7.5, color: C.amber, border: `1px solid color-mix(in srgb, var(--amber) 45%, transparent)`, borderRadius: 3, padding: '0 3px', letterSpacing: '.04em' }}>PARTIAL</span>
+                    : <span style={{ fontSize: 9, color: r.name === tight ? C.green : 'transparent' }}>★</span>}
                 </div>
                 <div style={{ textAlign: 'right', color: r.oneSided || !r.full ? C.faint2 : r.name === tight ? C.green : C.text, fontWeight: 600 }}>{r.oneSided ? '—' : r.spread.toFixed(2)}</div>
                 <div style={{ textAlign: 'right', color: r.hasBid ? C.red : C.faint2 }}>{r.hasBid ? sgn(r.bid) : 'n/a'}</div>
