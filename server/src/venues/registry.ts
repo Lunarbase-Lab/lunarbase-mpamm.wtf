@@ -2,6 +2,7 @@ import type { VenueMeta } from '@shared';
 import type { VenueAdapter, ReferenceAdapter } from './adapter.js';
 import { createLfjAdapter } from './lfj.js';
 import { createCloberVaultAdapter } from './clober.js';
+import { createMetricAdapter } from './metric.js';
 import { createBybitReference } from './bybit-reference.js';
 
 /**
@@ -15,6 +16,7 @@ import { createBybitReference } from './bybit-reference.js';
 export const ADAPTERS: VenueAdapter[] = [
   createLfjAdapter(),
   createCloberVaultAdapter(),
+  createMetricAdapter(),
 ];
 
 /** The single CEX reference (markout + Execution benchmark). Exactly one. */
