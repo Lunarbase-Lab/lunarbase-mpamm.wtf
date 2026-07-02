@@ -164,6 +164,16 @@ export class VolumeStore {
     return rows.map(rowToFill);
   }
 
+  /** Exact retained fill counts by UTC day and venue, with no API/query cap. */
+  fillCountsByDayVenue(): Array<{ utcDay: string; venueId: string; swaps: number }> {
+    const rows = this.db.prepare(`
+      SELECT date(ts / 1000, 'unixepoch') AS utc_day, venue_id, COUNT(*) AS swaps
+      FROM fills
+      GROUP BY utc_day, venue_id
+    `).all() as Array<Record<string, any>>;
+    return rows.map((r) => ({ utcDay: r.utc_day, venueId: r.venue_id, swaps: Number(r.swaps) }));
+  }
+
   /** Drop fills older than `beforeMs` (retention). Returns rows removed. */
   pruneFills(beforeMs: number): number {
     const info = this.db.prepare(`DELETE FROM fills WHERE ts < ?`).run(beforeMs);

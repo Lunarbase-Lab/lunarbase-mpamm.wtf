@@ -33,11 +33,13 @@ export async function discoverLfj(client: PublicClient): Promise<LbMarket[]> {
     args: [WMON.address, s.address] as const,
   }));
   const res = await client.multicall({ contracts: calls, allowFailure: true });
+  for (let i = 0; i < res.length; i++) {
+    if (res[i].status !== 'success') throw new Error(`LFJ pair discovery failed for ${WMON.symbol}/${stables[i].symbol}`);
+  }
 
   const out: LbMarket[] = [];
   for (let i = 0; i < stables.length; i++) {
     const r = res[i];
-    if (r.status !== 'success') continue;
     const infos = r.result as ReadonlyArray<{ binStep: number; LBPair: `0x${string}`; ignoredForRouting: boolean }>;
     const usable = infos.filter((p) => !p.ignoredForRouting && p.LBPair !== '0x0000000000000000000000000000000000000000');
     if (!usable.length) continue;
@@ -60,10 +62,12 @@ export async function discoverLfj(client: PublicClient): Promise<LbMarket[]> {
   ]);
   const tok = await client.multicall({ contracts: tokCalls, allowFailure: true });
   for (let i = 0; i < out.length; i++) {
-    const x = tok[i * 2], _y = tok[i * 2 + 1];
-    if (x.status === 'success') {
-      out[i].monIsX = (x.result as string).toLowerCase() === WMON.address.toLowerCase();
-    }
+    const x = tok[i * 2], y = tok[i * 2 + 1];
+    if (x.status !== 'success' || y.status !== 'success') throw new Error(`LFJ token-order discovery failed for ${out[i].pair}`);
+    const xAddr = (x.result as string).toLowerCase();
+    const yAddr = (y.result as string).toLowerCase();
+    if (xAddr !== WMON.address.toLowerCase() && yAddr !== WMON.address.toLowerCase()) throw new Error(`LFJ pair ${out[i].pair} is not a WMON pair`);
+    out[i].monIsX = xAddr === WMON.address.toLowerCase();
   }
   return out;
 }
@@ -212,6 +216,7 @@ const ev = (abi: readonly unknown[], name: string) => abi.find((x: any) => x.typ
 export function createLfjAdapter(): VenueAdapter {
   const byMarket = new Map<string, LbMarket>(); // current pick per market — source of truth for tailing
   const byAddr = new Map<string, LbMarket>();   // accumulates every pair seen — for decode lookups
+  let discovered = false;
   return {
     venues: () => [LFJ_VENUE],
     async discover(ctx: AdapterContext) {
@@ -222,12 +227,14 @@ export function createLfjAdapter(): VenueAdapter {
       // drop an address a concurrent tail may still decode against.
       const found = await discoverLfj(ctx.client);
       for (const m of found) { byMarket.set(m.market, m); byAddr.set(m.pair.toLowerCase(), m); }
+      discovered = true;
       ctx.log(`LFJ: ${byMarket.size} market(s)`);
     },
     quote(ctx, sizesUsd) {
       return quoteLfj(ctx.client, [...byMarket.values()], sizesUsd, ctx.referenceMid(), ctx.pricer);
     },
     logSources() {
+      if (!discovered) throw new Error('LFJ discovery unavailable');
       const pairs = [...byMarket.values()].map((m) => m.pair);
       if (!pairs.length) return [];
       return [{ key: 'swap', address: pairs, events: [ev(lbPairAbi, 'Swap')], kind: 'fills' as const }];

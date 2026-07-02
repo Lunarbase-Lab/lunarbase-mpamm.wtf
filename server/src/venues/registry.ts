@@ -38,6 +38,10 @@ export function venueIds(): Set<string> {
  */
 export function validateRegistry(): void {
   const metas = venueMeta();
+  const adapterRefs = ADAPTERS.flatMap((a) => a.venues()).filter((v) => v.role === 'reference');
+  if (adapterRefs.length) {
+    throw new Error(`venue registry: adapter venue '${adapterRefs[0].id}' has role 'reference' — use REFERENCE for the single CEX benchmark`);
+  }
   const seen = new Set<string>();
   for (const v of metas) {
     if (!v.id || !/^[a-z0-9][a-z0-9-]*$/.test(v.id)) {
@@ -46,5 +50,6 @@ export function validateRegistry(): void {
     if (seen.has(v.id)) throw new Error(`venue registry: duplicate venue id '${v.id}' — ids must be unique across every adapter + the reference`);
     seen.add(v.id);
   }
-  if (!metas.some((v) => v.role === 'reference')) throw new Error('venue registry: no reference (CEX) venue registered');
+  const refs = metas.filter((v) => v.role === 'reference');
+  if (refs.length !== 1) throw new Error(`venue registry: expected exactly one reference (CEX) venue, found ${refs.length}`);
 }

@@ -52,9 +52,10 @@ export function startServer(source: DataSource): Server {
   app.get('/api/quotes', (_req, res) => res.json(source.getQuotes()));
   app.get('/api/fills', (req, res) => {
     // ?days=N → last N days (from the persisted store); ?limit caps the count.
-    const days = Number(req.query.days);
-    const sinceMs = Number.isFinite(days) && days > 0 ? Date.now() - days * 86_400_000 : undefined;
-    const limit = Math.min(Number(req.query.limit) || 1000, 50_000);
+    const days = positiveNumberParam(req.query.days);
+    const sinceMs = days === undefined ? undefined : Date.now() - days * 86_400_000;
+    const requestedLimit = positiveNumberParam(req.query.limit);
+    const limit = Math.min(Math.floor(requestedLimit ?? 1000), 50_000);
     res.json(source.queryFills({ sinceMs, limit }));
   });
   app.get('/api/volume', (req, res) => {
@@ -124,4 +125,11 @@ export function startServer(source: DataSource): Server {
 
 function safeSend(ws: WebSocket, m: StreamMessage): void {
   if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(m));
+}
+
+function positiveNumberParam(v: unknown): number | undefined {
+  const raw = Array.isArray(v) ? v[0] : v;
+  if (typeof raw !== 'string' || raw.trim() === '') return undefined;
+  const n = Number(raw);
+  return Number.isFinite(n) && n > 0 ? n : undefined;
 }

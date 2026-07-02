@@ -30,6 +30,7 @@ const ev = (abi: readonly unknown[], name: string) => abi.find((x: any) => x.typ
 export function createTemplateAdapter(): VenueAdapter {
   // adapter-private state (discovered markets/pools/books). Held on the closure.
   let markets: unknown[] = [];
+  let discovered = false;
 
   return {
     venues: () => [MY_VENUE],
@@ -39,6 +40,7 @@ export function createTemplateAdapter(): VenueAdapter {
     async discover(ctx: AdapterContext) {
       // markets = await ctx.client.readContract({ ... });   // on-chain
       // markets = (await (await fetch(ctx.config.subgraphUrl, { ... })).json()).data.pools;  // subgraph
+      discovered = true;
       ctx.log(`${MY_VENUE.name}: discovered ${markets.length} market(s)`);
     },
 
@@ -68,17 +70,20 @@ export function createTemplateAdapter(): VenueAdapter {
     // Declare the contract logs the core fetches each cycle (read AFTER discover,
     // so pool addresses are known). `events` are viem AbiEvent objects. The core
     // getLogs's these over the new block range and returns them to decode() by key.
+    // If discovery is required to enumerate fill/state sources, throw while it is
+    // unavailable. Returning [] means "there are genuinely no logs to tail".
     // Classify each source with `kind` (governs failure handling): 'fills' (default)
     // + 'state' HOLD the cursor on failure — the whole cycle retries, so no fill is
     // lost or left undecodable; 'attribution' is tolerated (cursor advances; the
     // affected fill carries a degraded label instead of being dropped).
     logSources() {
+      // if (!discovered) throw new Error(`${MY_VENUE.name} discovery unavailable`);
       // return [
       //   { key: 'swap',   address: MY_POOL_ADDRESS, events: [ev(myAbi, 'Swap')], kind: 'fills' },
       //   { key: 'open',   address: MY_FACTORY,      events: [ev(myAbi, 'PoolCreated')], kind: 'state' },
       //   { key: 'router', address: ROUTER_ADDRESS,  events: [ev(routerAbi, 'Swap')], kind: 'attribution' },
       // ];
-      void ev;
+      void ev; void discovered;
       return [];
     },
 
@@ -88,6 +93,8 @@ export function createTemplateAdapter(): VenueAdapter {
     // `failedSources` holds the keys of any 'attribution' sources that failed this
     // cycle — use it to avoid a confident label (e.g. category 'UNKNOWN' instead of
     // 'DIRECT' when your router/attribution source was unavailable).
+    // Throw only when the whole range is unsafe to advance; the core will hold the
+    // cursor and retry. Catch and skip individual malformed/irrelevant logs locally.
     decode(_ctx: AdapterContext, logs: LogBundle, tsOf: (bn: bigint) => number, _failedSources: Set<string>): Fill[] {
       const out: Fill[] = [];
       for (const l of logs.swap ?? []) {

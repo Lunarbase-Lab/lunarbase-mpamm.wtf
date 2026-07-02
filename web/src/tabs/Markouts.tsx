@@ -10,9 +10,9 @@ const TAPE_GRID = '78px 78px 84px 84px 64px 92px 80px 88px 46px 80px 80px 52px 5
 const OUT_GRID = '84px 88px 96px 56px 100px 110px 120px 1fr 1fr';
 
 // CATEGORY colour — a fill's routing class, coloured from stable semantic/theme
-// tokens (never a venue color): ROUTER→amber, CEX/DEX→link, AGG→accent, DIRECT→faint.
+// tokens (never a venue color): UNKNOWN/ROUTER→amber, CEX/DEX→link, AGG→accent, DIRECT→faint.
 function catColor(c: string): string {
-  return c === 'ROUTER' ? C.amber : c === 'CEX/DEX' ? C.link : c === 'AGG' ? C.accent : C.faint2;
+  return c === 'UNKNOWN' || c === 'ROUTER' ? C.amber : c === 'CEX/DEX' ? C.link : c === 'AGG' ? C.accent : C.faint2;
 }
 /** category display — DIRECT renders as an em dash. */
 function catLabel(c: string): string {

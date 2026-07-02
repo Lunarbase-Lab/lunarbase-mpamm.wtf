@@ -18,7 +18,9 @@ async function gql(url: string, query: string): Promise<any> {
     signal: AbortSignal.timeout(15_000),
   });
   if (!res.ok) throw new Error(`subgraph ${res.status}`);
-  return res.json();
+  const j: any = await res.json();
+  if (Array.isArray(j?.errors) && j.errors.length) throw new Error(`subgraph GraphQL error: ${j.errors[0]?.message ?? 'unknown'}`);
+  return j;
 }
 
 /** Sum BookDayData.volumeUSD by UTC day for a specific set of books (the
@@ -28,13 +30,17 @@ async function sumBookDayData(url: string, bookIds: string[], sinceTs: number): 
   if (!bookIds.length) return byDay;
   const idset = bookIds.map((i) => `"${i}"`).join(',');
   let skip = 0;
-  for (let page = 0; page < 8; page++) {
+  let pages = 0;
+  for (;;) {
+    if (++pages > 1000) throw new Error('subgraph pagination exceeded safety cap for bookDayDatas');
     const j = await gql(url, `{ bookDayDatas(first: 1000, skip: ${skip}, orderBy: date, orderDirection: asc, where: { book_in: [${idset}], date_gte: ${sinceTs} }) { date volumeUSD } }`);
     const arr: Array<{ date: number; volumeUSD: string }> | undefined = j?.data?.bookDayDatas;
-    if (!Array.isArray(arr)) break;
+    if (!Array.isArray(arr)) throw new Error('subgraph response missing bookDayDatas');
     for (const r of arr) {
+      const usd = Number(r.volumeUSD);
+      if (!Number.isFinite(usd)) throw new Error(`subgraph response has invalid volumeUSD for date ${r.date}`);
       const day = new Date(r.date * 1000).toISOString().slice(0, 10);
-      byDay.set(day, (byDay.get(day) ?? 0) + Number(r.volumeUSD || 0));
+      byDay.set(day, (byDay.get(day) ?? 0) + usd);
     }
     if (arr.length < 1000) break;
     skip += 1000;

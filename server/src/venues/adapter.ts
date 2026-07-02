@@ -71,14 +71,19 @@ export interface VenueAdapter {
   backfill?(ctx: AdapterContext, sinceUtc: string): Promise<AdapterBackfill>;
   /** optional live bid/ask per market×size for the Execution tab. */
   quote?(ctx: AdapterContext, sizesUsd: readonly number[]): Promise<QuoteRow[]>;
-  /** the contract logs the core should fetch each cycle (read after `discover`). */
+  /** the contract logs the core should fetch each cycle (read after `discover`).
+   *  If discovery is required to enumerate fill/state sources and is not ready,
+   *  throw here so the core holds the cursor instead of tailing an incomplete
+   *  source set. Returning [] means there are genuinely no logs to tail. */
   logSources(): LogSource[];
   /** decode this adapter's fetched logs into normalized fills. Owns any
    *  venue-specific correlation (router maps, mid-run pool discovery, filtering).
    *  `failedSources` holds the keys of any `'attribution'` sources whose fetch
    *  failed this cycle (required-source failures never reach decode — the cycle is
    *  skipped). Use it to avoid a confident label when attribution is unavailable
-   *  (e.g. tag a fill `UNKNOWN` instead of `DIRECT`). */
+   *  (e.g. tag a fill `UNKNOWN` instead of `DIRECT`). If this method throws, the
+   *  core holds the cursor and retries the whole range; catch and skip individual
+   *  malformed/irrelevant logs locally. */
   decode(ctx: AdapterContext, logs: LogBundle, tsOf: (bn: bigint) => number, failedSources: Set<string>): Fill[] | Promise<Fill[]>;
 }
 

@@ -52,6 +52,7 @@ export class LiveDataSource extends BaseSource {
   private timer?: ReturnType<typeof setInterval>;
   private persistTimer?: ReturnType<typeof setInterval>;
   private rediscoverTimer?: ReturnType<typeof setInterval>;
+  private tickRunning = false;
   private notes: string[] = [];
   private block = 0;
   /** all registered venue ids — a fill/quote carrying an unknown id is dropped
@@ -229,10 +230,9 @@ export class LiveDataSource extends BaseSource {
    */
   private reconcileSwapCounts(): void {
     const byDay = new Map<string, Map<string, number>>();
-    for (const f of this.store.fillsSince(0, 50_000)) {
-      const day = utcDay(f.ts);
-      let m = byDay.get(day); if (!m) { m = new Map(); byDay.set(day, m); }
-      m.set(f.venueId, (m.get(f.venueId) ?? 0) + 1);
+    for (const c of this.store.fillCountsByDayVenue()) {
+      let m = byDay.get(c.utcDay); if (!m) { m = new Map(); byDay.set(c.utcDay, m); }
+      m.set(c.venueId, c.swaps);
     }
     for (const d of this.days) {
       const m = byDay.get(d.utcDay);
@@ -245,15 +245,23 @@ export class LiveDataSource extends BaseSource {
 
   /** Historical fills from the DB (the leaderboard/markouts query real windows). */
   queryFills(opts: { sinceMs?: number; limit?: number }): Fill[] {
-    return this.store.fillsSince(opts.sinceMs ?? 0, Math.min(opts.limit ?? 1000, 50_000));
+    const sinceMs = typeof opts.sinceMs === 'number' && Number.isFinite(opts.sinceMs) && opts.sinceMs > 0 ? opts.sinceMs : 0;
+    const rawLimit = typeof opts.limit === 'number' && Number.isFinite(opts.limit) && opts.limit > 0 ? opts.limit : 1000;
+    return this.store.fillsSince(sinceMs, Math.min(Math.floor(rawLimit), 50_000));
   }
 
   // ── poll loop ───────────────────────────────────────────────────────────────
   private async tick(): Promise<void> {
-    try { await this.poll(); } catch { /* keep ticking */ }
-    try { await this.tailFills(); } catch { /* tolerate */ }
-    this.ageMarkouts();
-    this.emitMsg({ ch: 'volume', data: this.cloneDay(this.today()) });
+    if (this.tickRunning) return;
+    this.tickRunning = true;
+    try {
+      try { await this.poll(); } catch { /* keep ticking */ }
+      try { await this.tailFills(); } catch (e) { this.noteOnce(`tail failed — holding cursor, retrying: ${(e as Error).message}`); }
+      this.ageMarkouts();
+      this.emitMsg({ ch: 'volume', data: this.cloneDay(this.today()) });
+    } finally {
+      this.tickRunning = false;
+    }
   }
 
   private async poll(): Promise<void> {
@@ -289,8 +297,8 @@ export class LiveDataSource extends BaseSource {
     // Fetch every adapter's declared log sources into a per-adapter bundle. Track
     // whether any REQUIRED (fill-producing) source failed: if so we must NOT
     // advance the cursor, or a transient RPC error would look like "no logs" and
-    // silently lose those fills forever (review #1). Optional (auxiliary) sources
-    // — router attribution, mid-run pool discovery — are tolerated on failure.
+    // silently lose those fills forever (review #1). Only attribution sources
+    // are tolerated on failure; state/discovery sources are cursor-critical.
     let requiredFailed = false;
     const perAdapter = await Promise.all(ADAPTERS.map(async (a) => {
       const bundle: LogBundle = {};
@@ -318,20 +326,37 @@ export class LiveDataSource extends BaseSource {
     // ENTIRE cycle — do NOT resolve timestamps, decode, mutate adapter state,
     // ingest, emit, or advance the cursor. The identical range is re-tailed next
     // cycle once every required source is back, so a fill is never partially
-    // decoded, and dedupe (countedIds) is never relied on across a held range.
+    // decoded, and dedupe (countedIds) is not relied on across a held range.
     if (requiredFailed) return;
 
     // resolve block timestamps once for every block that carries a log (audit B2).
     const blocks = new Set<bigint>();
     for (const { all } of perAdapter) for (const l of all) blocks.add(l.blockNumber);
-    const blockTs = await this.blockTimes(blocks);
-    const tsOf = (bn: bigint) => blockTs.get(String(bn)) ?? Date.now();
+    let blockTs: Map<string, number>;
+    try {
+      blockTs = await this.blockTimes(blocks);
+    } catch (e) {
+      this.noteOnce(`block timestamp lookup failed — holding cursor, retrying: ${(e as Error).message}`);
+      return;
+    }
+    const tsOf = (bn: bigint) => {
+      const ts = blockTs.get(String(bn));
+      if (ts == null) throw new Error(`missing block timestamp for ${bn}`);
+      return ts;
+    };
 
     const fresh: Fill[] = [];
+    let decodeFailed = false;
     for (const { a, bundle, failed } of perAdapter) {
       try { fresh.push(...this.ownVenues(a, await a.decode(this.ctx, bundle, tsOf, failed), 'fill')); }
-      catch (e) { this.noteOnce(`${a.venues()[0]?.name ?? 'venue'} decode error: ${(e as Error).message}`); }
+      catch (e) {
+        decodeFailed = true;
+        this.noteOnce(`${a.venues()[0]?.name ?? 'venue'} decode error — holding cursor, retrying: ${(e as Error).message}`);
+      }
     }
+    // Decode is cursor-critical too: if an adapter cannot decode this range, do
+    // not count any fills from it and do not advance. The exact range is retried.
+    if (decodeFailed) return;
 
     // every required source succeeded → advance the cursor and ingest.
     this.lastBlock = head;
@@ -343,7 +368,8 @@ export class LiveDataSource extends BaseSource {
   private async blockTimes(blocks: Set<bigint>): Promise<Map<string, number>> {
     const m = new Map<string, number>();
     await Promise.all([...blocks].map(async (bn) => {
-      try { const b = await publicClient.getBlock({ blockNumber: bn }); m.set(String(bn), Number(b.timestamp) * 1000); } catch { /* fall back to now */ }
+      const b = await publicClient.getBlock({ blockNumber: bn });
+      m.set(String(bn), Number(b.timestamp) * 1000);
     }));
     return m;
   }

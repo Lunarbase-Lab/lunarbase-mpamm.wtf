@@ -33,7 +33,9 @@ export abstract class BaseSource extends EventEmitter implements DataSource {
 
   /** Default: filter the in-memory window. Live overrides with a DB query. */
   queryFills(opts: { sinceMs?: number; limit?: number }): Fill[] {
-    const { sinceMs, limit = 1000 } = opts;
+    const sinceMs = typeof opts.sinceMs === 'number' && Number.isFinite(opts.sinceMs) && opts.sinceMs > 0 ? opts.sinceMs : undefined;
+    const rawLimit = typeof opts.limit === 'number' && Number.isFinite(opts.limit) && opts.limit > 0 ? opts.limit : 1000;
+    const limit = Math.min(Math.floor(rawLimit), 50_000);
     let fills = this.getFills();
     if (sinceMs != null) fills = fills.filter((f) => f.ts >= sinceMs);
     return [...fills].sort((a, b) => b.ts - a.ts).slice(0, limit);

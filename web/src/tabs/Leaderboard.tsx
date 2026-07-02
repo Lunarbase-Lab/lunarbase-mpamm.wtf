@@ -10,9 +10,9 @@ const DAY = 86_400_000;
 const WIN_MS: Record<string, number> = { '24H': DAY, '7D': 7 * DAY, '30D': 30 * DAY };
 
 // CATEGORY colour (DCLogic.catCol) from stable semantic/theme tokens (never a
-// venue color). The contract's 'DIRECT' maps to the design's '—' faint default.
+// venue color). UNKNOWN is highlighted because attribution was unavailable.
 function catCol(c: string): string {
-  return c === 'ROUTER' ? C.amber : c === 'CEX/DEX' ? C.link : c === 'AGG' ? C.accent : C.faint2;
+  return c === 'UNKNOWN' || c === 'ROUTER' ? C.amber : c === 'CEX/DEX' ? C.link : c === 'AGG' ? C.accent : C.faint2;
 }
 // display label for a fill category — DIRECT renders as the em-dash.
 function catLabel(c: string): string {

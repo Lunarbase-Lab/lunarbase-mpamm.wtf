@@ -53,6 +53,8 @@ const tokenBySym = (sym: string) => TOKENS[sym];
 const symByAddr = (addr: string): string | undefined =>
   Object.values(TOKENS).find((t) => t.address.toLowerCase() === addr.toLowerCase())?.symbol;
 
+type CloberSubgraphBookRow = { id: string; unitSize: string; base: { id: string }; quote: { id: string }; pool: { id: string } | null };
+
 /** Assemble MON/stable markets from a book cache, preferring the vault book per
  *  direction so venue attribution + quoting are consistent across every
  *  discovery path and live merge. */
@@ -74,10 +76,13 @@ export function assembleCloberMarkets(books: Map<string, CloberBook>): CloberMar
 export function cloberBookFromOpen(a: any, vault: Set<string>): CloberBook | null {
   const base = String(a.base).toLowerCase(), quote = String(a.quote).toLowerCase();
   if (isMonAddress(base) === isMonAddress(quote)) return null;
+  const baseSym = symByAddr(base), quoteSym = symByAddr(quote);
+  const stableSym = isMonAddress(base) ? quoteSym : baseSym;
+  if (!stableSym || !TOKENS[stableSym]?.stable) return null;
   const id = String(a.id);
   return {
     bookId: BigInt(a.id), base, quote, unitSize: BigInt(a.unitSize),
-    baseSym: symByAddr(base), quoteSym: symByAddr(quote), isVault: vault.has(id),
+    baseSym, quoteSym, isVault: vault.has(id),
   };
 }
 
@@ -107,16 +112,9 @@ export async function discoverClober(client: PublicClient, getLogs: AdapterConte
     })) as any[];
     for (const l of opens) {
       const a = l.args; if (!a) continue;
-      const base = String(a.base).toLowerCase(), quote = String(a.quote).toLowerCase();
-      // keep exactly MON/stable books — else arbitrary Takes get mispriced as
-      // MON/USDC volume when this fallback feeds decodeCloberTake (audit C1).
-      if (isMonAddress(base) === isMonAddress(quote)) continue;
       const id = String(a.id);
-      books.set(id, {
-        bookId: BigInt(a.id), base, quote,
-        unitSize: BigInt(a.unitSize), baseSym: symByAddr(base), quoteSym: symByAddr(quote),
-        isVault: vault.has(id),
-      });
+      const b = cloberBookFromOpen(a, vault);
+      if (b) books.set(id, b);
     }
   } catch { /* tolerate */ }
 
@@ -135,32 +133,94 @@ export async function discoverCloberViaSubgraph(
   url: string,
 ): Promise<{ books: Map<string, CloberBook>; markets: CloberMarket[]; vault: Set<string> }> {
   const addrs = Object.values(TOKENS).map((t) => `"${t.address.toLowerCase()}"`).join(',');
-  const query = `{ books(first: 500, where: { base_in: [${addrs}], quote_in: [${addrs}] }) { id unitSize base { id } quote { id } pool { id } } }`;
-  const res = await fetch(url, {
-    method: 'POST', headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ query }), signal: AbortSignal.timeout(15_000),
-  });
-  if (!res.ok) throw new Error(`subgraph ${res.status}`);
-  const j: any = await res.json();
-  const rows: Array<{ id: string; unitSize: string; base: { id: string }; quote: { id: string }; pool: { id: string } | null }> = j?.data?.books ?? [];
+  const rows: CloberSubgraphBookRow[] = [];
+  for (let skip = 0; ; skip += 500) {
+    const query = `{ books(first: 500, skip: ${skip}, orderBy: id, orderDirection: asc, where: { base_in: [${addrs}], quote_in: [${addrs}] }) { id unitSize base { id } quote { id } pool { id } } }`;
+    const res = await fetch(url, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ query }), signal: AbortSignal.timeout(15_000),
+    });
+    if (!res.ok) throw new Error(`subgraph ${res.status}`);
+    const j: any = await res.json();
+    if (Array.isArray(j?.errors) && j.errors.length) throw new Error(`subgraph GraphQL error: ${j.errors[0]?.message ?? 'unknown'}`);
+    const page = j?.data?.books as CloberSubgraphBookRow[] | undefined;
+    if (!Array.isArray(page)) throw new Error('subgraph response missing books');
+    rows.push(...page);
+    if (page.length < 500) break;
+  }
 
   const books = new Map<string, CloberBook>();
   const vault = new Set<string>();
   for (const r of rows) {
-    const base = String(r.base.id).toLowerCase();
-    const quote = String(r.quote.id).toLowerCase();
-    // keep exactly MON/stable: one side MON (WMON or native), the other a stable
-    if (isMonAddress(base) === isMonAddress(quote)) continue;
-    const id = String(BigInt(r.id));
-    const isVault = !!r.pool;
-    if (isVault) vault.add(id);
-    books.set(id, {
-      bookId: BigInt(r.id), base, quote, unitSize: BigInt(r.unitSize),
-      baseSym: symByAddr(base), quoteSym: symByAddr(quote), isVault,
-    });
+    const { id, book, isVault } = parseSubgraphBook(r);
+    if (book) books.set(id, book);
+    if (book && isVault) vault.add(id);
   }
 
   return { books, markets: assembleCloberMarkets(books), vault };
+}
+
+/** Resolve specific vault book ids when a live Vault.Open did not arrive with
+ *  its BookManager.Open. This distinguishes out-of-scope vault books from
+ *  MON/stable books without silently dropping a fill. */
+export async function discoverCloberBooksById(
+  url: string,
+  ids: string[],
+): Promise<{ books: Map<string, CloberBook>; ignored: Set<string>; missing: Set<string> }> {
+  const unique = [...new Set(ids)];
+  if (!unique.length) return { books: new Map(), ignored: new Set(), missing: new Set() };
+  for (const id of unique) if (!/^\d+$/.test(id)) throw new Error(`invalid Clober book id ${id}`);
+
+  const books = new Map<string, CloberBook>();
+  const ignored = new Set<string>();
+  const missing = new Set(unique);
+  for (let i = 0; i < unique.length; i += 500) {
+    const batch = unique.slice(i, i + 500);
+    const idset = batch.map((id) => `"${id}"`).join(',');
+    const query = `{ books(first: ${batch.length}, where: { id_in: [${idset}] }) { id unitSize base { id } quote { id } pool { id } } }`;
+    const res = await fetch(url, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ query }), signal: AbortSignal.timeout(15_000),
+    });
+    if (!res.ok) throw new Error(`subgraph ${res.status}`);
+    const j: any = await res.json();
+    if (Array.isArray(j?.errors) && j.errors.length) throw new Error(`subgraph GraphQL error: ${j.errors[0]?.message ?? 'unknown'}`);
+    const rows = j?.data?.books as CloberSubgraphBookRow[] | undefined;
+    if (!Array.isArray(rows)) throw new Error('subgraph response missing books');
+
+    for (const r of rows) {
+      const { id, book, isVault } = parseSubgraphBook(r);
+      missing.delete(id);
+      if (!isVault) {
+        missing.add(id);
+      } else if (book) {
+        books.set(id, book);
+      } else {
+        ignored.add(id);
+      }
+    }
+  }
+  return { books, ignored, missing };
+}
+
+function parseSubgraphBook(r: CloberSubgraphBookRow): { id: string; book: CloberBook | null; isVault: boolean } {
+  const base = String(r.base.id).toLowerCase();
+  const quote = String(r.quote.id).toLowerCase();
+  const id = String(BigInt(r.id));
+  const isVault = !!r.pool;
+  // keep exactly MON/stable: one side MON (WMON or native), the other a stable
+  if (isMonAddress(base) === isMonAddress(quote)) return { id, book: null, isVault };
+  const baseSym = symByAddr(base), quoteSym = symByAddr(quote);
+  const stableSym = isMonAddress(base) ? quoteSym : baseSym;
+  if (!stableSym || !TOKENS[stableSym]?.stable) return { id, book: null, isVault };
+  return {
+    id,
+    isVault,
+    book: {
+      bookId: BigInt(r.id), base, quote, unitSize: BigInt(r.unitSize),
+      baseSym, quoteSym, isVault,
+    },
+  };
 }
 
 /** Quote Clober for each market × size via BookViewer.getExpectedOutput. */
@@ -347,7 +407,9 @@ const ev = (abi: readonly unknown[], name: string) => abi.find((x: any) => x.typ
 export function createCloberVaultAdapter(): VenueAdapter {
   let books = new Map<string, CloberBook>();   // vault-only book cache
   let vault = new Set<string>();
+  let ignoredVaultBooks = new Set<string>();   // vault books known to be outside MON/stable scope
   let markets: CloberMarket[] = [];
+  let authoritativeDiscovery = false;
 
   const mergeVaultBooks = (vaultOpens: any[], bmOpens: any[]): void => {
     for (const l of vaultOpens) {
@@ -361,7 +423,8 @@ export function createCloberVaultAdapter(): VenueAdapter {
       const id = String(a.id);
       if (!vault.has(id) || books.has(id)) continue;   // vault-only + not already cached
       const b = cloberBookFromOpen(a, vault);           // null if not MON/stable
-      if (b) { books.set(id, b); changed = true; }
+      if (b) { books.set(id, b); ignoredVaultBooks.delete(id); changed = true; }
+      else ignoredVaultBooks.add(id);
     }
     if (changed) markets = assembleCloberMarkets(books);
   };
@@ -370,8 +433,10 @@ export function createCloberVaultAdapter(): VenueAdapter {
     venues: () => [CLOBER_VAULT_VENUE],
     async discover(ctx: AdapterContext) {
       let disc: { books: Map<string, CloberBook>; markets: CloberMarket[]; vault: Set<string> };
+      let authoritative = false;
       try {
         disc = await discoverCloberViaSubgraph(ctx.config.subgraphUrl);
+        authoritative = true;
         ctx.log(`Clober Vault: subgraph discovery (${disc.vault.size} vault book(s))`);
       } catch {
         ctx.log('Clober Vault: subgraph discovery failed; trying recent Open logs');
@@ -380,11 +445,16 @@ export function createCloberVaultAdapter(): VenueAdapter {
       // MERGE (don't replace): a periodic re-discovery can only ADD/refresh vault
       // books, never wipe the cache on a transient subgraph/RPC failure (review #2).
       for (const id of disc.vault) vault.add(id);
-      for (const [id, b] of disc.books) if (b.isVault) books.set(id, b);
+      for (const [id, b] of disc.books) if (b.isVault) { books.set(id, b); ignoredVaultBooks.delete(id); }
       markets = assembleCloberMarkets(books);
+      if (authoritative) authoritativeDiscovery = true;
+      else if (!authoritativeDiscovery) {
+        ctx.log('Clober Vault: authoritative discovery unavailable; holding Take ranges until rediscovery succeeds');
+      }
     },
     async backfill(ctx: AdapterContext, sinceUtc: string) {
-      const vaultBookIds = [...vault];
+      if (!authoritativeDiscovery) throw new Error('authoritative vault-book discovery unavailable');
+      const vaultBookIds = [...books.values()].filter((b) => b.isVault).map((b) => String(b.bookId));
       if (!vaultBookIds.length) return {};
       const seed = await seedCloberDaily(ctx.config.subgraphUrl, sinceUtc, [], vaultBookIds);
       return { days: [...seed].map(([utcDay, cd]) => ({ utcDay, byVenue: { [CLOBER_VAULT_VENUE.id]: { usd: cd.vault } } })) };
@@ -400,16 +470,35 @@ export function createCloberVaultAdapter(): VenueAdapter {
         // it is not tolerated as mere decoration.
         { key: 'bmOpen', address: ADDR.bookManager as `0x${string}`, events: [ev(bookManagerAbi, 'Open')], kind: 'state' as const },
         { key: 'vaultOpen', address: ADDR.liquidityVault as `0x${string}`, events: [ev(liquidityVaultAbi, 'Open')], kind: 'state' as const },
-        // router tags are attribution only — a Take still decodes (as DIRECT) without them.
+        // router tags are attribution only — when unavailable, Takes decode as UNKNOWN.
         { key: 'router', address: ADDR.routerGateway as `0x${string}`, events: [ev(routerGatewayAbi, 'Swap')], kind: 'attribution' as const },
       ];
     },
-    decode(_ctx: AdapterContext, logs: LogBundle, tsOf, failed: Set<string>) {
+    async decode(ctx: AdapterContext, logs: LogBundle, tsOf, failed: Set<string>) {
+      if (!authoritativeDiscovery && (logs.take?.length ?? 0) > 0) {
+        throw new Error('authoritative vault-book discovery unavailable');
+      }
       mergeVaultBooks(logs.vaultOpen ?? [], logs.bmOpen ?? []);
+      const missingVaultBookIds = [...new Set((logs.take ?? [])
+        .map((l) => (l.args?.bookId === undefined ? undefined : String(l.args.bookId)))
+        .filter((id): id is string => !!id && vault.has(id) && !books.has(id) && !ignoredVaultBooks.has(id)))];
+      if (missingVaultBookIds.length) {
+        const resolved = await discoverCloberBooksById(ctx.config.subgraphUrl, missingVaultBookIds);
+        let changed = false;
+        for (const [id, b] of resolved.books) { books.set(id, b); ignoredVaultBooks.delete(id); changed = true; }
+        for (const id of resolved.ignored) ignoredVaultBooks.add(id);
+        if (changed) markets = assembleCloberMarkets(books);
+        const unresolved = missingVaultBookIds.filter((id) => !books.has(id) && !ignoredVaultBooks.has(id));
+        if (unresolved.length || resolved.missing.size) throw new Error(`missing metadata for vault book ${unresolved[0] ?? [...resolved.missing][0]}`);
+      }
       const routerMap = buildRouterMap(logs.router ?? []);
       const attributionUnavailable = failed.has('router'); // router logs failed → don't assert DIRECT
       const out: Fill[] = [];
       for (const l of logs.take ?? []) {
+        const bookId = l.args?.bookId === undefined ? undefined : String(l.args.bookId);
+        if (bookId && vault.has(bookId) && !books.has(bookId) && !ignoredVaultBooks.has(bookId)) {
+          throw new Error(`missing metadata for vault book ${bookId}`);
+        }
         const f = decodeCloberTake(l, books, tsOf(l.blockNumber), routerMap.get(String(l.transactionHash).toLowerCase()), attributionUnavailable);
         if (f) out.push(f);
       }
