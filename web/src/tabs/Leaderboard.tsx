@@ -229,7 +229,15 @@ export function LeaderboardTab() {
             const inAmt = buy ? fmtAmt(f.usd) + ' ' + stable : fmtAmt(base) + ' MON';
             const outAmt = buy ? fmtAmt(base) + ' MON' : fmtAmt(f.usd) + ' ' + stable;
             return (
-              <div key={f.id} style={{ display: 'grid', gridTemplateColumns: TOP_GRID, gap: '0 8px', padding: '8px 6px', fontSize: 10.5, borderBottom: `1px solid ${C.hair}`, alignItems: 'center', minWidth: 1140 }}>
+              <a
+                key={f.id}
+                href={`https://monadscan.com/tx/${f.txHash}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                title={f.txHash}
+                className="tx-row"
+                style={{ display: 'grid', gridTemplateColumns: TOP_GRID, gap: '0 8px', padding: '8px 6px', fontSize: 10.5, borderBottom: `1px solid ${C.hair}`, alignItems: 'center', minWidth: 1140 }}
+              >
                 <div style={{ color: C.faint2 }}>{String(i + 1).padStart(2, '0')}</div>
                 <div style={{ color: C.dim3 }}>{fmtInt(f.blockNumber)}</div>
                 <div style={{ color: C.faint2 }}>{humanAge((Date.now() - f.ts) / 1000)}</div>
@@ -243,7 +251,7 @@ export function LeaderboardTab() {
                 <div style={{ textAlign: 'right', color: C.text2 }}>{f.execPx.toFixed(5)}</div>
                 <div style={{ textAlign: 'right', color: x.mk >= 0 ? C.green : C.red }}>{(x.mk >= 0 ? '+' : '') + x.mk.toFixed(2)}</div>
                 <div style={{ textAlign: 'right', color: x.pnl >= 0 ? C.green : C.red, fontWeight: 600 }}>{pnlFmt(x.pnl)}</div>
-              </div>
+              </a>
             );
           })}
         </div>
