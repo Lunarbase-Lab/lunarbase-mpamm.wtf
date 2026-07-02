@@ -141,11 +141,13 @@ export function ExecutionTab() {
         {/* flex row: the plot ends where the legend column begins, so quotes can
             never render underneath it (no absolute overlay). The canvas re-measures
             its own clientWidth each repaint, so it adapts to the narrower slot. */}
-        <div style={{ display: 'flex', gap: 8, padding: '8px 8px 4px', alignItems: 'stretch' }}>
+        <div style={{ display: 'flex', alignItems: 'flex-start', padding: '8px 8px 4px' }}>
           <div style={{ flex: 1, minWidth: 0 }}>
             <QuoteCanvas />
           </div>
-          <div style={{ flex: 'none', width: 316, background: C.panel, border: `1px solid ${C.line}`, padding: '8px 10px' }}>
+          {/* width/vs-CEX column and "Clober Vault" naming are our approved
+              divergences; layout (flex-start, overlay bg, margins) matches the design. */}
+          <div style={{ flex: 'none', width: 316, margin: '6px 8px 0 14px', background: C.overlay, border: `1px solid ${C.line}`, padding: '8px 10px' }}>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 42px 42px 42px 50px', gap: '2px 6px', fontSize: 8.5, color: C.faint2, letterSpacing: '.05em', paddingBottom: 5, borderBottom: `1px solid ${C.line}` }}>
               <div>VENUE</div><div style={{ textAlign: 'right' }}>SPREAD</div><div style={{ textAlign: 'right' }}>BID</div><div style={{ textAlign: 'right' }}>ASK</div><div style={{ textAlign: 'right' }}>vs CEX</div>
             </div>
