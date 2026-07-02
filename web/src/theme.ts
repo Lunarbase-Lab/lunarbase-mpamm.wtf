@@ -1,5 +1,5 @@
 import type { CSSProperties } from 'react';
-import type { Venue } from '@shared';
+import type { VenueMeta } from '@shared';
 
 /**
  * Theming. All DOM colors flow through CSS custom properties (defined in
@@ -30,16 +30,25 @@ export const SANS = "'Space Grotesk',sans-serif";
 /** Official Monad Purple — the product logomark stays this in BOTH themes (brand mark, not the theme accent). */
 export const LOGO_PURPLE = '#6E54FF';
 
-/** User-facing name for Clober's oracle-vault (the propAMM maker). "Vault" alone reads
- * ambiguously, so surface it as "Clober Vault" everywhere; upper-cased in dense contexts. */
-export const VAULT_LABEL = 'Clober Vault';
+/** Neutral fallback for a missing/unknown venue color (theme-aware) — used when a
+ *  venueId has no registry entry yet, so a swatch/line never renders `undefined`. */
+const VENUE_FALLBACK: Record<Theme, string> = { light: '#8A8375', dark: '#B9BCC6' };
 
 // ── theme-aware getters: canvas + SVG-attribute colors can't use var() ──────
-/** Venue line/ribbon/swatch/bar colors (design COL). */
-export const COL: Record<Theme, Record<Venue, string>> = {
-  light: { LFJ: '#FF4D00', Clober: '#221E15', Vault: '#9C6B16', Bybit: '#8A8375' },
-  dark: { LFJ: '#6E8BFF', Clober: '#45C8E8', Vault: '#9A88FF', Bybit: '#B9BCC6' },
-};
+/**
+ * The single source of truth for a venue's line/ribbon/swatch/bar color: read the
+ * backend-defined `VenueMeta.color` for the active theme. The frontend keeps NO
+ * color table of its own — pass the VenueMeta (from `state.venues`) straight in.
+ */
+export function venueColor(v: VenueMeta | undefined, theme: Theme): string {
+  return v ? v.color[theme] : VENUE_FALLBACK[theme];
+}
+
+/** Same, when you only have a venueId + the registry (e.g. coloring a fill by `Fill.venueId`). */
+export function venueColorById(venues: VenueMeta[], id: string, theme: Theme): string {
+  return venueColor(venues.find((v) => v.id === id), theme);
+}
+
 /** Semantic green/red in css + "r,g,b" forms for SVG strokes / alpha math (design SEM). */
 export const SEM: Record<Theme, { green: { css: string; rgb: string }; red: { css: string; rgb: string } }> = {
   light: { green: { css: 'rgb(10,133,96)', rgb: '10,133,96' }, red: { css: 'rgb(201,43,72)', rgb: '201,43,72' } },
@@ -50,13 +59,6 @@ export const CH: Record<Theme, { grid: string; grid2: string; label: string; lab
   light: { grid: 'rgba(23,20,15,0.08)', grid2: 'rgba(23,20,15,0.05)', label: 'rgb(122,116,103)', label2: 'rgb(150,143,128)', ribbon: 0.10 },
   dark: { grid: 'rgba(255,255,255,0.05)', grid2: 'rgba(255,255,255,0.035)', label: 'rgb(107,109,118)', label2: 'rgb(94,96,104)', ribbon: 0.08 },
 };
-/** Protocol/venue display color, theme-aware (design protoCol): LFJ / Clober / Vault. */
-export function protoCol(name: string, theme: Theme): string {
-  const c = COL[theme];
-  const u = name.toUpperCase();
-  return u === 'LFJ' ? c.LFJ : u === 'CLOBER' ? c.Clober : c.Vault;
-}
-
 /** rgba() from a #rrggbb hex + alpha — for the venue-color getters (hex inputs only). */
 export function hexA(hex: string, a: number): string {
   const n = parseInt(hex.slice(1), 16);

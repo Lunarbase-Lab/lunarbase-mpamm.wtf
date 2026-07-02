@@ -1,14 +1,7 @@
 import { createContext, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import type { MarketState, QuoteSnapshot, QuoteRow, Fill, DailyVolume, Venue } from '@shared';
+import type { MarketState, QuoteSnapshot, QuoteRow, Fill, DailyVolume, VenueMeta } from '@shared';
 import { fetchMarkets, fetchFills, connectStream } from './lib/api';
 import type { Theme } from './theme';
-
-// Full venue set — used for the per-venue Record types + quote-series buffers.
-export const VENUES: Venue[] = ['LFJ', 'Clober', 'Vault', 'Bybit'];
-// Venues actually SHOWN: this is a propAMM dashboard, so Clober is represented
-// only by its oracle-vault (propAMM) maker; independent whole-venue Clober flow
-// is not surfaced. Everything user-facing iterates this list.
-export const DISPLAY_VENUES: Venue[] = ['LFJ', 'Vault', 'Bybit'];
 
 /** Read the persisted theme, matching the pre-paint script in index.html. */
 const initialTheme = (): Theme => {
@@ -24,7 +17,9 @@ interface UiState {
   theme: Theme;
   pair: string;
   size: number;
-  venues: Record<Venue, boolean>;
+  // per-venue on/off, keyed by VenueMeta.id (defaults every role==='venue' id to
+  // true once the registry arrives; the reference is opt-in like any other chip).
+  venueToggles: Record<string, boolean>;
   // markouts
   mkProto: string; mkSide: string; mkSize: string; mkPaused: boolean;
   // leaderboard
@@ -38,11 +33,17 @@ interface Dashboard extends UiState {
   volume: DailyVolume[];
   fills: Fill[];
   frame: number;
-  series: Record<Venue, Series>;
-  samples: Record<Venue, number[]>;
+  // venue registry (from state.venues) + derived views. Everything venue-related
+  // in the UI reads these; nothing about a venue is hardcoded client-side.
+  venues: VenueMeta[];
+  displayVenues: VenueMeta[];              // role === 'venue' (propAMM makers)
+  reference: VenueMeta | undefined;        // role === 'reference' (CEX benchmark)
+  venuesById: Record<string, VenueMeta>;
+  series: Record<string, Series>;
+  samples: Record<string, number[]>;
   // setters
   set: <K extends keyof UiState>(k: K, v: UiState[K]) => void;
-  toggleVenue: (v: Venue) => void;
+  toggleVenue: (id: string) => void;
   toggleTheme: () => void;
   resetLb: () => void;
 }
@@ -54,25 +55,28 @@ export const useDashboard = (): Dashboard => {
   return c;
 };
 
-const emptySeries = (): Record<Venue, Series> => {
-  const o = {} as Record<Venue, Series>;
-  for (const v of VENUES) o[v] = { bid: [], ask: [] };
+/** venue ids carried by the current registry — drives the per-venue buffers. */
+const venueIds = (state: MarketState | null): string[] => (state?.venues ?? []).map((v) => v.id);
+
+const emptySeries = (ids: string[]): Record<string, Series> => {
+  const o: Record<string, Series> = {};
+  for (const id of ids) o[id] = { bid: [], ask: [] };
   return o;
 };
-const emptySamples = (): Record<Venue, number[]> => {
-  const o = {} as Record<Venue, number[]>;
-  for (const v of VENUES) o[v] = [];
+const emptySamples = (ids: string[]): Record<string, number[]> => {
+  const o: Record<string, number[]> = {};
+  for (const id of ids) o[id] = [];
   return o;
 };
 
-function rowFor(q: QuoteSnapshot | null, venue: Venue, market: string, size: number): QuoteRow | undefined {
-  return q?.rows.find((r) => r.venue === venue && r.market === market && r.sizeUsd === size);
+function rowFor(q: QuoteSnapshot | null, venueId: string, market: string, size: number): QuoteRow | undefined {
+  return q?.rows.find((r) => r.venueId === venueId && r.market === market && r.sizeUsd === size);
 }
 
 export function DashboardProvider({ children }: { children: ReactNode }) {
   const [ui, setUi] = useState<UiState>({
     tab: 'exec', theme: initialTheme(), pair: 'MON/USDC', size: 100,
-    venues: { LFJ: true, Clober: true, Vault: true, Bybit: true },
+    venueToggles: {},
     mkProto: 'ALL', mkSide: 'ALL', mkSize: 'ANY', mkPaused: false,
     lbWin: '24H', lbGroup: 'PROTOCOL', lbHz: 'T+0S', lbMk: 'TAKER', lbWinners: true, lbTop: 25,
   });
@@ -83,29 +87,32 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
   const [fills, setFills] = useState<Fill[]>([]);
   const [frame, setFrame] = useState(0);
 
-  const seriesRef = useRef<Record<Venue, Series>>(emptySeries());
-  const samplesRef = useRef<Record<Venue, number[]>>(emptySamples());
+  const seriesRef = useRef<Record<string, Series>>({});
+  const samplesRef = useRef<Record<string, number[]>>({});
   const quotesRef = useRef<QuoteSnapshot | null>(null);
+  // the venue ids the buffers are keyed by — read inside the (stable) stream
+  // callback so we never close over a stale registry.
+  const idsRef = useRef<string[]>([]);
   const selRef = useRef({ pair: ui.pair, size: ui.size });
   selRef.current = { pair: ui.pair, size: ui.size };
 
   const pushSnapshot = (q: QuoteSnapshot) => {
     quotesRef.current = q;
     const { pair, size } = selRef.current;
-    for (const v of VENUES) {
-      const r = rowFor(q, v, pair, size);
+    for (const id of idsRef.current) {
+      const r = rowFor(q, id, pair, size);
       if (!r) continue;
       // push each side independently: a one-sided quote (thin/backstop other
       // side, px 0) contributes only its real line — never a 0 that would wreck
       // the canvas price scale, and never a phantom spread into the percentiles.
-      const s = seriesRef.current[v];
+      const s = (seriesRef.current[id] ??= { bid: [], ask: [] });
       if (r.bidPx > 0) { s.bid.push(r.bidPx); if (s.bid.length > N) s.bid.shift(); }
       if (r.askPx > 0) { s.ask.push(r.askPx); if (s.ask.length > N) s.ask.shift(); }
       // only a real, full-size two-sided quote feeds the spread distribution —
       // a partial (size-exhausted, filledFull=false) or one-sided quote is not
       // executable at the requested notional, so it must not skew the stats.
       if (!r.oneSided && r.filledFull && r.bidPx > 0 && r.askPx > 0) {
-        const smp = samplesRef.current[v];
+        const smp = (samplesRef.current[id] ??= []);
         smp.push(r.spreadBps);
         if (smp.length > 600) smp.shift();
       }
@@ -116,22 +123,39 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
   // pair/size renders a full chart immediately (DCLogic.reseedQuotes).
   const reseed = () => {
     const q = quotesRef.current;
-    const next = emptySeries();
+    const ids = idsRef.current;
+    const next = emptySeries(ids);
     if (q) {
       const { pair, size } = selRef.current;
-      for (const v of VENUES) {
-        const r = rowFor(q, v, pair, size);
+      for (const id of ids) {
+        const r = rowFor(q, id, pair, size);
         if (!r) continue;
         for (let i = 0; i < N; i++) {
           // flat pre-fill (no jitter) — the chart is a discrete STEP chart, so the
           // pre-fill holds flat and real streaming quotes step it (no smoothing).
-          if (r.bidPx > 0) next[v].bid.push(r.bidPx);
-          if (r.askPx > 0) next[v].ask.push(r.askPx);
+          if (r.bidPx > 0) next[id].bid.push(r.bidPx);
+          if (r.askPx > 0) next[id].ask.push(r.askPx);
         }
       }
     }
     seriesRef.current = next;
-    samplesRef.current = emptySamples();
+    samplesRef.current = emptySamples(ids);
+  };
+
+  // adopt a fresh registry: re-key the per-venue buffers and default a toggle for
+  // every propAMM venue (role==='venue') to on the first time we see it. Called on
+  // the initial snapshot and on every `state` stream message, so venues that
+  // appear/disappear at runtime are handled without hardcoding.
+  const adoptVenues = (venues: VenueMeta[]) => {
+    idsRef.current = venues.map((v) => v.id);
+    setUi((s) => {
+      const next = { ...s.venueToggles };
+      let changed = false;
+      for (const v of venues) {
+        if (!(v.id in next)) { next[v.id] = v.role === 'venue'; changed = true; }
+      }
+      return changed ? { ...s, venueToggles: next } : s;
+    });
   };
 
   // cold start + stream. The snapshot is (re)loaded both on mount and on every
@@ -149,6 +173,7 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
         ]);
         if (!mounted.v) return;
         setState(m.state); setQuotes(m.quotes); setVolume(m.volume);
+        adoptVenues(m.state.venues ?? []);
         // /api/fills is newest-first; store oldest-first so the cap in
         // upsertFill drops the genuine oldest, not the newest (audit B4).
         setFills(hist && hist.length ? [...hist].reverse() : m.fills);
@@ -160,7 +185,7 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
     loadSnapshot();
 
     const dispose = connectStream((msg) => {
-      if (msg.ch === 'state') setState(msg.data);
+      if (msg.ch === 'state') { setState(msg.data); adoptVenues(msg.data.venues ?? []); }
       else if (msg.ch === 'quotes') { setQuotes(msg.data); pushSnapshot(msg.data); setFrame((f) => f + 1); }
       else if (msg.ch === 'volume') setVolume((prev) => mergeDay(prev, msg.data));
       else if (msg.ch === 'fill') setFills((prev) => upsertFill(prev, msg.data));
@@ -172,12 +197,27 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
 
   // reseed when the selected pair/size changes
   useEffect(() => { reseed(); setFrame((f) => f + 1); /* eslint-disable-next-line */ }, [ui.pair, ui.size]);
+  // reseed when the venue registry changes (ids added/removed) so the buffers are
+  // re-keyed and pre-filled for the new set before the next stream tick.
+  useEffect(() => { reseed(); setFrame((f) => f + 1); /* eslint-disable-next-line */ }, [venueIds(state).join(',')]);
+
+  const venues = state?.venues ?? [];
+  const { displayVenues, reference, venuesById } = useMemo(() => {
+    const byId: Record<string, VenueMeta> = {};
+    for (const v of venues) byId[v.id] = v;
+    return {
+      displayVenues: venues.filter((v) => v.role === 'venue'),
+      reference: venues.find((v) => v.role === 'reference'),
+      venuesById: byId,
+    };
+  }, [venues]);
 
   const api = useMemo<Dashboard>(() => ({
     ...ui, conn, state, quotes, volume, fills, frame,
+    venues, displayVenues, reference, venuesById,
     series: seriesRef.current, samples: samplesRef.current,
     set: (k, v) => setUi((s) => ({ ...s, [k]: v })),
-    toggleVenue: (v) => setUi((s) => ({ ...s, venues: { ...s.venues, [v]: !s.venues[v] } })),
+    toggleVenue: (id) => setUi((s) => ({ ...s, venueToggles: { ...s.venueToggles, [id]: !s.venueToggles[id] } })),
     toggleTheme: () => {
       const theme: Theme = ui.theme === 'dark' ? 'light' : 'dark';
       // Side effects in the handler — NOT the state updater, which React may
@@ -190,7 +230,7 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
       setFrame((f) => f + 1);
     },
     resetLb: () => setUi((s) => ({ ...s, lbWin: '24H', lbGroup: 'PROTOCOL', lbHz: 'T+0S', lbMk: 'TAKER', lbWinners: true, lbTop: 25 })),
-  }), [ui, conn, state, quotes, volume, fills, frame]);
+  }), [ui, conn, state, quotes, volume, fills, frame, venues, displayVenues, reference, venuesById]);
 
   return <Ctx.Provider value={api}>{children}</Ctx.Provider>;
 }

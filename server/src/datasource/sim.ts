@@ -1,25 +1,26 @@
 import { BaseSource } from './index.js';
 import {
-  MARKETS, SIZES_USD, MARKOUT_HORIZONS, HISTORY_START_UTC,
+  MARKETS, SIZES_USD, HISTORY_START_UTC,
   type DataSourceMode, type MarketState, type QuoteSnapshot, type QuoteRow,
-  type Fill, type DailyVolume, type Venue, type Protocol, type Scope, type Side, type FillCategory,
+  type Fill, type DailyVolume, type VenueMeta, type Side, type FillCategory,
 } from '@shared';
 import { config } from '../config.js';
 import { clamp, utcDay, nextId, annotateCex } from '../util.js';
+import { venueMeta } from '../venues/registry.js';
 
 /**
- * SimDataSource — a server-side port of the design's DCLogic simulation
- * (propAMM.dc.html). Random-walk quotes per venue, a seeded daily-volume
- * history that advances live, and a fill tape with markouts. Produces the exact
- * same contract the live source does, so the frontend is identical.
+ * SimDataSource — a venue-agnostic simulator for offline/dev (`DATA_SOURCE=sim`).
+ * It reads the venue registry (so the same adapters appear) and produces the
+ * exact same generic contract the live source does: `venueId` quotes/fills and
+ * `byVenue` daily volume. Per-venue quote/markout params are assigned
+ * deterministically by registry order — no venue names are hardcoded.
  */
 
-const VEN: Venue[] = ['LFJ', 'Clober', 'Vault', 'Bybit'];
-const SLIP: Record<Venue, number> = { LFJ: 2.0, Clober: 3.6, Vault: 1.0, Bybit: 0.3 };
 const PAIR_MULT: Record<string, number> = { 'MON/USDC': 1.0, 'MON/USDT0': 1.15, 'MON/AUSD': 1.4, 'MON/USD1': 1.6 };
 const BASE_MON = 0.01928;
 
-interface SimFill extends Fill { _proto: 'LFJ' | 'Clober' | 'Vault'; bornMs: number; }
+interface SimFill extends Fill { bornMs: number; }
+interface Param { offset: number; half: number; slip: number; markoutBias: number; weight: number }
 
 function rnd(): number { return Math.random() * 2 - 1; }
 function wpick<T>(a: T[], w: number[]): T {
@@ -38,23 +39,36 @@ function txS(): string { return '0x' + rhex(4) + '…' + rhex(4); }
 export class SimDataSource extends BaseSource {
   readonly mode: DataSourceMode = 'sim';
 
+  private venues: VenueMeta[] = venueMeta();
+  private display: VenueMeta[] = this.venues.filter((v) => v.role === 'venue');
+  private reference: VenueMeta | undefined = this.venues.find((v) => v.role === 'reference');
+  private param: Record<string, Param> = {};
+
   private mon = BASE_MON;
   private chg = 2.3;
   private block = 84_500_000;
-  private offset: Record<Venue, number> = { LFJ: -1.0, Clober: -1.6, Vault: -0.2, Bybit: 0 };
-  private half: Record<Venue, number> = { LFJ: 1.8, Clober: 2.4, Vault: 1.0, Bybit: 0.15 };
   private days: DailyVolume[] = [];
-  private totalSwaps = 0;
   private fills: SimFill[] = [];
   private timer?: ReturnType<typeof setInterval>;
   private pools: Record<string, string> = {};
   private addrs: string[] = [];
   private routers = ['Uniswap Universal Router', 'KyberSwap: Meta Aggregation', 'Relay: Approval Proxy V3', '1inch v6 Router', 'Odos Router v2'];
 
+  constructor() {
+    super();
+    // deterministic per-venue params by registry order (venue 0 = tightest/heaviest).
+    this.display.forEach((v, i) => {
+      this.param[v.id] = {
+        offset: -0.4 - i * 0.7, half: 1.2 + i * 0.7, slip: 1.0 + i * 1.3,
+        markoutBias: i === 0 ? 0.6 : i === 1 ? 0.0 : -0.4,
+        weight: Math.max(0.1, 0.55 - i * 0.22),
+      };
+    });
+  }
+
   async start(): Promise<void> {
     this.initEntities();
-    // warm the random walk so opening quotes look settled (design: 220 steps)
-    for (let i = 0; i < 220; i++) this.mutate();
+    for (let i = 0; i < 220; i++) this.mutate();   // warm the walk so opening quotes look settled
     this.seedHistory();
     this.seedFills();
     this.timer = setInterval(() => this.tick(), config.quoteIntervalMs);
@@ -66,20 +80,21 @@ export class SimDataSource extends BaseSource {
     return {
       chainId: 143, block: this.block, monUsd: this.mon, monChangePct: this.chg,
       takerBps: config.takerBps, markets: [...MARKETS], sizesUsd: [...SIZES_USD],
-      quoteCadenceMs: config.quoteIntervalMs, source: 'sim',
+      quoteCadenceMs: config.quoteIntervalMs, source: 'sim', venues: this.venues,
       notes: ['simulated data — set DATA_SOURCE=live for on-chain quotes'],
     };
   }
   getQuotes(): QuoteSnapshot { return { block: this.block, monUsd: this.mon, ts: Date.now(), rows: this.buildMatrix() }; }
   getFills(): Fill[] { return this.fills.map(stripFill); }
-  getVolume(): DailyVolume[] { return this.days.map((d) => ({ ...d })); }
+  getVolume(): DailyVolume[] { return this.days.map((d) => ({ ...d, byVenue: { ...d.byVenue } })); }
 
-  // ── quote model (DCLogic.quoteAt) ──────────────────────────────────────────
-  private quoteAt(v: Venue, market: string, size: number): { bidBps: number; askBps: number; bidPx: number; askPx: number } {
+  // ── quote model ─────────────────────────────────────────────────────────────
+  private quoteAt(id: string, market: string, size: number): { bidBps: number; askBps: number; bidPx: number; askPx: number } {
     const pm = PAIR_MULT[market] ?? 1;
+    const p = this.param[id];
     const sizeStep = Math.log10(size / 100);
-    const hsz = this.half[v] * pm + SLIP[v] * sizeStep + (v === 'Bybit' ? config.takerBps : 0);
-    const o = this.offset[v];
+    const hsz = p.half * pm + p.slip * sizeStep;
+    const o = p.offset;
     const bid = o - hsz, ask = o + hsz;
     return { bidBps: bid, askBps: ask, bidPx: this.mon * (1 + bid / 1e4), askPx: this.mon * (1 + ask / 1e4) };
   }
@@ -87,45 +102,75 @@ export class SimDataSource extends BaseSource {
   private buildMatrix(): QuoteRow[] {
     const ts = Date.now();
     const rows: QuoteRow[] = [];
-    for (const v of VEN) {
+    for (const v of this.display) {
       for (const market of MARKETS) {
         for (const size of SIZES_USD) {
-          const q = this.quoteAt(v, market, size);
+          const q = this.quoteAt(v.id, market, size);
           const sizeStep = Math.log10(size / 100);
           rows.push({
-            venue: v, market, sizeUsd: size,
+            venueId: v.id, market, sizeUsd: size,
             bidBps: q.bidBps, askBps: q.askBps, bidPx: q.bidPx, askPx: q.askPx,
             spreadBps: q.askBps - q.bidBps,
-            filledFull: size < 100000 || v === 'Bybit',
-            feeBps: v === 'LFJ' ? 0.3 + 0.04 * sizeStep : 0,
+            filledFull: size < 100000,
+            feeBps: v.kind === 'amm' ? 0.3 + 0.04 * sizeStep : 0,
             ts,
           });
         }
       }
     }
-    annotateCex(rows.filter((r) => r.venue !== 'Bybit'), rows.filter((r) => r.venue === 'Bybit'));
-    return rows;
+    // reference (CEX) taker rows: a tight symmetric band + the taker fee.
+    const refRows: QuoteRow[] = [];
+    if (this.reference) {
+      const half = 0.15 + config.takerBps;
+      for (const market of MARKETS) {
+        for (const size of SIZES_USD) {
+          const bid = -half, ask = half;
+          refRows.push({
+            venueId: this.reference.id, market, sizeUsd: size,
+            bidBps: bid, askBps: ask, bidPx: this.mon * (1 + bid / 1e4), askPx: this.mon * (1 + ask / 1e4),
+            spreadBps: ask - bid, filledFull: true, feeBps: config.takerBps, ts,
+          });
+        }
+      }
+    }
+    annotateCex(rows, refRows);
+    return [...rows, ...refRows];
   }
 
   private mutate(): void {
     this.mon *= 1 + rnd() * 0.0006;
     this.mon = clamp(this.mon, BASE_MON * 0.95, BASE_MON * 1.05);
     this.chg = clamp(this.chg + rnd() * 0.05, -8, 8);
-    for (const v of ['LFJ', 'Clober', 'Vault'] as Venue[]) {
-      this.offset[v] += rnd() * 0.15; this.half[v] += rnd() * 0.08;
-      if (Math.random() < 0.05) { this.half[v] += rnd() * 0.8; this.offset[v] += rnd() * 0.6; }
-      this.offset[v] = clamp(this.offset[v], -6, 6);
-      this.half[v] = clamp(this.half[v], 0.5, 13);
+    for (const v of this.display) {
+      const p = this.param[v.id];
+      p.offset += rnd() * 0.15; p.half += rnd() * 0.08;
+      if (Math.random() < 0.05) { p.half += rnd() * 0.8; p.offset += rnd() * 0.6; }
+      p.offset = clamp(p.offset, -6, 6);
+      p.half = clamp(p.half, 0.5, 13);
     }
-    this.half.Bybit = 0.12 + Math.random() * 0.08;
   }
 
-  // ── volume history (DCLogic.seedHistory / bumpVolume) ───────────────────────
+  // ── volume history (byVenue) ────────────────────────────────────────────────
+  private weights(): number[] { return this.display.map((v) => this.param[v.id].weight); }
+
+  private splitAcross(total: number, sw: number): Record<string, { usd: number; swaps: number }> {
+    const ws = this.weights();
+    const sumW = ws.reduce((a, b) => a + b, 0) || 1;
+    const byVenue: Record<string, { usd: number; swaps: number }> = {};
+    let swLeft = sw;
+    this.display.forEach((v, i) => {
+      const frac = ws[i] / sumW;
+      const swaps = i === this.display.length - 1 ? swLeft : Math.round(sw * frac);
+      swLeft -= swaps;
+      byVenue[v.id] = { usd: total * frac * 1e6, swaps: Math.max(0, swaps) };
+    });
+    return byVenue;
+  }
+
   private seedHistory(): void {
     const start = Date.parse(HISTORY_START_UTC + 'T00:00:00Z');
     const today = Date.parse(utcDay() + 'T00:00:00Z');
     const n = Math.max(2, Math.round((today - start) / 86_400_000) + 1);
-    let swaps = 0;
     for (let i = 0; i < n; i++) {
       const dt = new Date(start + i * 86_400_000);
       const ramp = Math.min(1, i / 20);
@@ -133,73 +178,49 @@ export class SimDataSource extends BaseSource {
       if (Math.random() < 0.13) total *= 1.5 + Math.random() * 1.5;
       const partial = i === n - 1;
       if (partial) total *= 0.42;
-      const sv = 0.09 + 0.16 * (i / n) + Math.random() * 0.04;
-      const sc = 0.24 + Math.random() * 0.06;
-      const vault = total * sv, clob = total * sc, lfj = total - vault - clob;
       const sw = Math.round(total * (95 + Math.random() * 45));
-      swaps += sw;
-      // per-source swap counts (split by USD share) so the breakdown shows real
-      // per-protocol counts rather than a UI-side proration (parity with live).
-      const lfjSwaps = Math.round(sw * (lfj / total));
-      const cloberSwaps = sw - lfjSwaps;
-      const cloberVaultSwaps = Math.round(cloberSwaps * (vault / (clob + vault || 1)));
-      this.days.push({
-        utcDay: dt.toISOString().slice(0, 10),
-        lfj: lfj * 1e6, cloberVenue: (clob + vault) * 1e6, cloberVault: vault * 1e6,
-        swaps: sw, lfjSwaps, cloberSwaps, cloberVaultSwaps, partial,
-      });
+      this.days.push({ utcDay: dt.toISOString().slice(0, 10), byVenue: this.splitAcross(total, sw), partial });
     }
-    this.totalSwaps = swaps;
   }
   private bumpVolume(): void {
     const d = this.days[this.days.length - 1];
     if (!d) return;
-    const add = (0.004 + Math.random() * 0.02) * 1e6;
-    const v = add * (0.14 + Math.random() * 0.12), c = add * (0.24 + Math.random() * 0.06), l = add - v - c;
-    d.lfj += l; d.cloberVault += v; d.cloberVenue += c + v;
+    const add = (0.004 + Math.random() * 0.02);
     const swAdd = Math.round(1 + Math.random() * 2);
-    const lfjAdd = Math.round(swAdd * (l / add));
-    const clobAdd = swAdd - lfjAdd;
-    d.lfjSwaps += lfjAdd; d.cloberSwaps += clobAdd;
-    d.cloberVaultSwaps += Math.round(clobAdd * (v / (c + v || 1)));
-    d.swaps += swAdd;
-    this.totalSwaps += swAdd;
+    const inc = this.splitAcross(add, swAdd);
+    for (const [id, vd] of Object.entries(inc)) {
+      const cur = (d.byVenue[id] ??= { usd: 0, swaps: 0 });
+      cur.usd += vd.usd; cur.swaps += vd.swaps;
+    }
   }
 
-  // ── fills (DCLogic.makeFill / seedFills / spawnFill) ────────────────────────
+  // ── fills ─────────────────────────────────────────────────────────────────
   private initEntities(): void {
-    for (const p of ['LFJ', 'Clober', 'Vault']) for (const m of MARKETS) this.pools[p + m] = txS();
+    for (const v of this.display) for (const m of MARKETS) this.pools[v.id + m] = txS();
     this.addrs = Array.from({ length: 14 }, () => txS());
   }
 
   private makeFill(ageSec: number, big: boolean): SimFill {
     const market = MARKETS[Math.floor(Math.random() * MARKETS.length)];
     const side: Side = Math.random() < 0.5 ? 'buy' : 'sell';
-    const proto = wpick<'LFJ' | 'Clober' | 'Vault'>(['LFJ', 'Clober', 'Vault'], [0.5, 0.32, 0.18]);
-    let cat: FillCategory = 'DIRECT';
+    const v = this.display.length ? wpick(this.display, this.weights()) : this.venues[0];
     const cr = Math.random();
-    if (proto === 'Vault') cat = cr < 0.45 ? 'CEX/DEX' : 'DIRECT';
-    else cat = cr < 0.16 ? 'ROUTER' : cr < 0.24 ? 'AGG' : 'DIRECT';
+    const cat: FillCategory = cr < 0.14 ? 'ROUTER' : cr < 0.22 ? 'AGG' : cr < 0.34 ? 'CEX/DEX' : 'DIRECT';
     const usd = big ? 60000 + Math.random() * 640000 : (Math.random() < 0.72 ? 50 + Math.random() * 9000 : 9000 + Math.random() * 90000);
     const execPx = this.mon * (1 + rnd() * 0.0009);
-    const e0 = (proto === 'Vault' ? 0.9 : proto === 'LFJ' ? 0.1 : -0.5) + rnd() * 1.6;
+    const e0 = (this.param[v.id]?.markoutBias ?? 0) + rnd() * 1.6;
     const ss = side === 'buy' ? 1 : -1;
-    let d = 0;
+    let dd = 0;
     const mk: number[] = [e0];
-    for (const h of [5, 10, 30, 60]) { d += rnd() * Math.sqrt(h) * 1.05; mk.push(e0 + ss * d); }
-
-    const protocol: Protocol = proto === 'LFJ' ? 'LFJ' : 'Clober';
-    const scope: Scope = proto === 'Vault' ? 'vault' : 'venue';
-    const source: Fill['source'] = proto === 'LFJ' ? 'lfj-swap' : (cat === 'ROUTER' || cat === 'AGG') ? 'clober-router' : 'clober-take';
-    const pool = this.pools[proto + market] ?? txS();
+    for (const h of [5, 10, 30, 60]) { dd += rnd() * Math.sqrt(h) * 1.05; mk.push(e0 + ss * dd); }
+    const pool = this.pools[v.id + market] ?? txS();
     const to = (cat === 'ROUTER' || cat === 'AGG')
       ? this.routers[Math.floor(Math.random() * this.routers.length)]
       : (Math.random() < 0.85 ? this.addrs[Math.floor(Math.random() * this.addrs.length)] : txS());
     const bornMs = Date.now() - ageSec * 1000;
-
     return {
-      id: nextId('sim'), _proto: proto, bornMs,
-      protocol, source, scope, market, side, category: cat,
+      id: nextId('sim'), bornMs,
+      venueId: v.id, market, side, category: cat,
       usd, baseAmount: usd / execPx, execPx,
       txHash: txS(), to, pool,
       blockNumber: Math.max(1, this.block - Math.round(ageSec / 0.4)),
@@ -233,11 +254,12 @@ export class SimDataSource extends BaseSource {
     this.spawnFill();
     this.emitMsg({ ch: 'state', data: this.getState() });
     this.emitMsg({ ch: 'quotes', data: this.getQuotes() });
-    this.emitMsg({ ch: 'volume', data: { ...this.days[this.days.length - 1] } });
+    const last = this.days[this.days.length - 1];
+    if (last) this.emitMsg({ ch: 'volume', data: { ...last, byVenue: { ...last.byVenue } } });
   }
 }
 
 function stripFill(f: SimFill): Fill {
-  const { _proto, bornMs, ...rest } = f;
+  const { bornMs, ...rest } = f;
   return rest;
 }

@@ -1,13 +1,14 @@
 import { useMemo } from 'react';
 import type { DailyVolume } from '@shared';
 import { useDashboard } from '../store';
-import { C, COL, VAULT_LABEL } from '../theme';
+import { C, venueColor } from '../theme';
 import { fMillions } from '../lib/format';
 
 /** MM-DD from a 'YYYY-MM-DD' UTC day. */
 const mmdd = (utcDay: string): string => utcDay.slice(5);
 
 interface SeriesDef {
+  id: string;
   name: string;
   color: string;
   val: (d: DailyVolume) => number;
@@ -21,20 +22,37 @@ export function VolumeTab() {
   const vm = useMemo(() => {
     const days = d.volume;
     const nd = days.length;
-    const col = COL[d.theme]; // theme-aware venue colors (bars / bands / breakdown)
     // market-share in-chart labels: cream over the saturated bands in bright, the band color in dark.
     const msLabelColor = (bandColor: string) => (d.theme === 'light' ? 'rgb(252,251,248)' : bandColor);
 
-    // propAMM venues only: LFJ + Clober's oracle-vault cut (independent Clober excluded).
-    const series: SeriesDef[] = [
-      { name: 'LFJ', color: col.LFJ, val: (x) => x.lfj, swaps: (x) => x.lfjSwaps },
-      { name: VAULT_LABEL, color: col.Vault, val: (x) => x.cloberVault, swaps: (x) => x.cloberVaultSwaps },
-    ];
+    // propAMM venues from the registry — one series per role==='venue' venue.
+    // Colors, names and ids all come from state.venues (nothing hardcoded).
+    const series: SeriesDef[] = d.displayVenues.map((v) => ({
+      id: v.id,
+      name: v.name,
+      color: venueColor(v, d.theme),
+      val: (x) => x.byVenue[v.id]?.usd ?? 0,
+      swaps: (x) => x.byVenue[v.id]?.swaps ?? 0,
+    }));
 
     const f = (m: number) => fMillions(m);
 
-    // empty-state: render placeholder zeros, no crash
-    if (nd === 0) {
+    // first UTC day this venue recorded any notional (venue-agnostic; '—' if none).
+    const firstActive = (s: SeriesDef): string => {
+      for (const x of days) if (s.val(x) > 0) return x.utcDay;
+      return '—';
+    };
+    // earliest first-active across shown venues — the "since" / total-row anchor.
+    const earliestActive = (): string => {
+      const fs = series.map(firstActive).filter((x) => x !== '—').sort();
+      return fs[0] ?? '—';
+    };
+
+    const scopeNote = "USD-stable quote leg of each landed swap · today's bucket is partial";
+
+    // empty-state: render placeholder zeros, no crash (also the pre-registry case
+    // where displayVenues is still []).
+    if (nd === 0 || series.length === 0) {
       return {
         volBars: [] as { op: number; segs: { h: string; color: string }[] }[],
         volMaxLabel: f(0), volMidLabel: f(0),
@@ -42,24 +60,24 @@ export function VolumeTab() {
         kAll: f(0), k7: f(0), k7chg: '▲ 0%', k7css: C.green,
         kSwaps: '0', kPeak: f(0), kPeakDay: '—',
         kToday: f(0), kTodayChg: '▲ 0%', kTodaycss: C.green,
+        since: '—',
         legRows: series.map((s) => ({ name: s.name, color: s.color, vol: f(0), share: '0.0%' })),
         legTotal: f(0), cumLine: '', cumArea: '', cumSigma: f(0),
         msBands: [] as { path: string; color: string }[],
-        msTopName: series[series.length - 1].name, msTopPct: '0.0%', msTopColor: msLabelColor(series[series.length - 1].color),
-        msBotName: series[0].name, msBotPct: '0.0%', msBotColor: msLabelColor(series[0].color),
+        msTopName: series.length ? series[series.length - 1].name : '—', msTopPct: '0.0%',
+        msTopColor: msLabelColor(series.length ? series[series.length - 1].color : C.faint2),
+        msBotName: series.length ? series[0].name : '—', msBotPct: '0.0%',
+        msBotColor: msLabelColor(series.length ? series[0].color : C.faint2),
         brk: series.map((s) => ({
           name: s.name, color: s.color, vol: f(0), share: '0.0%', shareW: '0.0',
-          swaps: '0', peakV: f(0), peakDay: '—',
-          first: s.name.indexOf('Vault') >= 0 ? '2026-05-15' : '2026-05-13',
+          swaps: '0', peakV: f(0), peakDay: '—', first: '—',
         })),
-        brkTotalVol: f(0), brkTotalSwaps: '0',
-        volScopeNote: 'Clober Vault = swaps the vault settled as maker',
+        brkTotalVol: f(0), brkTotalSwaps: '0', brkTotalFirst: '—',
+        volScopeNote: scopeNote,
       };
     }
 
     const dayTotal = (x: DailyVolume) => series.reduce((a, s) => a + s.val(x), 0);
-    // grand = every venue's notional (cloberVenue already includes the vault cut)
-    const grand = days.reduce((a, x) => a + x.lfj + x.cloberVenue, 0);
     const maxT = Math.max(...days.map(dayTotal)) || 1;
     const H = 150;
     const volBars = days.map((x) => ({
@@ -90,10 +108,10 @@ export function VolumeTab() {
     const todayT = dTot[nd - 1], prevT = dTot[nd - 2];
     const todayChg = prevT ? (todayT - prevT) / prevT * 100 : 0;
 
-    // KPI "total swaps" is venue-complete (both venues), independent of the
-    // Clober scope toggle. The per-protocol breakdown below uses the real
-    // per-source counts (lfjSwaps/cloberSwaps/cloberVaultSwaps), not a proration.
-    const swaps = days.reduce((a, x) => a + x.swaps, 0);
+    // KPI "total swaps" sums the real per-venue swap counts across shown venues
+    // (no USD proration); seeded days that carry usd but swaps:0 add nothing here.
+    const swaps = days.reduce((a, x) => a + series.reduce((b, s) => b + s.swaps(x), 0), 0);
+    const since = earliestActive();
 
     const W = 1000, HC = 260;
     let cum = 0;
@@ -125,8 +143,7 @@ export function VolumeTab() {
       days.forEach((x) => { const v = s.val(x); if (v > pv) { pv = v; pd = mmdd(x.utcDay); } });
       return { v: f(pv), day: pd };
     };
-    // real per-source swap counts (no USD proration): LFJ counts its own takes,
-    // Vault counts only Clober oracle-vault (propAMM) takes (I5).
+    // real per-source swap counts (no USD proration): each venue counts its own takes.
     const brkSwaps = series.map((s) => days.reduce((a, x) => a + s.swaps(x), 0));
     const brkSwapTotal = brkSwaps.reduce((a, b) => a + b, 0);
     const brk = series.map((s, k) => {
@@ -137,7 +154,7 @@ export function VolumeTab() {
         shareW: (allTot ? tot / allTot * 100 : 0).toFixed(1),
         swaps: brkSwaps[k].toLocaleString(),
         peakV: pk.v, peakDay: pk.day,
-        first: s.name.indexOf('Vault') >= 0 ? '2026-05-15' : '2026-05-13',
+        first: firstActive(s),
       };
     });
 
@@ -153,6 +170,7 @@ export function VolumeTab() {
       kToday: f(todayT),
       kTodayChg: (todayChg >= 0 ? '▲ ' : '▼ ') + Math.abs(todayChg).toFixed(0) + '%',
       kTodaycss: todayChg >= 0 ? C.green : C.red,
+      since,
       legRows: totals.map((t) => ({ name: t.name, color: t.color, vol: f(t.tot), share: share(t.tot) })),
       legTotal: f(allTot), cumLine, cumArea, cumSigma: f(allTot),
       msBands,
@@ -162,18 +180,18 @@ export function VolumeTab() {
       msBotName: series[0].name,
       msBotPct: (series[0].val(days[nd - 1]) / lt * 100).toFixed(1) + '%',
       msBotColor: msLabelColor(series[0].color),
-      brk, brkTotalVol: f(allTot), brkTotalSwaps: brkSwapTotal.toLocaleString(),
-      volScopeNote: 'Clober Vault = swaps the vault settled as maker',
+      brk, brkTotalVol: f(allTot), brkTotalSwaps: brkSwapTotal.toLocaleString(), brkTotalFirst: since,
+      volScopeNote: scopeNote,
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [d.volume, d.theme]);
+  }, [d.volume, d.theme, d.displayVenues]);
 
   return (
     <div>
       <div style={{ padding: '18px 18px 14px' }}>
         <div style={{ fontSize: 14, fontWeight: 600, letterSpacing: '.06em', color: C.text }}>PROPAMM VOLUME</div>
         <div style={{ fontSize: 11, color: C.dim3, marginTop: 6, lineHeight: 1.55, maxWidth: 760 }}>
-          All-time daily notional traded on tracked propAMM pools, split by protocol. Volume is the USD-stable quote leg of each landed swap; buckets are UTC days and today's bucket is partial. Clober Vault = notional the Clober oracle-vault (the propAMM) settled as the resting market-maker.
+          All-time daily notional traded on tracked propAMM venues, split by venue. Volume is the USD-stable quote leg of each landed swap; buckets are UTC days and today's bucket is partial.
         </div>
       </div>
 
@@ -182,7 +200,7 @@ export function VolumeTab() {
         <div style={{ padding: '14px 16px', borderRight: `1px solid ${C.line2}` }}>
           <div style={{ fontSize: 9, color: C.faint2, letterSpacing: '.06em' }}>ALL-TIME VOLUME</div>
           <div style={{ fontSize: 22, fontWeight: 600, marginTop: 8, color: C.text }}>{vm.kAll}</div>
-          <div style={{ fontSize: 10, color: C.faint2, marginTop: 6 }}>since 2026-05-13</div>
+          <div style={{ fontSize: 10, color: C.faint2, marginTop: 6 }}>since {vm.since}</div>
         </div>
         <div style={{ padding: '14px 16px', borderRight: `1px solid ${C.line2}` }}>
           <div style={{ fontSize: 9, color: C.faint2, letterSpacing: '.06em' }}>7D VOLUME</div>
@@ -192,7 +210,7 @@ export function VolumeTab() {
         <div style={{ padding: '14px 16px', borderRight: `1px solid ${C.line2}` }}>
           <div style={{ fontSize: 9, color: C.faint2, letterSpacing: '.06em' }}>INDEXED SWAPS</div>
           <div style={{ fontSize: 22, fontWeight: 600, marginTop: 8, color: C.text }}>{vm.kSwaps}</div>
-          <div style={{ fontSize: 10, color: C.faint2, marginTop: 6 }} title="On-chain swaps decoded forward + reconciled from retained fills, both venues. Subgraph-seeded Clober history has volume but no per-swap count, so it isn't included here.">both venues · indexed</div>
+          <div style={{ fontSize: 10, color: C.faint2, marginTop: 6 }} title="On-chain swaps decoded forward + reconciled from retained fills, across tracked venues. Seeded history may carry volume but no per-swap count, so it isn't included here.">tracked venues · indexed</div>
         </div>
         <div style={{ padding: '14px 16px', borderRight: `1px solid ${C.line2}` }}>
           <div style={{ fontSize: 9, color: C.faint2, letterSpacing: '.06em' }}>PEAK DAY</div>
@@ -211,7 +229,7 @@ export function VolumeTab() {
         <i style={{ position: 'absolute', top: -1, left: -1, width: 8, height: 8, borderTop: `1px solid ${C.purple}`, borderLeft: `1px solid ${C.purple}` }} />
         <i style={{ position: 'absolute', bottom: -1, right: -1, width: 8, height: 8, borderBottom: `1px solid ${C.purple}`, borderRight: `1px solid ${C.purple}` }} />
         <div style={{ padding: '9px 12px', borderBottom: `1px solid ${C.line2}`, fontSize: 11, letterSpacing: '.03em' }}>
-          <span style={{ color: C.purple }}>~</span> <span style={{ color: C.text, fontWeight: 600 }}>DAILY_VOLUME</span> <span style={{ color: C.faint }}>USD notional by protocol · UTC days · {vm.volScopeNote}</span>
+          <span style={{ color: C.purple }}>~</span> <span style={{ color: C.text, fontWeight: 600 }}>DAILY_VOLUME</span> <span style={{ color: C.faint }}>USD notional by venue · UTC days · {vm.volScopeNote}</span>
         </div>
         <div style={{ position: 'relative', padding: '16px 18px 8px' }}>
           <div style={{ position: 'absolute', top: 14, left: 18, fontSize: 8.5, color: C.faint2 }}>{vm.volMaxLabel}</div>
@@ -231,7 +249,7 @@ export function VolumeTab() {
           {/* legend box */}
           <div style={{ position: 'absolute', top: 14, right: 16, background: C.overlay, border: `1px solid ${C.line}`, padding: '8px 10px', minWidth: 200 }}>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 70px 44px', gap: '3px 8px', fontSize: 8.5, color: C.faint2, letterSpacing: '.05em', paddingBottom: 5, borderBottom: `1px solid ${C.line}` }}>
-              <div>PROTOCOL</div><div style={{ textAlign: 'right' }}>ALL-TIME</div><div style={{ textAlign: 'right' }}>SHARE</div>
+              <div>VENUE</div><div style={{ textAlign: 'right' }}>ALL-TIME</div><div style={{ textAlign: 'right' }}>SHARE</div>
             </div>
             {vm.legRows.map((r) => (
               <div key={r.name} style={{ display: 'grid', gridTemplateColumns: '1fr 70px 44px', gap: '3px 8px', fontSize: 10.5, padding: '4px 0', alignItems: 'center' }}>
@@ -289,16 +307,16 @@ export function VolumeTab() {
         </div>
       </div>
 
-      {/* PROTOCOL_BREAKDOWN */}
+      {/* VENUE_BREAKDOWN */}
       <div style={{ position: 'relative', border: `1px solid ${C.line}`, background: C.panel, margin: '0 18px 14px' }}>
         <i style={{ position: 'absolute', top: -1, left: -1, width: 8, height: 8, borderTop: `1px solid ${C.purple}`, borderLeft: `1px solid ${C.purple}` }} />
         <i style={{ position: 'absolute', bottom: -1, right: -1, width: 8, height: 8, borderBottom: `1px solid ${C.purple}`, borderRight: `1px solid ${C.purple}` }} />
         <div style={{ padding: '9px 12px', borderBottom: `1px solid ${C.line2}`, fontSize: 11, letterSpacing: '.03em' }}>
-          <span style={{ color: C.purple }}>#</span> <span style={{ color: C.text, fontWeight: 600 }}>PROTOCOL_BREAKDOWN</span>
+          <span style={{ color: C.purple }}>#</span> <span style={{ color: C.text, fontWeight: 600 }}>VENUE_BREAKDOWN</span>
         </div>
         <div style={{ padding: '6px 14px 12px' }}>
           <div style={{ display: 'grid', gridTemplateColumns: '1.4fr 1fr 1.4fr 1fr 1.2fr 1fr', gap: 8, padding: '9px 6px', fontSize: 9, color: C.faint2, letterSpacing: '.05em', borderBottom: `1px solid ${C.line}` }}>
-            <div>PROTOCOL</div><div style={{ textAlign: 'right' }}>ALL-TIME VOL</div><div>SHARE</div><div style={{ textAlign: 'right' }}>SWAPS</div><div style={{ textAlign: 'right' }}>PEAK DAY</div><div style={{ textAlign: 'right' }}>FIRST ACTIVE</div>
+            <div>VENUE</div><div style={{ textAlign: 'right' }}>ALL-TIME VOL</div><div>SHARE</div><div style={{ textAlign: 'right' }}>SWAPS</div><div style={{ textAlign: 'right' }}>PEAK DAY</div><div style={{ textAlign: 'right' }}>FIRST ACTIVE</div>
           </div>
           {vm.brk.map((r) => (
             <div key={r.name} style={{ display: 'grid', gridTemplateColumns: '1.4fr 1fr 1.4fr 1fr 1.2fr 1fr', gap: 8, padding: '10px 6px', fontSize: 11.5, borderBottom: `1px solid ${C.line3}`, alignItems: 'center' }}>
@@ -324,7 +342,7 @@ export function VolumeTab() {
             <div style={{ color: C.dim }}>100%</div>
             <div style={{ textAlign: 'right', color: C.dim }}>{vm.brkTotalSwaps}</div>
             <div style={{ textAlign: 'right', color: C.faint2 }}>—</div>
-            <div style={{ textAlign: 'right', color: C.dim3 }}>2026-05-13</div>
+            <div style={{ textAlign: 'right', color: C.dim3 }}>{vm.brkTotalFirst}</div>
           </div>
         </div>
       </div>

@@ -7,6 +7,7 @@ import { WebSocketServer, WebSocket } from 'ws';
 import { STREAM_PATH, type MarketsResponse, type StreamMessage } from '@shared';
 import type { DataSource } from './datasource/index.js';
 import { config } from './config.js';
+import { venueMeta } from './venues/registry.js';
 
 /**
  * Thin transport over a DataSource (spec §6.3, D1): REST snapshots + a WS
@@ -42,6 +43,11 @@ export function startServer(source: DataSource): Server {
     };
     res.json(body);
   });
+
+  // the venue registry (adapters + CEX reference) — id/name/color/kind/role.
+  // The frontend also gets this inside /api/markets state.venues; this is a
+  // standalone endpoint for external consumers.
+  app.get('/api/venues', (_req, res) => res.json(venueMeta()));
 
   app.get('/api/quotes', (_req, res) => res.json(source.getQuotes()));
   app.get('/api/fills', (req, res) => {

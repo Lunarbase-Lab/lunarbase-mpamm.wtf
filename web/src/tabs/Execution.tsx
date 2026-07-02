@@ -1,7 +1,7 @@
 import { useMemo } from 'react';
-import { SIZES_USD, type Venue, type QuoteRow } from '@shared';
-import { useDashboard, DISPLAY_VENUES } from '../store';
-import { C, hexA, pill, COL, VAULT_LABEL } from '../theme';
+import { SIZES_USD, type VenueMeta, type QuoteRow } from '@shared';
+import { useDashboard } from '../store';
+import { C, hexA, pill, venueColor } from '../theme';
 import { Panel, PanelHead, Field } from '../components/ui';
 import { QuoteCanvas } from '../components/QuoteCanvas';
 import { sgn, sizeLabel, percentile, stdev } from '../lib/format';
@@ -12,20 +12,28 @@ export function ExecutionTab() {
   const d = useDashboard();
   const pair = d.pair, size = d.size;
   const markets = d.state?.markets ?? ['MON/USDC', 'MON/USDT0', 'MON/AUSD', 'MON/USD1'];
-  const active = DISPLAY_VENUES.filter((v) => d.venues[v]);
-  const col = COL[d.theme]; // theme-aware venue colors (swatches / bars / pills)
+  // toggle chips: every propAMM venue + the CEX reference (if the registry has one).
+  const chips: VenueMeta[] = d.reference ? [...d.displayVenues, d.reference] : d.displayVenues;
+  // active = chips the user has enabled (all display venues default on).
+  const active = chips.filter((v) => d.venueToggles[v.id]);
   const taker = (d.state?.takerBps ?? 10).toFixed(1);
+  // reference (CEX benchmark) labels — name + a "(taker)" suffix when it's walked
+  // as a taker. Fall back to generic wording before the registry arrives.
+  const ref = d.reference;
+  const refName = ref?.name ?? 'the CEX reference';
+  const refLabel = ref ? ref.name + (ref.taker ? ' (taker)' : '') : 'The reference (taker)';
 
-  const row = (v: Venue, s: number): QuoteRow | undefined =>
-    d.quotes?.rows.find((r) => r.venue === v && r.market === pair && r.sizeUsd === s);
+  const row = (v: VenueMeta, s: number): QuoteRow | undefined =>
+    d.quotes?.rows.find((r) => r.venueId === v.id && r.market === pair && r.sizeUsd === s);
 
   // legend — active venues at selected pair/size, sorted by spread
   const legend = useMemo(() => {
     const leg = active.map((v) => {
       const r = row(v, size);
       return {
-        name: v, color: col[v], spread: r?.spreadBps ?? 0, bid: r?.bidBps ?? 0, ask: r?.askBps ?? 0,
-        // realized buy-MON cost vs Bybit-as-taker, + = on-chain worse (spec §4.2)
+        id: v.id, name: v.name, color: venueColor(v, d.theme),
+        spread: r?.spreadBps ?? 0, bid: r?.bidBps ?? 0, ask: r?.askBps ?? 0,
+        // realized buy-MON cost vs the reference-as-taker, + = on-chain worse (spec §4.2)
         vsCex: r?.cexAskBps, has: !!r,
         // a one-sided quote has only one executable side (the other is thin/backstop);
         // a partial quote (filledFull=false) exhausts before the full notional.
@@ -38,9 +46,9 @@ export function ExecutionTab() {
     leg.sort((a, b) => rank(a) - rank(b) || a.spread - b.spread);
     return leg;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [d.quotes, d.venues, pair, size, d.frame, d.theme]);
-  // tightest = tightest genuinely-executable quote (full-size + two-sided)
-  const tight = legend.find((x) => !x.oneSided && x.full)?.name;
+  }, [d.quotes, d.venueToggles, d.venues, pair, size, d.frame, d.theme]);
+  // tightest = tightest genuinely-executable quote (full-size + two-sided), by id
+  const tight = legend.find((x) => !x.oneSided && x.full)?.id;
 
   // depth ladder — per size, per venue bar widths
   const depth = useMemo(() => SIZES_USD.map((sz) => {
@@ -51,52 +59,53 @@ export function ExecutionTab() {
       if (!r) continue;
       const wb = Math.min(50, Math.abs(Math.min(0, r.bidBps)) / AX * 50);
       const wa = Math.min(50, Math.max(0, r.askBps) / AX * 50);
+      const color = venueColor(v, d.theme);
       // dim a venue's bar at a size it can't fill fully (filledFull=false)
-      segsBid.push({ w: wb, color: col[v], full: r.filledFull });
-      segsAsk.push({ w: wa, color: col[v], full: r.filledFull });
+      segsBid.push({ w: wb, color, full: r.filledFull });
+      segsAsk.push({ w: wa, color, full: r.filledFull });
     }
     segsBid.sort((a, b) => b.w - a.w); segsAsk.sort((a, b) => b.w - a.w);
     return { label: sizeLabel(sz), highlight: sz === size, segsBid, segsAsk };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }), [d.quotes, d.venues, pair, size, d.frame]);
+  }), [d.quotes, d.venueToggles, d.venues, pair, size, d.frame, d.theme]);
 
   // rolling stats — percentiles of the spread sample buffer per venue
   const stats = useMemo(() => {
     const rows = active.map((v) => {
-      const a = d.samples[v] ?? [];
+      const a = d.samples[v.id] ?? [];
       return {
-        name: v, color: col[v],
+        id: v.id, name: v.name, color: venueColor(v, d.theme),
         p5: percentile(a, .05), p25: percentile(a, .25), p50: percentile(a, .5),
         p75: percentile(a, .75), p95: percentile(a, .95),
         avg: a.length ? a.reduce((x, y) => x + y, 0) / a.length : 0, sd: stdev(a), n: a.length,
       };
     });
-    const tightest = rows.length ? rows.reduce((m, r) => (r.p50 < m.p50 ? r : m), rows[0]).name : null;
+    const tightest = rows.length ? rows.reduce((m, r) => (r.p50 < m.p50 ? r : m), rows[0]).id : null;
     return { rows, tightest };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [d.frame, d.venues, d.theme]);
+  }, [d.frame, d.venueToggles, d.venues, d.theme]);
 
   // hint: an active propAMM venue with no executable quote at the selected size
-  // but a real one at another size (Clober/Vault books are thin — often only the
-  // smallest size is two-sided/one-sided-real) so it doesn't read as "missing".
+  // but a real one at another size (thin books — often only the smallest size is
+  // two-sided/one-sided-real) so it doesn't read as "missing".
   const hint = useMemo(() => {
     const q = d.quotes; if (!q) return null;
-    const notes = active.filter((v) => v !== 'Bybit').map((v) => {
-      if (q.rows.some((r) => r.venue === v && r.market === pair && r.sizeUsd === size)) return null;
-      const at = SIZES_USD.filter((s) => q.rows.some((r) => r.venue === v && r.market === pair && r.sizeUsd === s));
-      return at.length ? `${v} quotes ${pair} at ${at.map(sizeLabel).join(' / ')}` : null;
+    const notes = active.filter((v) => v.role === 'venue').map((v) => {
+      if (q.rows.some((r) => r.venueId === v.id && r.market === pair && r.sizeUsd === size)) return null;
+      const at = SIZES_USD.filter((s) => q.rows.some((r) => r.venueId === v.id && r.market === pair && r.sizeUsd === s));
+      return at.length ? `${v.name} quotes ${pair} at ${at.map(sizeLabel).join(' / ')}` : null;
     }).filter(Boolean);
     return notes.length ? notes.join(' · ') : null;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [d.quotes, d.venues, pair, size, d.frame, d.theme]);
+  }, [d.quotes, d.venueToggles, d.venues, pair, size, d.frame, d.theme]);
 
   return (
     <div>
       <div style={{ padding: '18px 18px 10px' }}>
         <div style={{ fontSize: 14, fontWeight: 600, letterSpacing: '.06em' }}>REALTIME EXECUTION COMPARISON</div>
         <div style={{ fontSize: 11, color: C.dim3, marginTop: 6, lineHeight: 1.55, maxWidth: 880 }}>
-          Last 60s of quotes for the selected pair at the chosen notional. Spreads are quoted vs the Bybit <span style={{ color: C.text3 }}>MONUSDT</span> BBO mid.{' '}
-          <span style={{ color: C.text3 }}>Bybit (taker)</span> walks the live book for the requested size and overlays the configured taker fee ({taker} bps each side) — realized-vs-realized, the only honest comparison for size-sensitive flow.
+          Last 60s of quotes for the selected pair at the chosen notional. Spreads are quoted vs the <span style={{ color: C.text3 }}>{refName}</span> reference BBO mid.{' '}
+          <span style={{ color: C.text3 }}>{refLabel}</span> walks the live book for the requested size and overlays the configured taker fee ({taker} bps each side) — realized-vs-realized, the only honest comparison for size-sensitive flow.
         </div>
       </div>
 
@@ -115,17 +124,19 @@ export function ExecutionTab() {
         <div style={{ marginLeft: 'auto' }}>
           <Field label="VENUES">
             <div style={{ display: 'flex', gap: 4 }}>
-              {DISPLAY_VENUES.map((v) => {
-                const on = d.venues[v];
+              {chips.map((v) => {
+                const on = d.venueToggles[v.id];
+                const color = venueColor(v, d.theme);
+                const label = v.name.toUpperCase() + (v.taker ? ' (TAKER)' : '');
                 return (
-                  <div key={v} onClick={() => d.toggleVenue(v)} style={{
+                  <div key={v.id} onClick={() => d.toggleVenue(v.id)} style={{
                     display: 'flex', alignItems: 'center', gap: 6, padding: '4px 9px', borderRadius: 4, cursor: 'pointer',
                     fontSize: 11, whiteSpace: 'nowrap',
-                    border: `1px solid ${on ? hexA(col[v], 0.5) : 'var(--pill-border)'}`,
-                    color: on ? C.text : C.faint2, background: on ? hexA(col[v], 0.12) : 'transparent',
+                    border: `1px solid ${on ? hexA(color, 0.5) : 'var(--pill-border)'}`,
+                    color: on ? C.text : C.faint2, background: on ? hexA(color, 0.12) : 'transparent',
                   }}>
-                    <span style={{ width: 7, height: 7, borderRadius: '50%', background: on ? col[v] : C.ghost }} />
-                    {v === 'Bybit' ? 'BYBIT (taker)' : v === 'Vault' ? VAULT_LABEL.toUpperCase() : v.toUpperCase()}
+                    <span style={{ width: 7, height: 7, borderRadius: '50%', background: on ? color : C.ghost }} />
+                    {label}
                   </div>
                 );
               })}
@@ -137,7 +148,7 @@ export function ExecutionTab() {
       {/* QUOTE */}
       <Panel style={{ margin: '0 18px 14px' }}>
         <PanelHead icon="~" title="QUOTE" sub={`${pair} · ${sizeLabel(size)} · last 60s`}
-          right={<div style={{ fontSize: 9, color: C.faint2 }}>solid = ask · dashed = bid · ★ = tightest · vs CEX = realized buy vs Bybit-taker (+ = worse)</div>} />
+          right={<div style={{ fontSize: 9, color: C.faint2 }}>solid = ask · dashed = bid · ★ = tightest · vs CEX = realized buy vs {refName}-taker (+ = worse)</div>} />
         {/* flex row: the plot ends where the legend column begins, so quotes can
             never render underneath it (no absolute overlay). The canvas re-measures
             its own clientWidth each repaint, so it adapts to the narrower slot. */}
@@ -145,23 +156,23 @@ export function ExecutionTab() {
           <div style={{ flex: 1, minWidth: 0 }}>
             <QuoteCanvas />
           </div>
-          {/* width/vs-CEX column and "Clober Vault" naming are our approved
-              divergences; layout (flex-start, overlay bg, margins) matches the design. */}
+          {/* width/vs-CEX column is our approved divergence; venue names come
+              straight from the registry. Layout matches the design. */}
           <div style={{ flex: 'none', width: 316, margin: '6px 8px 0 14px', background: C.overlay, border: `1px solid ${C.line}`, padding: '8px 10px' }}>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 42px 42px 42px 50px', gap: '2px 6px', fontSize: 8.5, color: C.faint2, letterSpacing: '.05em', paddingBottom: 5, borderBottom: `1px solid ${C.line}` }}>
               <div>VENUE</div><div style={{ textAlign: 'right' }}>SPREAD</div><div style={{ textAlign: 'right' }}>BID</div><div style={{ textAlign: 'right' }}>ASK</div><div style={{ textAlign: 'right' }}>vs CEX</div>
             </div>
             {legend.map((r) => (
-              <div key={r.name} style={{ display: 'grid', gridTemplateColumns: '1fr 42px 42px 42px 50px', gap: '2px 6px', fontSize: 11, padding: '4px 0', alignItems: 'center' }}>
+              <div key={r.id} style={{ display: 'grid', gridTemplateColumns: '1fr 42px 42px 42px 50px', gap: '2px 6px', fontSize: 11, padding: '4px 0', alignItems: 'center' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
                   <span style={{ width: 8, height: 8, borderRadius: 2, background: r.color, flex: 'none' }} />
-                  <span style={{ color: C.text2, whiteSpace: 'nowrap' }}>{r.name === 'Vault' ? VAULT_LABEL : r.name}</span>
+                  <span style={{ color: C.text2, whiteSpace: 'nowrap' }}>{r.name}</span>
                   {/* one-sided venues need no badge — the n/a bid/ask already shows it */}
                   {!r.full
                     ? <span title="liquidity exhausts before the full notional — the price shown is for a partial fill, not executable at the full size" style={{ fontSize: 7.5, color: C.amber, border: `1px solid color-mix(in srgb, var(--amber) 45%, transparent)`, borderRadius: 3, padding: '0 3px', letterSpacing: '.04em' }}>PARTIAL</span>
-                    : <span style={{ fontSize: 9, color: r.name === tight ? C.green : 'transparent' }}>★</span>}
+                    : <span style={{ fontSize: 9, color: r.id === tight ? C.green : 'transparent' }}>★</span>}
                 </div>
-                <div style={{ textAlign: 'right', color: r.oneSided || !r.full ? C.faint2 : r.name === tight ? C.green : C.text, fontWeight: 600 }}>{r.oneSided ? '—' : r.spread.toFixed(2)}</div>
+                <div style={{ textAlign: 'right', color: r.oneSided || !r.full ? C.faint2 : r.id === tight ? C.green : C.text, fontWeight: 600 }}>{r.oneSided ? '—' : r.spread.toFixed(2)}</div>
                 <div style={{ textAlign: 'right', color: r.hasBid ? C.red : C.faint2 }}>{r.hasBid ? sgn(r.bid) : 'n/a'}</div>
                 <div style={{ textAlign: 'right', color: r.hasAsk ? C.green : C.faint2 }}>{r.hasAsk ? sgn(r.ask) : 'n/a'}</div>
                 <div style={{ textAlign: 'right', color: r.vsCex == null ? C.faint2 : r.vsCex > 0.05 ? C.red : r.vsCex < -0.05 ? C.green : C.dim, fontWeight: 600 }}>
@@ -180,7 +191,7 @@ export function ExecutionTab() {
 
       {/* BID_ASK_DEPTH */}
       <Panel style={{ margin: '0 18px 14px' }}>
-        <PanelHead icon="≡" title="BID_ASK_DEPTH" sub={`${pair} · spread vs Bybit mid (bps) by trade size`} />
+        <PanelHead icon="≡" title="BID_ASK_DEPTH" sub={`${pair} · spread vs ${refName} mid (bps) by trade size`} />
         <div style={{ padding: '16px 18px 8px' }}>
           <div style={{ display: 'flex', paddingLeft: 64, marginBottom: 10 }}>
             <div style={{ flex: 1, textAlign: 'center', fontSize: 9, color: C.faint2, letterSpacing: '.1em' }}>BIDS — below mid</div>
@@ -215,15 +226,15 @@ export function ExecutionTab() {
             <div>VENUE</div><div style={{ textAlign: 'right' }}>P5</div><div style={{ textAlign: 'right' }}>P25</div><div style={{ textAlign: 'right' }}>P50</div><div style={{ textAlign: 'right' }}>P75</div><div style={{ textAlign: 'right' }}>P95</div><div style={{ textAlign: 'right' }}>AVG</div><div style={{ textAlign: 'right' }}>σ</div><div style={{ textAlign: 'right' }}>N</div>
           </div>
           {stats.rows.map((r) => (
-            <div key={r.name} style={{ display: 'grid', gridTemplateColumns: '1.4fr repeat(7, 1fr) 0.8fr', gap: 6, padding: '8px 6px', fontSize: 11.5, borderBottom: `1px solid ${C.line3}`, alignItems: 'center' }}>
+            <div key={r.id} style={{ display: 'grid', gridTemplateColumns: '1.4fr repeat(7, 1fr) 0.8fr', gap: 6, padding: '8px 6px', fontSize: 11.5, borderBottom: `1px solid ${C.line3}`, alignItems: 'center' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
                 <span style={{ width: 8, height: 8, borderRadius: 2, background: r.color }} />
                 <span style={{ color: C.text2 }}>{r.name}</span>
-                <span style={{ fontSize: 9, color: r.name === stats.tightest ? C.green : 'transparent' }}>★</span>
+                <span style={{ fontSize: 9, color: r.id === stats.tightest ? C.green : 'transparent' }}>★</span>
               </div>
               <div style={{ textAlign: 'right', color: C.dim }}>{r.p5.toFixed(3)}</div>
               <div style={{ textAlign: 'right', color: C.dim }}>{r.p25.toFixed(3)}</div>
-              <div style={{ textAlign: 'right', color: r.name === stats.tightest ? C.green : C.text, fontWeight: 600 }}>{r.p50.toFixed(3)}</div>
+              <div style={{ textAlign: 'right', color: r.id === stats.tightest ? C.green : C.text, fontWeight: 600 }}>{r.p50.toFixed(3)}</div>
               <div style={{ textAlign: 'right', color: C.dim }}>{r.p75.toFixed(3)}</div>
               <div style={{ textAlign: 'right', color: C.dim }}>{r.p95.toFixed(3)}</div>
               <div style={{ textAlign: 'right', color: C.dim3 }}>{r.avg.toFixed(3)}</div>
@@ -231,7 +242,7 @@ export function ExecutionTab() {
               <div style={{ textAlign: 'right', color: C.faint2 }}>{r.n}</div>
             </div>
           ))}
-          <div style={{ fontSize: 9, color: C.faint3, marginTop: 9 }}>p50 = median round-trip spread (bps, bid/ask vs the Bybit MONUSDT mid) · σ = spread stdev · ★ = tightest p50 in window</div>
+          <div style={{ fontSize: 9, color: C.faint3, marginTop: 9 }}>p50 = median round-trip spread (bps, bid/ask vs the {refName} MONUSDT mid) · σ = spread stdev · ★ = tightest p50 in window</div>
         </div>
       </Panel>
     </div>

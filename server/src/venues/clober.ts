@@ -1,9 +1,15 @@
-import type { QuoteRow, Fill, Side, FillCategory } from '@shared';
+import type { QuoteRow, Fill, Side, FillCategory, VenueMeta } from '@shared';
 import { ADDR, TOKENS, isMonAddress, isMonSymbol } from '@shared';
 import { publicClient, getLogsChunked } from '../chain/rpc.js';
-import { bookViewerAbi, bookManagerAbi, liquidityVaultAbi, CLOBER_MIN_PRICE } from '../chain/abis.js';
+import { bookViewerAbi, bookManagerAbi, liquidityVaultAbi, routerGatewayAbi, CLOBER_MIN_PRICE } from '../chain/abis.js';
 import { fromUnits, toUnits, shortHex } from '../util.js';
 import type { UsdPricer } from '../pricer.js';
+import type { VenueAdapter, AdapterContext, LogBundle } from './adapter.js';
+import { seedCloberDaily } from '../seed/subgraph.js';
+
+/** Clober oracle-vault (propAMM) display venue — the ONE venue this adapter
+ *  surfaces. Its per-theme color is the single source of truth for the frontend. */
+const CLOBER_VAULT_VENUE: VenueMeta = { id: 'clober-vault', name: 'Clober Vault', color: { light: '#9C6B16', dark: '#9A88FF' }, kind: 'vault', role: 'venue' };
 
 /**
  * Clober V2 — best-effort live integration (spec §3, §5.1, §5.2).
@@ -162,21 +168,18 @@ export async function quoteClober(
   markets: CloberMarket[], sizesUsd: readonly number[], monUsd: number, pricer: UsdPricer,
 ): Promise<QuoteRow[]> {
   if (!markets.length || monUsd <= 0) return [];
-  type Leg = { market: string; size: number; side: Side; book: CloberBook; inDec: number; outDec: number; venue: 'Clober' | 'Vault'; reqBase: bigint };
+  type Leg = { market: string; size: number; side: Side; book: CloberBook; inDec: number; outDec: number; reqBase: bigint };
   const legs: Leg[] = [];
   for (const m of markets) {
     const stable = tokenBySym(m.stable);
-    // venue is decided per market (not per leg) so a market's bid + ask land in
-    // the same row; a market backed by vault books surfaces as the Vault venue.
-    const venue: 'Clober' | 'Vault' = (m.monBase?.isVault || m.stableBase?.isVault) ? 'Vault' : 'Clober';
     for (const size of sizesUsd) {
       if (m.monBase) {
         // SELL MON: spend base(MON) → take quote(stable)
-        legs.push({ market: m.market, size, side: 'sell', book: m.monBase, inDec: TOKENS.WMON.decimals, outDec: stable.decimals, venue, reqBase: toUnits(pricer.tokenForUsd('WMON', size), TOKENS.WMON.decimals) });
+        legs.push({ market: m.market, size, side: 'sell', book: m.monBase, inDec: TOKENS.WMON.decimals, outDec: stable.decimals, reqBase: toUnits(pricer.tokenForUsd('WMON', size), TOKENS.WMON.decimals) });
       }
       if (m.stableBase) {
         // BUY MON: spend base(stable) → take quote(MON)
-        legs.push({ market: m.market, size, side: 'buy', book: m.stableBase, inDec: stable.decimals, outDec: TOKENS.WMON.decimals, venue, reqBase: toUnits(size, stable.decimals) });
+        legs.push({ market: m.market, size, side: 'buy', book: m.stableBase, inDec: stable.decimals, outDec: TOKENS.WMON.decimals, reqBase: toUnits(size, stable.decimals) });
       }
     }
   }
@@ -206,11 +209,10 @@ export async function quoteClober(
     const px = l.side === 'sell' ? takenH / spentH : spentH / takenH;
     const bps = (px / monUsd - 1) * 1e4;
     const legFilledFull = spentBase >= (l.reqBase * 999_999_999n) / 1_000_000_000n;
-    const venue = l.venue;
-    const key = `${venue}|${l.market}|${l.size}`;
+    const key = `${l.market}|${l.size}`;
     let row = rowByKey.get(key);
     if (!row) {
-      row = { venue, market: l.market, sizeUsd: l.size, bidBps: 0, askBps: 0, bidPx: 0, askPx: 0, spreadBps: 0, filledFull: true, feeBps: 0, ts };
+      row = { venueId: CLOBER_VAULT_VENUE.id, market: l.market, sizeUsd: l.size, bidBps: 0, askBps: 0, bidPx: 0, askPx: 0, spreadBps: 0, filledFull: true, feeBps: 0, ts };
       rowByKey.set(key, row);
       fullByKey.set(key, { bid: false, ask: false });
     }
@@ -268,7 +270,7 @@ export function cloberTickToPrice(tick: number, monIsBase: boolean, stableDecima
  */
 export function decodeCloberTake(
   log: { args: any; transactionHash: string; blockNumber: bigint; logIndex: number },
-  books: Map<string, CloberBook>, vault: Set<string>, tsMs: number, router?: RouterInfo,
+  books: Map<string, CloberBook>, tsMs: number, router?: RouterInfo,
 ): Fill | null {
   const a = log.args; if (!a) return null;
   const bookId = String(a.bookId);
@@ -301,12 +303,11 @@ export function decodeCloberTake(
   // A Clober book is one-directional: a Take consumes resting bids (the taker
   // delivers base, receives quote), so side follows the book's orientation.
   const side: Side = monIsBase ? 'sell' : 'buy';
-  const isVault = vault.has(bookId);
 
   return {
     // deterministic id (txHash:logIndex) so re-tail/gap-fill/restart dedupes.
     id: `clb-${log.transactionHash.toLowerCase()}-${log.logIndex}`,
-    protocol: 'Clober', source: 'clober-take', scope: isVault ? 'vault' : 'venue',
+    venueId: CLOBER_VAULT_VENUE.id,
     market: `MON/${stableSym}`, side, category: router?.category ?? 'DIRECT',
     usd, baseAmount, execPx,
     txHash: log.transactionHash, to: router?.to ?? shortHex(a.user ?? ZERO),
@@ -326,4 +327,84 @@ export function buildRouterMap(logs: Array<{ args: any; transactionHash: string 
     m.set(l.transactionHash.toLowerCase(), { to: shortHex(String(a.router ?? ZERO)), category: 'ROUTER' });
   }
   return m;
+}
+
+const ev = (abi: readonly unknown[], name: string) => abi.find((x: any) => x.type === 'event' && x.name === name);
+
+/**
+ * Clober oracle-vault adapter — a MIXED-source venue: subgraph for discovery +
+ * closed-day backfill, the chain for live quotes + fills.
+ *  - discover(): vault (propAMM) books from the subgraph (recent-Open scan fallback).
+ *  - backfill(): closed-day vault volume from the subgraph (BookDayData).
+ *  - quote():    BookViewer.getExpectedOutput on the vault books.
+ *  - decode():   BookManager.Take on vault books, with RouterGateway.Swap for
+ *                routed-flow attribution and Open events to fold in new vault books.
+ * Non-vault Clober flow is ignored (this venue IS the vault). To also surface
+ * independent Clober later: declare a second venue here + stop filtering isVault.
+ */
+export function createCloberVaultAdapter(): VenueAdapter {
+  let books = new Map<string, CloberBook>();   // vault-only book cache
+  let vault = new Set<string>();
+  let markets: CloberMarket[] = [];
+
+  const mergeVaultBooks = (vaultOpens: any[], bmOpens: any[]): void => {
+    for (const l of vaultOpens) {
+      const a = l.args; if (!a) continue;
+      if (a.bookIdA !== undefined) vault.add(String(a.bookIdA));
+      if (a.bookIdB !== undefined) vault.add(String(a.bookIdB));
+    }
+    let changed = false;
+    for (const l of bmOpens) {
+      const a = l.args; if (!a) continue;
+      const id = String(a.id);
+      if (!vault.has(id) || books.has(id)) continue;   // vault-only + not already cached
+      const b = cloberBookFromOpen(a, vault);           // null if not MON/stable
+      if (b) { books.set(id, b); changed = true; }
+    }
+    if (changed) markets = assembleCloberMarkets(books);
+  };
+
+  return {
+    venues: () => [CLOBER_VAULT_VENUE],
+    async discover(ctx: AdapterContext) {
+      let disc: { books: Map<string, CloberBook>; markets: CloberMarket[]; vault: Set<string> };
+      try {
+        disc = await discoverCloberViaSubgraph(ctx.config.subgraphUrl);
+        ctx.log(`Clober Vault: subgraph discovery (${disc.vault.size} vault book(s))`);
+      } catch {
+        ctx.log('Clober Vault: subgraph discovery failed; trying recent Open logs');
+        try { disc = await discoverClober(2000); } catch { disc = { books: new Map(), markets: [], vault: new Set() }; }
+      }
+      vault = disc.vault;
+      books = new Map([...disc.books].filter(([, b]) => b.isVault));   // keep only vault books
+      markets = assembleCloberMarkets(books);
+    },
+    async backfill(ctx: AdapterContext, sinceUtc: string) {
+      const vaultBookIds = [...vault];
+      if (!vaultBookIds.length) return {};
+      const seed = await seedCloberDaily(ctx.config.subgraphUrl, sinceUtc, [], vaultBookIds);
+      return { days: [...seed].map(([utcDay, cd]) => ({ utcDay, byVenue: { [CLOBER_VAULT_VENUE.id]: { usd: cd.vault } } })) };
+    },
+    quote(ctx, sizesUsd) {
+      return quoteClober(markets, sizesUsd, ctx.referenceMid(), ctx.pricer);
+    },
+    logSources() {
+      return [
+        { key: 'take', address: ADDR.bookManager as `0x${string}`, events: [ev(bookManagerAbi, 'Take')] },
+        { key: 'router', address: ADDR.routerGateway as `0x${string}`, events: [ev(routerGatewayAbi, 'Swap')] },
+        { key: 'bmOpen', address: ADDR.bookManager as `0x${string}`, events: [ev(bookManagerAbi, 'Open')] },
+        { key: 'vaultOpen', address: ADDR.liquidityVault as `0x${string}`, events: [ev(liquidityVaultAbi, 'Open')] },
+      ];
+    },
+    decode(_ctx: AdapterContext, logs: LogBundle, tsOf) {
+      mergeVaultBooks(logs.vaultOpen ?? [], logs.bmOpen ?? []);
+      const routerMap = buildRouterMap(logs.router ?? []);
+      const out: Fill[] = [];
+      for (const l of logs.take ?? []) {
+        const f = decodeCloberTake(l, books, tsOf(l.blockNumber), routerMap.get(String(l.transactionHash).toLowerCase()));
+        if (f) out.push(f);
+      }
+      return out;
+    },
+  };
 }

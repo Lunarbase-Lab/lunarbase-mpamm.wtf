@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react';
-import { type Venue } from '@shared';
-import { useDashboard, DISPLAY_VENUES } from '../store';
-import { hexA, COL, CH } from '../theme';
+import { type VenueMeta } from '@shared';
+import { useDashboard } from '../store';
+import { hexA, venueColor, CH } from '../theme';
 
 const N = 120;
 
@@ -42,13 +42,17 @@ export function QuoteCanvas() {
     ctx.clearRect(0, 0, w, h);
 
     const padL = 58, padR = 10, padT = 12, padB = 22;
-    const col = COL[d.theme], ch = CH[d.theme]; // theme-aware canvas colors (can't use var())
-    const active = DISPLAY_VENUES.filter((v) => d.venues[v]);
+    const ch = CH[d.theme]; // theme-aware canvas chrome colors (can't use var())
+    // propAMM venues + the CEX reference, filtered by the user's toggles. Colors,
+    // ids and the set itself come from the registry — nothing hardcoded here.
+    const chips: VenueMeta[] = d.reference ? [...d.displayVenues, d.reference] : d.displayVenues;
+    const active = chips.filter((v) => d.venueToggles[v.id]);
     if (!active.length) return;
 
     let mn = Infinity, mx = -Infinity;
     for (const v of active) {
-      const s = d.series[v];
+      const s = d.series[v.id];
+      if (!s) continue;
       for (const p of s.bid) { if (p < mn) mn = p; if (p > mx) mx = p; }
       for (const p of s.ask) { if (p < mn) mn = p; if (p > mx) mx = p; }
     }
@@ -89,13 +93,14 @@ export function QuoteCanvas() {
     };
 
     // FILLS first — widest-spread band underneath so tighter venues stay legible.
-    const spreadOf = (v: Venue) => {
-      const r = d.quotes?.rows.find((x) => x.venue === v && x.market === d.pair && x.sizeUsd === d.size);
+    const spreadOf = (v: VenueMeta) => {
+      const r = d.quotes?.rows.find((x) => x.venueId === v.id && x.market === d.pair && x.sizeUsd === d.size);
       return r ? Math.abs(r.spreadBps) : Infinity; // no live quote → treat as widest (underneath)
     };
     const byW = [...active].sort((a, b) => spreadOf(b) - spreadOf(a));
     for (const v of byW) {
-      const s = d.series[v];
+      const s = d.series[v.id];
+      if (!s) continue;
       const n = Math.min(s.ask.length, s.bid.length);
       if (n < 2) continue; // need both sides for a ribbon (one-sided venues skip)
       ctx.beginPath();
@@ -104,21 +109,22 @@ export function QuoteCanvas() {
       ctx.lineTo(X(n - 1), Y(s.bid[n - 1]));
       for (let i = n - 1; i > 0; i--) { ctx.lineTo(X(i - 1), Y(s.bid[i])); ctx.lineTo(X(i - 1), Y(s.bid[i - 1])); } // stepped bottom (bid)
       ctx.closePath();
-      ctx.fillStyle = hexA(col[v], ch.ribbon); ctx.fill();
+      ctx.fillStyle = hexA(venueColor(v, d.theme), ch.ribbon); ctx.fill();
     }
 
     // STROKES on top — solid stepped ask, dashed stepped bid (each side drawn
     // independently so a one-sided venue still shows its real line).
     for (const v of active) {
-      const s = d.series[v];
-      ctx.strokeStyle = col[v];
+      const s = d.series[v.id];
+      if (!s) continue;
+      ctx.strokeStyle = venueColor(v, d.theme);
       if (s.ask.length >= 2) { ctx.lineWidth = 1.5; ctx.setLineDash([]); stepPath(s.ask); ctx.stroke(); }
       if (s.bid.length >= 2) { ctx.lineWidth = 1.1; ctx.setLineDash([3, 3]); stepPath(s.bid); ctx.stroke(); ctx.setLineDash([]); }
     }
   };
 
   // repaint on the data cadence + on venue/pair/size/theme changes (survives remount)
-  useEffect(() => { paintRef.current(); }, [d.frame, d.venues, d.pair, d.size, d.series, d.theme]);
+  useEffect(() => { paintRef.current(); }, [d.frame, d.venueToggles, d.venues, d.pair, d.size, d.series, d.theme]);
 
   // mount: paint now + backups for late layout, and repaint on resize
   useEffect(() => {

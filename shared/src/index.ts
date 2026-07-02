@@ -10,25 +10,36 @@
 // Domain vocabulary
 // ──────────────────────────────────────────────────────────────────────────
 
-/** A landed-trade venue. LFJ + Clober are the v1 protocols; Vault is Clober's
- *  oracle-vault (propAMM) cut surfaced as its own quote; Bybit is the CEX
- *  benchmark. */
-export type Venue = 'LFJ' | 'Clober' | 'Vault' | 'Bybit';
-
-/** Persisted/landed protocols (a Fill always belongs to one of these). */
-export type Protocol = 'LFJ' | 'Clober';
-
 /** buy/sell of the base asset (MON). */
 export type Side = 'buy' | 'sell';
-
-/** Clober attribution scope (spec §3). `venue` = whole-venue Take flow;
- *  `vault` = Take on a vault book id (propAMM cut). */
-export type Scope = 'venue' | 'vault';
 
 /** Routing classification for a fill, shown in the tape/leaderboard. */
 export type FillCategory = 'DIRECT' | 'ROUTER' | 'AGG' | 'CEX/DEX';
 
 export type DataSourceMode = 'live' | 'sim';
+
+/**
+ * Venue identity — the composable unit. Every venue (LFJ, Clober Vault, …) and
+ * the CEX reference (Bybit) is described by one of these, produced by its
+ * adapter on the backend and shipped to the frontend so NOTHING about a venue
+ * is hardcoded in the core: name, color and grouping all come from here.
+ *
+ * `role: 'venue'` = a propAMM/on-chain venue that lands fills and shows in
+ * Volume/Markouts/Leaderboard. `role: 'reference'` = the CEX benchmark (Bybit):
+ * it provides the markout/quote reference and shows only in Execution.
+ */
+export interface VenueMeta {
+  /** stable key used everywhere as `Fill.venueId` / `QuoteRow.venueId` (e.g. 'lfj', 'clober-vault', 'bybit'). */
+  id: string;
+  /** display name (e.g. 'LFJ', 'Clober Vault', 'Bybit'). */
+  name: string;
+  /** venue color per theme — the single source of truth for line/bar/swatch color. */
+  color: { light: string; dark: string };
+  kind: 'amm' | 'clob' | 'vault' | 'cex';
+  role: 'venue' | 'reference';
+  /** reference venues that are walked as a taker render a "(taker)" suffix. */
+  taker?: boolean;
+}
 
 // ──────────────────────────────────────────────────────────────────────────
 // Constants — verified contracts & token universe (spec Appendix A)
@@ -107,14 +118,6 @@ export const SIZES_USD = [100, 1000, 10000, 100000] as const;
 /** Markout horizons (seconds) joined to the Bybit reference (spec §4.2/4.3). */
 export const MARKOUT_HORIZONS = [0, 5, 10, 30, 60] as const;
 
-/** Brand palette — kept here so backend-seeded series and frontend agree. */
-export const VENUE_COLOR: Record<Venue, string> = {
-  LFJ: '#6E8BFF',
-  Clober: '#45C8E8',
-  Vault: '#9A88FF',
-  Bybit: '#B9BCC6',
-};
-
 // ──────────────────────────────────────────────────────────────────────────
 // Quotes (Execution view, spec §4.2 / §6.1)
 // ──────────────────────────────────────────────────────────────────────────
@@ -122,7 +125,8 @@ export const VENUE_COLOR: Record<Venue, string> = {
 /** One realized quote for (venue, market, size). bid/ask are in bps vs the
  *  Bybit MONUSDT BBO mid; px is quote-per-base (stable per MON). */
 export interface QuoteRow {
-  venue: Venue;
+  /** which venue this quote belongs to (VenueMeta.id). */
+  venueId: string;
   market: string;
   sizeUsd: number;
   bidBps: number;
@@ -163,9 +167,8 @@ export interface QuoteSnapshot {
 
 export interface Fill {
   id: string;
-  protocol: Protocol;
-  source: 'lfj-swap' | 'clober-take' | 'clober-router';
-  scope: Scope;
+  /** which venue landed this fill (VenueMeta.id) — set by the venue's adapter. */
+  venueId: string;
   market: string;
   side: Side;
   category: FillCategory;
@@ -195,25 +198,19 @@ export interface Fill {
 // Volume (spec §4.1 / §6.2)
 // ──────────────────────────────────────────────────────────────────────────
 
+/** One venue's slice of a day: USD notional + forward-indexed swap count.
+ *  Seeded (backfilled) days may carry `usd` with `swaps: 0` when the source
+ *  (e.g. a subgraph) exposes volume but not a per-swap count. */
+export interface VenueDaily {
+  usd: number;
+  swaps: number;
+}
+
 export interface DailyVolume {
   /** UTC day, 'YYYY-MM-DD'. */
   utcDay: string;
-  /** USD notional, LFJ. */
-  lfj: number;
-  /** USD notional, Clober whole-venue (includes the vault cut). */
-  cloberVenue: number;
-  /** USD notional, Clober vault (propAMM) cut only. */
-  cloberVault: number;
-  /** total landed swaps across both venues, forward-indexed. Seeded closed
-   *  Clober days carry volume but no per-swap count (the subgraph exposes
-   *  volumeUSD only), so they contribute 0 here. */
-  swaps: number;
-  /** per-source swap counts (forward-indexed), so the breakdown shows real
-   *  counts per protocol/scope instead of a USD-prorated estimate.
-   *  cloberVaultSwaps ⊆ cloberSwaps; swaps = lfjSwaps + cloberSwaps. */
-  lfjSwaps: number;
-  cloberSwaps: number;
-  cloberVaultSwaps: number;
+  /** per-venue slice, keyed by VenueMeta.id. Venues absent from a day are 0. */
+  byVenue: Record<string, VenueDaily>;
   /** true for today's still-accumulating bucket. */
   partial: boolean;
 }
@@ -232,6 +229,9 @@ export interface MarketState {
   sizesUsd: number[];
   quoteCadenceMs: number;
   source: DataSourceMode;
+  /** the venue registry (adapters + CEX reference) — the frontend renders
+   *  everything venue-related from this, so venues aren't hardcoded client-side. */
+  venues: VenueMeta[];
   /** present when the live source degrades and parts fall back. */
   notes?: string[];
 }

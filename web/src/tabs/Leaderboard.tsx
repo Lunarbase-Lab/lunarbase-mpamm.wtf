@@ -1,7 +1,7 @@
 import { useMemo } from 'react';
 import type { Fill } from '@shared';
 import { useDashboard } from '../store';
-import { C, COL, SEM, VAULT_LABEL, type Theme } from '../theme';
+import { C, SEM, venueColor } from '../theme';
 import { Pills, SideTag } from '../components/ui';
 import { fmtUsd, fmtAmt, fmtInt, pnlFmt, percentile, sparkPath, humanAge, shortHex } from '../lib/format';
 
@@ -9,19 +9,10 @@ const HZ_IDX: Record<string, number> = { 'T+0S': 0, 'T+10S': 2, 'T+30S': 3, 'T+6
 const DAY = 86_400_000;
 const WIN_MS: Record<string, number> = { '24H': DAY, '7D': 7 * DAY, '30D': 30 * DAY };
 
-// PROTOCOL display name + colour (DCLogic.protoCol against the displayProto).
-function displayProto(f: Fill): string {
-  return f.scope === 'vault' ? VAULT_LABEL.toUpperCase() : f.protocol.toUpperCase();
-}
-function protoCol(n: string, theme: Theme): string {
-  const col = COL[theme];
-  return n === 'LFJ' ? col.LFJ : n === 'CLOBER' ? col.Clober : col.Vault;
-}
-// CATEGORY colour (DCLogic.catCol). The contract's 'DIRECT' maps to the
-// design's '—' bucket, which falls through to the faint default.
-function catCol(c: string, theme: Theme): string {
-  const col = COL[theme];
-  return c === 'ROUTER' ? C.amber : c === 'CEX/DEX' ? col.Clober : c === 'AGG' ? col.Vault : C.faint2;
+// CATEGORY colour (DCLogic.catCol) from stable semantic/theme tokens (never a
+// venue color). The contract's 'DIRECT' maps to the design's '—' faint default.
+function catCol(c: string): string {
+  return c === 'ROUTER' ? C.amber : c === 'CEX/DEX' ? C.link : c === 'AGG' ? C.accent : C.faint2;
 }
 // display label for a fill category — DIRECT renders as the em-dash.
 function catLabel(c: string): string {
@@ -35,21 +26,16 @@ const TOP_GRID = '30px 76px 64px 82px 1.3fr 64px 88px 46px 1fr 1fr 76px 56px 80p
 export function LeaderboardTab() {
   const d = useDashboard();
   const fills = d.fills;
-  const { lbWin, lbGroup, lbHz, lbMk, lbWinners, lbTop } = d;
+  const { lbWin, lbGroup, lbHz, lbMk, lbWinners, lbTop, venuesById } = d;
 
   const hzIdx = HZ_IDX[lbHz] ?? 0;
   const sign = lbMk === 'MAKER' ? -1 : 1;
 
-  // real time-window slice over the persisted fills (no extrapolation).
-  // propAMM dashboard: keep LFJ + the Clober oracle-vault cut, always dropping
-  // independent (whole-venue) Clober flow.
+  // real time-window slice over the persisted fills (no extrapolation). Fills now
+  // carry only display venue ids, so no venue-specific filtering is needed here.
   const windowed = useMemo(() => {
     const since = Date.now() - (WIN_MS[lbWin] ?? WIN_MS['24H']);
-    return fills.filter((f) => {
-      if (f.ts < since) return false;
-      if (f.protocol === 'Clober' && f.scope !== 'vault') return false;
-      return true;
-    });
+    return fills.filter((f) => f.ts >= since);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fills, lbWin, d.frame]);
 
@@ -63,16 +49,20 @@ export function LeaderboardTab() {
   );
 
   // PROTOCOL_LEADERBOARD rows — grouped + percentiled per DCLogic.lbVals().
+  // PROTOCOL groups by the stable Fill.venueId; the row label + color resolve
+  // from the registry (venuesById), so nothing about a venue is hardcoded.
   const lbRows = useMemo(() => {
     const keyFn = (f: Fill): string =>
-      lbGroup === 'PROTOCOL' ? displayProto(f)
+      lbGroup === 'PROTOCOL' ? f.venueId
         : lbGroup === 'CATEGORY' ? (f.category === 'DIRECT' ? 'direct' : f.category)
           : lbGroup === 'POOL' ? f.pool
             : f.to;
-    const colorFor = (n: string): string =>
-      lbGroup === 'PROTOCOL' ? protoCol(n, d.theme)
-        : lbGroup === 'CATEGORY' ? catCol(n === 'direct' ? '—' : n, d.theme)
-          : COL[d.theme].Vault;
+    const labelFor = (k: string): string =>
+      lbGroup === 'PROTOCOL' ? (venuesById[k]?.name ?? k) : k;
+    const colorFor = (k: string): string =>
+      lbGroup === 'PROTOCOL' ? venueColor(venuesById[k], d.theme)
+        : lbGroup === 'CATEGORY' ? catCol(k === 'direct' ? '—' : k)
+          : C.accent;
 
     const groups: Record<string, Fill[]> = {};
     for (const f of windowedHz) {
@@ -87,7 +77,7 @@ export function LeaderboardTab() {
       let c = 0;
       const sp = ord.map((f) => { c += (sign * (f.markoutsBps[hzIdx] ?? 0)) / 1e4 * f.usd; return c; });
       return {
-        name: k, color: colorFor(k), vol, swaps: fs.length,
+        name: labelFor(k), color: colorFor(k), vol, swaps: fs.length,
         p5: percentile(mks, .05), p25: percentile(mks, .25), p50: percentile(mks, .5),
         p75: percentile(mks, .75), p95: percentile(mks, .95), pnl, sp,
       };
@@ -96,7 +86,7 @@ export function LeaderboardTab() {
     arr = arr.slice(0, 12);
     return arr;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [windowedHz, lbGroup, lbMk, d.frame, d.theme]);
+  }, [windowedHz, lbGroup, lbMk, d.frame, d.theme, venuesById]);
 
   // TOP_SWAPS rows — biggest single-swap winners/losers per DCLogic.lbVals().
   const topRows = useMemo(() => {
@@ -118,6 +108,7 @@ export function LeaderboardTab() {
   });
 
   const groupLbl = lbGroup.toLowerCase();
+  const refName = d.reference?.name ?? 'the CEX reference';
 
   return (
     <div>
@@ -125,7 +116,7 @@ export function LeaderboardTab() {
         <div>
           <div style={{ fontSize: 14, fontWeight: 600, letterSpacing: '.06em', color: C.text }}>MARKOUT LEADERBOARD</div>
           <div style={{ fontSize: 11, color: C.dim3, marginTop: 6, lineHeight: 1.55, maxWidth: 760 }}>
-            Percentile distribution of markouts and the biggest single-swap winners / losers, per group, over the selected window. Markouts vs Bybit MONUSDT BBO mid; pool PnL = Σ(markout_bps × size_usd / 10000).
+            Percentile distribution of markouts and the biggest single-swap winners / losers, per group, over the selected window. Markouts vs {refName} MONUSDT BBO mid; pool PnL = Σ(markout_bps × size_usd / 10000).
           </div>
         </div>
         <Pills options={['24H', '7D', '30D']} value={lbWin} onChange={(v) => d.set('lbWin', v)} sm />
@@ -243,7 +234,7 @@ export function LeaderboardTab() {
                 <div style={{ color: C.faint2 }}>{humanAge((Date.now() - f.ts) / 1000)}</div>
                 <div style={{ color: C.link }}>{shortHex(f.txHash)}</div>
                 <div style={{ color: C.dim3, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{f.to}</div>
-                <div style={{ color: catCol(f.category, d.theme), fontSize: 9 }}>{catLabel(f.category)}</div>
+                <div style={{ color: catCol(f.category), fontSize: 9 }}>{catLabel(f.category)}</div>
                 <div style={{ color: C.faint2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{f.pool}</div>
                 <div><SideTag side={f.side} /></div>
                 <div style={{ textAlign: 'right', color: C.dim }}>{inAmt}</div>

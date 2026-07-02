@@ -1,10 +1,15 @@
-import type { QuoteRow, Side, Fill } from '@shared';
+import type { QuoteRow, Side, Fill, VenueMeta } from '@shared';
 import { TOKENS } from '@shared';
 import { publicClient } from '../chain/rpc.js';
 import { lbFactoryAbi, lbPairAbi } from '../chain/abis.js';
 import { ADDR } from '@shared';
 import { fromUnits, toUnits, shortHex } from '../util.js';
 import type { UsdPricer } from '../pricer.js';
+import type { VenueAdapter, AdapterContext, LogBundle } from './adapter.js';
+
+/** LFJ display venue — its `color` (per theme) is the single source of truth the
+ *  frontend reads; nothing about LFJ is hardcoded outside this adapter. */
+const LFJ_VENUE: VenueMeta = { id: 'lfj', name: 'LFJ', color: { light: '#FF4D00', dark: '#6E8BFF' }, kind: 'amm', role: 'venue' };
 
 /** A discovered LFJ Liquidity Book market (MON vs one stable). */
 export interface LbMarket {
@@ -138,7 +143,7 @@ export async function quoteLfj(
     let row = rowByKey.get(key);
     if (!row) {
       row = {
-        venue: 'LFJ', market: l.market, sizeUsd: l.size,
+        venueId: LFJ_VENUE.id, market: l.market, sizeUsd: l.size,
         bidBps: 0, askBps: 0, bidPx: 0, askPx: 0, spreadBps: 0,
         filledFull: true, feeBps: 0, ts,
       };
@@ -186,12 +191,49 @@ export function decodeLfjSwap(
     // deterministic id: a (txHash, logIndex) pair is unique per on-chain event,
     // so a re-tail / gap-fill / restart re-decode dedupes instead of duplicating.
     id: `lfj-${log.transactionHash.toLowerCase()}-${log.logIndex}`,
-    protocol: 'LFJ', source: 'lfj-swap', scope: 'venue',
+    venueId: LFJ_VENUE.id,
     market: market.market, side: isBuy ? 'buy' : 'sell', category: 'DIRECT',
     usd: stableAmount, baseAmount, execPx,
     txHash: log.transactionHash, to: shortHex(a.to ?? '0x'),
     pool: shortHex(market.pair),
     blockNumber: Number(log.blockNumber), ts: tsMs,
     markoutsBps: [null, null, null, null, null],
+  };
+}
+
+const ev = (abi: readonly unknown[], name: string) => abi.find((x: any) => x.type === 'event' && x.name === name);
+
+/**
+ * LFJ Liquidity Book adapter — fully on-chain, no subgraph. Discovers pairs via
+ * LBFactory, quotes via LBPair.getSwapOut, decodes LBPair.Swap logs. No
+ * backfill(), so LFJ history accumulates forward from first run.
+ */
+export function createLfjAdapter(): VenueAdapter {
+  let markets: LbMarket[] = [];
+  let byAddr = new Map<string, LbMarket>();
+  return {
+    venues: () => [LFJ_VENUE],
+    async discover(ctx: AdapterContext) {
+      markets = await discoverLfj();
+      byAddr = new Map(markets.map((m) => [m.pair.toLowerCase(), m]));
+      ctx.log(`LFJ: ${markets.length} market(s)`);
+    },
+    quote(ctx, sizesUsd) {
+      return quoteLfj(markets, sizesUsd, ctx.referenceMid(), ctx.pricer);
+    },
+    logSources() {
+      if (!markets.length) return [];
+      return [{ key: 'swap', address: markets.map((m) => m.pair), events: [ev(lbPairAbi, 'Swap')] }];
+    },
+    decode(_ctx: AdapterContext, logs: LogBundle, tsOf) {
+      const out: Fill[] = [];
+      for (const l of logs.swap ?? []) {
+        const m = byAddr.get(String(l.address).toLowerCase());
+        if (!m) continue;
+        const f = decodeLfjSwap(l, m, tsOf(l.blockNumber));
+        if (f) out.push(f);
+      }
+      return out;
+    },
   };
 }

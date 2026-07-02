@@ -1,46 +1,43 @@
 import { BaseSource } from './index.js';
 import {
-  MARKETS, SIZES_USD, MARKOUT_HORIZONS, ADDR,
+  MARKETS, SIZES_USD, MARKOUT_HORIZONS,
   type DataSourceMode, type MarketState, type QuoteSnapshot, type QuoteRow, type Fill, type DailyVolume,
 } from '@shared';
 import { config } from '../config.js';
 import { publicClient, getLogsChunked, probeChain } from '../chain/rpc.js';
-import { lbPairAbi, bookManagerAbi, routerGatewayAbi, liquidityVaultAbi } from '../chain/abis.js';
-import { BybitFeed } from '../bybit.js';
 import { UsdPricer } from '../pricer.js';
-import { discoverLfj, quoteLfj, decodeLfjSwap, type LbMarket } from '../venues/lfj.js';
-import {
-  discoverClober, discoverCloberViaSubgraph, quoteClober, decodeCloberTake,
-  buildRouterMap, cloberBookFromOpen, assembleCloberMarkets,
-  type CloberBook, type CloberMarket,
-} from '../venues/clober.js';
 import { VolumeStore } from '../db.js';
-import { seedCloberDaily } from '../seed/subgraph.js';
 import { utcDay, annotateCex } from '../util.js';
+import { ADAPTERS, REFERENCE, venueMeta } from '../venues/registry.js';
+import type { AdapterContext, LogBundle } from '../venues/adapter.js';
 
 /**
- * LiveDataSource — real Monad RPC + Bybit, run as a persist-forward indexer.
+ * LiveDataSource — real Monad RPC + CEX reference, run as a persist-forward
+ * indexer. It is entirely venue-agnostic: every venue is a registered adapter
+ * (server/src/venues/registry.ts) and the core only ever sees `venueId`.
  *
- *  - quotes: Multicall3 eth_call (LFJ getSwapOut + Clober getExpectedOutput) and
- *    Bybit book-walk, at block cadence.
- *  - fills:  getLogs tail (LFJ Swap, Clober Take), priced via the stable quote
- *    leg, bucketed into UTC-day volume; each fill joined to the Bybit mid for
- *    0/5/10/30/60s markouts.
+ *  - quotes: each adapter's quote() (contract reads) + the CEX reference walk.
+ *  - fills:  each adapter declares logSources(); the core getLogs's them and
+ *    hands them back to decode(); fills are priced by the adapter, bucketed into
+ *    UTC-day per-venue volume, and joined to the reference mid for markouts.
  *  - history: the SQLite DB is authoritative. On boot we load persisted days +
- *    lastProcessedBlock, refresh closed Clober days from the subgraph (the only
- *    cheap source of deep history), and either gap-fill from the last processed
- *    block (same-day restart) or start forward from the tip. LFJ history has no
- *    keyless source, so it accumulates forward from first run.
+ *    lastProcessedBlock, run each adapter's optional backfill() (deep history
+ *    seed), and either gap-fill from the last processed block or start forward.
  */
 export class LiveDataSource extends BaseSource {
   readonly mode: DataSourceMode = 'live';
 
-  private bybit = new BybitFeed();
-  private pricer = new UsdPricer(() => this.bybit.monUsd());
+  private pricer = new UsdPricer(() => REFERENCE.monUsd());
   private store = new VolumeStore(config.dbPath);
-  private lfj: LbMarket[] = [];
-  private lfjByAddr = new Map<string, LbMarket>();
-  private clober: { markets: CloberMarket[]; books: Map<string, CloberBook>; vault: Set<string> } = { markets: [], books: new Map(), vault: new Set() };
+  /** shared infra handed to every adapter (they don't import globals). */
+  private ctx: AdapterContext = {
+    client: publicClient,
+    getLogs: getLogsChunked,
+    pricer: this.pricer,
+    config,
+    log: (m: string) => this.notes.push(m),
+    referenceMid: () => REFERENCE.mid(),
+  };
 
   private quotes: QuoteSnapshot = { block: 0, monUsd: 0, ts: 0, rows: [] };
   private days: DailyVolume[] = [];
@@ -62,19 +59,11 @@ export class LiveDataSource extends BaseSource {
     const probe = await probeChain();
     if (!probe.ok) throw new Error(`Monad RPC sanity check failed (${probe.reason}). Set DATA_SOURCE=sim to run offline.`);
 
-    await this.bybit.start();
-    try { this.lfj = await discoverLfj(); } catch (e) { this.notes.push('LFJ discovery failed: ' + (e as Error).message); }
-    this.lfjByAddr = new Map(this.lfj.map((m) => [m.pair.toLowerCase(), m]));
-
-    // Clober book cache (subgraph) — before history so the volume seed can be
-    // scoped to these MON/stable books (the public RPC can't enumerate them).
-    // Live quotes/fills still hit the chain. Falls back to a recent-Open scan.
-    try {
-      this.clober = await discoverCloberViaSubgraph(config.subgraphUrl);
-      this.notes.push(`Clober: ${this.clober.markets.length} market(s) from subgraph (${this.clober.books.size} books, ${this.clober.vault.size} vault)`);
-    } catch {
-      this.notes.push('Clober subgraph discovery failed; trying recent Open logs');
-      try { this.clober = await discoverClober(2000); } catch { /* leave empty */ }
+    await REFERENCE.start();
+    // discover every venue's markets/pools (adapters hold their own state).
+    for (const a of ADAPTERS) {
+      try { await a.discover(this.ctx); }
+      catch (e) { this.notes.push(`${a.venues()[0]?.name ?? 'venue'} discovery failed: ${(e as Error).message}`); }
     }
 
     await this.initHistory();
@@ -88,20 +77,20 @@ export class LiveDataSource extends BaseSource {
     if (this.timer) clearInterval(this.timer);
     if (this.persistTimer) clearInterval(this.persistTimer);
     this.persist();
-    this.bybit.stop();
+    REFERENCE.stop();
     this.store.close();
   }
 
   getState(): MarketState {
     return {
-      chainId: 143, block: this.block, monUsd: this.bybit.monUsd(), monChangePct: this.bybit.changePct(),
+      chainId: 143, block: this.block, monUsd: REFERENCE.monUsd(), monChangePct: REFERENCE.changePct(),
       takerBps: config.takerBps, markets: [...MARKETS], sizesUsd: [...SIZES_USD],
-      quoteCadenceMs: config.quoteIntervalMs, source: 'live', notes: this.notes,
+      quoteCadenceMs: config.quoteIntervalMs, source: 'live', venues: venueMeta(), notes: this.notes,
     };
   }
   getQuotes(): QuoteSnapshot { return this.quotes; }
   getFills(): Fill[] { return this.fills; }
-  getVolume(): DailyVolume[] { return this.days.map((d) => ({ ...d })); }
+  getVolume(): DailyVolume[] { return this.days.map((d) => ({ ...d, byVenue: { ...d.byVenue } })); }
 
   // ── history: load + seed + resume (persist-forward indexer) ─────────────────
   private async initHistory(): Promise<void> {
@@ -110,41 +99,39 @@ export class LiveDataSource extends BaseSource {
     // load recent fills for live serving; drop rows past the retention window
     this.store.pruneFills(Date.now() - config.fillsRetentionDays * 86_400_000);
     this.fills = this.store.recentFills(400);
-    // seed the dedup guard with the persisted window: these fills are already
-    // reflected in the persisted volume, so a gap-fill that re-decodes them
-    // (e.g. after a crash before the cursor advanced) won't re-count them.
+    // seed the dedup guard with the persisted window so a gap-fill re-decode of
+    // already-counted fills won't re-count them.
     for (const f of this.fills) this.countedIds.add(f.id);
     // Resume markout aging across a restart (M1): a fill persisted with only its
-    // early horizons (T+0/T+5) must go back on the pending queue if a later
-    // horizon is still in the future, or ageMarkouts (which only walks `pending`)
-    // would leave those cells null forever. Same predicate as ingest (M2).
+    // early horizons must go back on the pending queue if a later horizon is
+    // still in the future, or ageMarkouts would leave those cells null forever.
     const bootMs = Date.now();
     for (const f of this.fills) if (this.hasFutureMarkoutHorizon(f, bootMs)) this.pending.add(f);
 
-    // 2. refresh closed Clober days from the subgraph (cheap deep-history seed)
+    // 2. per-adapter historical backfill (deep-history seed, e.g. a subgraph).
     const today = utcDay();
-    try {
-      // scope the volume seed to the discovered MON/stable books (spec D5)
-      const venueBookIds = [...this.clober.books.values()].map((b) => String(b.bookId));
-      const vaultBookIds = [...this.clober.vault];
-      const seed = await seedCloberDaily(config.subgraphUrl, config.seedSinceUtc, venueBookIds, vaultBookIds);
-      let seeded = 0;
-      for (const [day, cd] of seed) {
-        if (day >= today) continue; // today is owned by live tailing
-        let row = this.days.find((d) => d.utcDay === day);
-        if (!row) { row = this.emptyDay(day, false); this.days.push(row); }
-        row.cloberVenue = cd.venue;
-        row.cloberVault = cd.vault;
-        row.partial = false;
-        seeded++;
+    let seeded = 0;
+    for (const a of ADAPTERS) {
+      if (!a.backfill) continue;
+      try {
+        const bf = await a.backfill(this.ctx, config.seedSinceUtc);
+        for (const bd of bf.days ?? []) {
+          if (bd.utcDay >= today) continue; // today is owned by live tailing
+          let row = this.days.find((d) => d.utcDay === bd.utcDay);
+          if (!row) { row = this.emptyDay(bd.utcDay, false); this.days.push(row); }
+          for (const [venueId, vd] of Object.entries(bd.byVenue)) row.byVenue[venueId] = { usd: vd.usd, swaps: vd.swaps ?? 0 };
+          row.partial = false;
+          seeded++;
+        }
+        for (const f of bf.fills ?? []) if (!this.countedIds.has(f.id)) { this.countedIds.add(f.id); this.fills.push(f); }
+      } catch (e) {
+        this.notes.push(`${a.venues()[0]?.name ?? 'venue'} backfill unavailable (${(e as Error).message}); history grows forward`);
       }
-      this.notes.push(`seeded ${seeded} closed Clober day(s) from subgraph; LFJ history accumulates forward`);
-    } catch (e) {
-      this.notes.push('Clober history seed unavailable (' + (e as Error).message + '); history grows forward');
     }
+    if (seeded) this.notes.push(`seeded ${seeded} closed day-row(s) from adapter backfill; on-chain-only venues accumulate forward`);
     this.days.sort((a, b) => (a.utcDay < b.utcDay ? -1 : 1));
     this.today(); // ensure today's partial bucket, rolling any stale "today" closed
-    this.reconcileSwapCounts(); // derive per-source swap counts from retained fills
+    this.reconcileSwapCounts(); // derive per-venue swap counts from retained fills
     this.store.upsertMany(this.days);
 
     // 3. resume point — same-day gap-fill, else start at tip
@@ -174,31 +161,30 @@ export class LiveDataSource extends BaseSource {
     } catch { /* non-fatal — dirty retained, retried next tick */ }
   }
 
-  /** A fresh zeroed daily bucket. */
+  /** A fresh zeroed daily bucket (venue slices fill in as fills land). */
   private emptyDay(day: string, partial: boolean): DailyVolume {
-    return { utcDay: day, lfj: 0, cloberVenue: 0, cloberVault: 0, swaps: 0, lfjSwaps: 0, cloberSwaps: 0, cloberVaultSwaps: 0, partial };
+    return { utcDay: day, byVenue: {}, partial };
   }
 
   /**
-   * Derive per-source swap counts (lfj / clober / vault) from the retained fills
-   * — the authoritative per-fill record — so the protocol breakdown is accurate
-   * across the retention window immediately (the schema migration adds those
-   * columns zeroed). Days with no retained fills (older than retention, or the
-   * subgraph-seeded Clober history) keep 0: we have their volume, not their
-   * per-source swap count. Runs once at boot, before forward tailing.
+   * Derive per-venue swap counts from the retained fills — the authoritative
+   * per-fill record — so the protocol breakdown is accurate across the retention
+   * window immediately. Days with no retained fills (older than retention, or a
+   * subgraph-seeded day) keep swaps 0: we have their volume, not the count.
    */
   private reconcileSwapCounts(): void {
-    const bySrc = new Map<string, { lfj: number; clob: number; vault: number }>();
+    const byDay = new Map<string, Map<string, number>>();
     for (const f of this.store.fillsSince(0, 50_000)) {
       const day = utcDay(f.ts);
-      const e = bySrc.get(day) ?? { lfj: 0, clob: 0, vault: 0 };
-      if (f.protocol === 'LFJ') e.lfj++;
-      else { e.clob++; if (f.scope === 'vault') e.vault++; }
-      bySrc.set(day, e);
+      let m = byDay.get(day); if (!m) { m = new Map(); byDay.set(day, m); }
+      m.set(f.venueId, (m.get(f.venueId) ?? 0) + 1);
     }
     for (const d of this.days) {
-      const c = bySrc.get(d.utcDay);
-      if (c) { d.lfjSwaps = c.lfj; d.cloberSwaps = c.clob; d.cloberVaultSwaps = c.vault; }
+      const m = byDay.get(d.utcDay);
+      if (!m) continue;
+      for (const [venueId, swaps] of m) {
+        (d.byVenue[venueId] ??= { usd: 0, swaps: 0 }).swaps = swaps;
+      }
     }
   }
 
@@ -212,94 +198,59 @@ export class LiveDataSource extends BaseSource {
     try { await this.poll(); } catch { /* keep ticking */ }
     try { await this.tailFills(); } catch { /* tolerate */ }
     this.ageMarkouts();
-    this.emitMsg({ ch: 'volume', data: { ...this.today() } });
+    this.emitMsg({ ch: 'volume', data: this.cloneDay(this.today()) });
   }
 
   private async poll(): Promise<void> {
-    const monUsd = this.bybit.monUsd();
+    const monUsd = REFERENCE.monUsd();
     if (monUsd <= 0) return;
-    this.midHist.push({ t: Date.now(), mid: this.bybit.mid() });
+    this.midHist.push({ t: Date.now(), mid: REFERENCE.mid() });
     if (this.midHist.length > 400) this.midHist.shift();
 
     const head = await publicClient.getBlockNumber();
     this.block = Number(head);
 
-    const [lfjRows, cloberRows] = await Promise.all([
-      quoteLfj(this.lfj, config.sizesUsd, monUsd, this.pricer).catch(() => [] as QuoteRow[]),
-      quoteClober(this.clober.markets, config.sizesUsd, monUsd, this.pricer).catch(() => [] as QuoteRow[]),
-    ]);
-    const bybitRows = this.bybitRows(monUsd);
-    annotateCex([...lfjRows, ...cloberRows], bybitRows); // spec §4.2 (audit I1)
-    this.quotes = { block: this.block, monUsd, ts: Date.now(), rows: [...lfjRows, ...cloberRows, ...bybitRows] };
+    const venueRows = (await Promise.all(
+      ADAPTERS.map((a) => (a.quote ? a.quote(this.ctx, config.sizesUsd).catch(() => [] as QuoteRow[]) : Promise.resolve([] as QuoteRow[]))),
+    )).flat();
+    const refRows = REFERENCE.quote(this.ctx, config.sizesUsd);
+    annotateCex(venueRows, refRows); // spec §4.2 (audit I1)
+    this.quotes = { block: this.block, monUsd, ts: Date.now(), rows: [...venueRows, ...refRows] };
     this.emitMsg({ ch: 'state', data: this.getState() });
     this.emitMsg({ ch: 'quotes', data: this.quotes });
   }
 
-  /** Bybit-as-taker bid/ask per market×size (the benchmark venue). */
-  private bybitRows(monUsd: number): QuoteRow[] {
-    const fee = config.takerBps / 1e4;
-    const rows: QuoteRow[] = [];
-    const ts = Date.now();
-    for (const market of MARKETS) {
-      for (const size of SIZES_USD) {
-        const base = size / monUsd;
-        const buy = this.bybit.walk('buy', base);
-        const sell = this.bybit.walk('sell', base);
-        const askPx = buy.price * (1 + fee);
-        const bidPx = sell.price * (1 - fee);
-        rows.push({
-          venue: 'Bybit', market, sizeUsd: size,
-          askPx, bidPx, askBps: (askPx / monUsd - 1) * 1e4, bidBps: (bidPx / monUsd - 1) * 1e4,
-          spreadBps: ((askPx - bidPx) / monUsd) * 1e4,
-          filledFull: buy.filledFull && sell.filledFull, feeBps: config.takerBps, ts,
-        });
-      }
-    }
-    return rows;
-  }
-
   // ── fills ───────────────────────────────────────────────────────────────────
   private async tailFills(): Promise<void> {
-    const monUsd = this.bybit.monUsd();
-    // Defer the tail until the Bybit mid is warm so markout anchors are sound;
+    // Defer the tail until the reference mid is warm so markout anchors are sound;
     // lastBlock is not advanced, so the range is re-decoded once warm (audit C3).
-    if (monUsd <= 0) return;
+    if (REFERENCE.monUsd() <= 0) return;
     const head = await publicClient.getBlockNumber();
     if (head <= this.lastBlock) return;
     const from = this.lastBlock + 1n;
 
-    const ev = (abi: readonly unknown[], name: string) => abi.find((x: any) => x.type === 'event' && x.name === name);
-    const [lfjLogs, takeLogs, routerLogs, bmOpens, vaultOpens] = (await Promise.all([
-      this.lfj.length
-        ? getLogsChunked({ address: this.lfj.map((m) => m.pair) as `0x${string}`[], fromBlock: from, toBlock: head, events: [ev(lbPairAbi, 'Swap')] })
-        : Promise.resolve([] as unknown[]),
-      getLogsChunked({ address: ADDR.bookManager as `0x${string}`, fromBlock: from, toBlock: head, events: [ev(bookManagerAbi, 'Take')] }),
-      getLogsChunked({ address: ADDR.routerGateway as `0x${string}`, fromBlock: from, toBlock: head, events: [ev(routerGatewayAbi, 'Swap')] }).catch(() => [] as unknown[]),
-      getLogsChunked({ address: ADDR.bookManager as `0x${string}`, fromBlock: from, toBlock: head, events: [ev(bookManagerAbi, 'Open')] }).catch(() => [] as unknown[]),
-      getLogsChunked({ address: ADDR.liquidityVault as `0x${string}`, fromBlock: from, toBlock: head, events: [ev(liquidityVaultAbi, 'Open')] }).catch(() => [] as unknown[]),
-    ])) as [any[], any[], any[], any[], any[]];
+    // fetch every adapter's declared log sources into a per-adapter bundle.
+    const perAdapter = await Promise.all(ADAPTERS.map(async (a) => {
+      const bundle: LogBundle = {};
+      const all: any[] = [];
+      await Promise.all(a.logSources().map(async (s) => {
+        const logs = (await getLogsChunked({ address: s.address, fromBlock: from, toBlock: head, events: s.events as any }).catch(() => [] as unknown[])) as any[];
+        bundle[s.key] = logs;
+        all.push(...logs);
+      }));
+      return { a, bundle, all };
+    }));
 
-    // C4: fold any newly-Opened MON/stable books into the cache before decoding.
-    this.mergeNewBooks(bmOpens, vaultOpens);
-    // I3: routed-flow attribution by txHash (used to classify Takes, not dup them).
-    const routerMap = buildRouterMap(routerLogs);
-    // B2: resolve block timestamps for the blocks that actually carry fills.
+    // resolve block timestamps once for every block that carries a log (audit B2).
     const blocks = new Set<bigint>();
-    for (const l of lfjLogs) blocks.add(l.blockNumber);
-    for (const l of takeLogs) blocks.add(l.blockNumber);
+    for (const { all } of perAdapter) for (const l of all) blocks.add(l.blockNumber);
     const blockTs = await this.blockTimes(blocks);
     const tsOf = (bn: bigint) => blockTs.get(String(bn)) ?? Date.now();
 
     const fresh: Fill[] = [];
-    for (const l of lfjLogs) {
-      const m = this.lfjByAddr.get(String(l.address).toLowerCase());
-      if (!m) continue;
-      const f = decodeLfjSwap(l, m, tsOf(l.blockNumber));
-      if (f) fresh.push(f);
-    }
-    for (const l of takeLogs) {
-      const f = decodeCloberTake(l, this.clober.books, this.clober.vault, tsOf(l.blockNumber), routerMap.get(String(l.transactionHash).toLowerCase()));
-      if (f) fresh.push(f);
+    for (const { a, bundle } of perAdapter) {
+      try { fresh.push(...(await a.decode(this.ctx, bundle, tsOf))); }
+      catch (e) { this.notes.push(`${a.venues()[0]?.name ?? 'venue'} decode error: ${(e as Error).message}`); }
     }
 
     this.lastBlock = head;
@@ -307,7 +258,7 @@ export class LiveDataSource extends BaseSource {
     for (const f of fresh) this.ingest(f);
   }
 
-  /** Block timestamps (ms) for the blocks that carry fills (audit B2). */
+  /** Block timestamps (ms) for the blocks that carry logs (audit B2). */
   private async blockTimes(blocks: Set<bigint>): Promise<Map<string, number>> {
     const m = new Map<string, number>();
     await Promise.all([...blocks].map(async (bn) => {
@@ -316,30 +267,10 @@ export class LiveDataSource extends BaseSource {
     return m;
   }
 
-  /** Fold mid-run BookManager/LiquidityVault Opens into the cache (audit C4). */
-  private mergeNewBooks(bmOpens: any[], vaultOpens: any[]): void {
-    let changed = false;
-    for (const l of vaultOpens) {
-      const a = l.args; if (!a) continue;
-      if (a.bookIdA !== undefined) { this.clober.vault.add(String(a.bookIdA)); changed = true; }
-      if (a.bookIdB !== undefined) { this.clober.vault.add(String(a.bookIdB)); changed = true; }
-    }
-    if (vaultOpens.length) for (const [id, b] of this.clober.books) b.isVault = this.clober.vault.has(id);
-    for (const l of bmOpens) {
-      const a = l.args; if (!a) continue;
-      if (this.clober.books.has(String(a.id))) continue;
-      const b = cloberBookFromOpen(a, this.clober.vault);
-      if (b) { this.clober.books.set(String(a.id), b); changed = true; }
-    }
-    if (changed) this.clober.markets = assembleCloberMarkets(this.clober.books);
-  }
-
   private ingest(f: Fill): void {
     // Idempotent (H1): a fill already counted — a re-tail / gap-fill / restart
-    // re-decode of the same on-chain event (now with a deterministic id) — must
-    // never advance the volume buckets again. countedIds tracks the live window;
-    // atomic persist keeps the cursor and volume consistent so a gap-fill never
-    // re-tails counted blocks in the first place.
+    // re-decode of the same on-chain event (deterministic id) — must never
+    // advance the volume buckets again.
     if (this.countedIds.has(f.id)) return;
     this.countedIds.add(f.id);
     this.fills.push(f);
@@ -348,23 +279,13 @@ export class LiveDataSource extends BaseSource {
       if (dropped) this.countedIds.delete(dropped.id);
     }
     // Keep aging any fill that still has a recoverable (future) markout horizon.
-    // This covers fresh live fills AND same-day gap-filled fills decoded 10-60s
-    // late after a short downtime, whose later horizons (e.g. T+60) are still
-    // ahead (M2). No `< 10s` heuristic: ageMarkouts' earliestMid guard already
-    // refuses to fabricate horizons that elapsed unobserved, so `pending` can
-    // safely hold any still-recoverable fill.
     if (this.hasFutureMarkoutHorizon(f)) this.pending.add(f);
     this.dirty.add(f);
-    // Bucket by the fill's execution day, not wall-clock (audit B2). Closed
-    // Clober days are subgraph-authoritative and refreshed each boot, so the
-    // rare sub-second-across-midnight Clober fill self-heals on the next reseed.
+    // Bucket by the fill's execution day, keyed generically by venueId.
     const d = this.dayFor(f.ts);
-    if (f.protocol === 'LFJ') { d.lfj += f.usd; d.lfjSwaps += 1; }
-    else {
-      d.cloberVenue += f.usd; d.cloberSwaps += 1;
-      if (f.scope === 'vault') { d.cloberVault += f.usd; d.cloberVaultSwaps += 1; }
-    }
-    d.swaps += 1;
+    const vd = (d.byVenue[f.venueId] ??= { usd: 0, swaps: 0 });
+    vd.usd += f.usd;
+    vd.swaps += 1;
     this.emitMsg({ ch: 'fill', data: f });
   }
 
@@ -381,21 +302,16 @@ export class LiveDataSource extends BaseSource {
   }
 
   /** True while a fill still has a null markout horizon whose mark time is in the
-   *  future — i.e. still observable, so it's worth keeping on the pending queue.
-   *  Shared by the restart requeue (M1) and live ingest (M2) so both keep exactly
-   *  the recoverable fills aging; ageMarkouts separately refuses to fabricate any
-   *  horizon that already elapsed unobserved. */
+   *  future — i.e. still observable, so it's worth keeping on the pending queue. */
   private hasFutureMarkoutHorizon(f: Fill, now = Date.now()): boolean {
     return MARKOUT_HORIZONS.some((h, i) => f.markoutsBps[i] == null && now < f.ts + h * 1000);
   }
 
-  /** Join each pending fill to the Bybit mid at each horizon as it ages. */
+  /** Join each pending fill to the reference mid at each horizon as it ages. */
   private ageMarkouts(): void {
     const now = Date.now();
-    // A horizon that elapsed before we had any mid to observe it (e.g. during a
-    // restart's downtime) can't be computed faithfully — leave it null rather
-    // than fabricate it from a much-later mid (M1). midHist is pushed each poll
-    // before this runs, so [0] is the oldest retained observation.
+    // A horizon that elapsed before we had any mid to observe it can't be
+    // computed faithfully — leave it null rather than fabricate it (M1).
     const earliestMid = this.midHist.length ? this.midHist[0].t : now;
     for (const f of [...this.pending]) {
       const ss = f.side === 'buy' ? 1 : -1;
@@ -404,7 +320,7 @@ export class LiveDataSource extends BaseSource {
         if (f.markoutsBps[i] != null) continue;
         const at = f.ts + MARKOUT_HORIZONS[i] * 1000;
         if (now < at) { complete = false; continue; }   // horizon not reached yet
-        if (at < earliestMid) continue;                  // elapsed unobserved → leave null (not incomplete)
+        if (at < earliestMid) continue;                  // elapsed unobserved → leave null
         const mid = this.midNear(at);
         f.markoutsBps[i] = mid <= 0 || f.execPx <= 0 ? 0 : ss * (mid / f.execPx - 1) * 1e4;
         changed = true;
@@ -416,8 +332,10 @@ export class LiveDataSource extends BaseSource {
   private midNear(t: number): number {
     let best = 0, bestDt = Infinity;
     for (const s of this.midHist) { const dt = Math.abs(s.t - t); if (dt < bestDt) { bestDt = dt; best = s.mid; } }
-    return best || this.bybit.mid();
+    return best || REFERENCE.mid();
   }
+
+  private cloneDay(d: DailyVolume): DailyVolume { return { ...d, byVenue: { ...d.byVenue } }; }
 
   /** Today's bucket — rolls the previous day closed at UTC midnight. */
   private today(): DailyVolume {

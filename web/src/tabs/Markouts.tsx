@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { Fill } from '@shared';
 import { useDashboard } from '../store';
-import { C, COL, VAULT_LABEL, type Theme } from '../theme';
+import { C, venueColor } from '../theme';
 import { Pills, SideTag } from '../components/ui';
 import { fmtUsd, clockMs, clockSec, fmtInt, shortHex } from '../lib/format';
 
@@ -9,17 +9,10 @@ const H = [0, 5, 10, 30, 60];
 const TAPE_GRID = '78px 78px 84px 84px 64px 92px 80px 88px 46px 80px 80px 52px 52px 52px 52px 52px';
 const OUT_GRID = '84px 88px 96px 56px 100px 110px 120px 1fr 1fr';
 
-/** displayProto: vault scope wins ("CLOBER VAULT"), else the protocol upper-cased. */
-function displayProto(f: Fill): string {
-  return f.scope === 'vault' ? VAULT_LABEL.toUpperCase() : f.protocol.toUpperCase();
-}
-function protoColor(p: string, theme: Theme): string {
-  const col = COL[theme];
-  return p === 'LFJ' ? col.LFJ : p === 'CLOBER' ? col.Clober : col.Vault;
-}
-function catColor(c: string, theme: Theme): string {
-  const col = COL[theme];
-  return c === 'ROUTER' ? C.amber : c === 'CEX/DEX' ? col.Clober : c === 'AGG' ? col.Vault : C.faint2;
+// CATEGORY colour — a fill's routing class, coloured from stable semantic/theme
+// tokens (never a venue color): ROUTER→amber, CEX/DEX→link, AGG→accent, DIRECT→faint.
+function catColor(c: string): string {
+  return c === 'ROUTER' ? C.amber : c === 'CEX/DEX' ? C.link : c === 'AGG' ? C.accent : C.faint2;
 }
 /** category display — DIRECT renders as an em dash. */
 function catLabel(c: string): string {
@@ -28,6 +21,12 @@ function catLabel(c: string): string {
 
 export function MarkoutsTab() {
   const d = useDashboard();
+  const { venuesById, displayVenues, reference } = d;
+
+  // venue display name + colour, resolved from the registry by Fill.venueId.
+  const venueName = (f: Fill): string => venuesById[f.venueId]?.name ?? f.venueId;
+  const venueNameUpper = (f: Fill): string => venueName(f).toUpperCase();
+  const refName = reference?.name ?? 'the CEX reference';
 
   // local 1s tick so age-based markout reveal advances even when no new fills land.
   const [, setTick] = useState(0);
@@ -39,20 +38,17 @@ export function MarkoutsTab() {
   // filtered + sorted tape (DCLogic mkVals flt), newest first, top 52.
   const tape = useMemo(() => {
     const flt = (f: Fill): boolean => {
-      const dp = displayProto(f);
       if (d.mkSide === 'BUYS' && f.side !== 'buy') return false;
       if (d.mkSide === 'SELLS' && f.side !== 'sell') return false;
-      if (d.mkProto !== 'ALL' && dp !== d.mkProto) return false;
+      if (d.mkProto !== 'ALL' && venueNameUpper(f) !== d.mkProto) return false;
       if (d.mkSize === '≥10K' && f.usd < 10000) return false;
       if (d.mkSize === '≥100K' && f.usd < 100000) return false;
       if (d.mkSize === '≥500K' && f.usd < 500000) return false;
-      // propAMM dashboard: Clober is represented only by its oracle-vault; drop
-      // independent (whole-venue) Clober takes.
-      if (f.protocol === 'Clober' && f.scope !== 'vault') return false;
       return true;
     };
     return d.fills.filter(flt).sort((a, b) => b.ts - a.ts).slice(0, 52);
-  }, [d.fills, d.mkSide, d.mkProto, d.mkSize]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [d.fills, d.mkSide, d.mkProto, d.mkSize, venuesById]);
 
   // freeze the displayed tape while paused: snapshot the rows when pause flips on.
   const frozenRef = useRef<Fill[] | null>(null);
@@ -64,13 +60,11 @@ export function MarkoutsTab() {
   const rows = d.mkPaused && frozenRef.current ? frozenRef.current : tape;
 
   // outlier feed — last 24h by |mk-0s P&L| desc, top 18. Only fills with a
-  // realized markout (excludes pxApprox Clober + not-yet-aged) — audit B1/C2.
+  // realized markout (excludes pxApprox + not-yet-aged) — audit B1/C2.
   const outliers = useMemo(() => {
     const since = Date.now() - 86_400_000;
     return d.fills
-      .filter((f) => f.ts >= since && !f.pxApprox && f.markoutsBps[0] != null
-        // exclude independent (whole-venue) Clober takes — vault only.
-        && !(f.protocol === 'Clober' && f.scope !== 'vault'))
+      .filter((f) => f.ts >= since && !f.pxApprox && f.markoutsBps[0] != null)
       .map((f) => ({ f, pnl: ((f.markoutsBps[0] as number) / 1e4) * f.usd }))
       .sort((a, b) => Math.abs(b.pnl) - Math.abs(a.pnl))
       .slice(0, 18);
@@ -81,7 +75,7 @@ export function MarkoutsTab() {
       <div style={{ padding: '18px 18px 14px' }}>
         <div style={{ fontSize: 14, fontWeight: 600, letterSpacing: '.06em', color: C.text }}>SWAP MARKOUTS</div>
         <div style={{ fontSize: 11, color: C.dim3, marginTop: 6, lineHeight: 1.55, maxWidth: 880 }}>
-          On-chain swaps joined to the Bybit <span style={{ color: COL[d.theme].Bybit }}>MONUSDT</span> reference BBO for markouts at 0 / 5 / 10 / 30 / 60 seconds.{' '}
+          On-chain swaps joined to the <span style={{ color: venueColor(reference, d.theme) }}>{refName}</span> reference BBO for markouts at 0 / 5 / 10 / 30 / 60 seconds.{' '}
           <span style={{ color: C.green }}>Positive bps</span> = the taker got a favorable fill vs the CEX reference; <span style={{ color: C.red }}>negative</span> = adverse. Later horizons fill in as each swap ages past them.
         </div>
       </div>
@@ -97,7 +91,7 @@ export function MarkoutsTab() {
             <span style={{ color: C.text, fontWeight: 600 }}>SWAP_TAPE</span>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
-            <Pills options={['ALL', 'LFJ', VAULT_LABEL.toUpperCase()]} value={d.mkProto} onChange={(v) => d.set('mkProto', v)} sm />
+            <Pills options={['ALL', ...displayVenues.map((v) => v.name.toUpperCase())]} value={d.mkProto} onChange={(v) => d.set('mkProto', v)} sm />
             <Pills options={['ALL', 'BUYS', 'SELLS']} value={d.mkSide} onChange={(v) => d.set('mkSide', v)} sm />
             <Pills options={['ANY', '≥10K', '≥100K', '≥500K']} value={d.mkSize} onChange={(v) => d.set('mkSize', v)} sm />
             <div
@@ -122,7 +116,7 @@ export function MarkoutsTab() {
 
         <div style={{ maxHeight: 454, overflowY: 'auto' }}>
           {rows.map((f) => {
-            const dp = displayProto(f);
+            const dp = venueNameUpper(f);
             const age = (Date.now() - f.ts) / 1000;
             return (
               <a
@@ -138,8 +132,8 @@ export function MarkoutsTab() {
                 <div style={{ color: C.dim3 }}>{fmtInt(f.blockNumber)}</div>
                 <div style={{ color: C.link }}>{shortHex(f.txHash)}</div>
                 <div style={{ color: C.faint2 }}>{f.to}</div>
-                <div style={{ color: catColor(f.category, d.theme), fontSize: 9 }}>{catLabel(f.category)}</div>
-                <div style={{ color: protoColor(dp, d.theme), fontWeight: 600 }}>{dp}</div>
+                <div style={{ color: catColor(f.category), fontSize: 9 }}>{catLabel(f.category)}</div>
+                <div style={{ color: venueColor(venuesById[f.venueId], d.theme), fontWeight: 600 }}>{dp}</div>
                 <div style={{ color: C.text2 }}>{f.market}</div>
                 <div style={{ color: C.faint2 }}>{f.pool}</div>
                 <div><SideTag side={f.side} /></div>
