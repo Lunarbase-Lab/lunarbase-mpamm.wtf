@@ -72,9 +72,17 @@ export function VolumeTab() {
     const share = (x: number) => (allTot ? (x / allTot * 100) : 0).toFixed(1) + '%';
 
     const dTot = days.map(dayTotal);
-    const last7 = dTot.slice(-7).reduce((a, b) => a + b, 0);
-    const prev7 = dTot.slice(-14, -7).reduce((a, b) => a + b, 0);
-    const chg7 = prev7 ? (last7 - prev7) / prev7 * 100 : 0;
+    // real trailing 7-calendar-day windows anchored on the latest day present —
+    // NOT the last 7 *recorded* rows, which skip dormant (zero-volume) days and
+    // so silently stretch each "week" across a longer span.
+    const anchor = days[nd - 1].utcDay;
+    const dayAgo = (n: number) =>
+      new Date(new Date(anchor + 'T00:00:00Z').getTime() - n * 86_400_000).toISOString().slice(0, 10);
+    const c7 = dayAgo(7), c14 = dayAgo(14);
+    const last7 = days.filter((x) => x.utcDay > c7 && x.utcDay <= anchor).reduce((a, x) => a + dayTotal(x), 0);
+    const prev7 = days.filter((x) => x.utcDay > c14 && x.utcDay <= c7).reduce((a, x) => a + dayTotal(x), 0);
+    // % vs the prior week; null when the prior week had no volume (base 0 → % undefined)
+    const chg7 = prev7 > 0 ? (last7 - prev7) / prev7 * 100 : null;
 
     let peakV = -1, peakDay = '';
     days.forEach((x, i) => { if (dTot[i] > peakV) { peakV = dTot[i]; peakDay = mmdd(x.utcDay); } });
@@ -139,8 +147,8 @@ export function VolumeTab() {
     return {
       volBars, volMaxLabel: f(maxT), volMidLabel: f(maxT / 2), volAxis: axis,
       kAll: f(allTot), k7: f(last7),
-      k7chg: (chg7 >= 0 ? '▲ ' : '▼ ') + Math.abs(chg7).toFixed(0) + '%',
-      k7css: chg7 >= 0 ? C.green : C.red,
+      k7chg: chg7 == null ? (last7 > 0 ? '▲ ∞%' : '▲ 0%') : (chg7 >= 0 ? '▲ ' : '▼ ') + Math.abs(chg7).toFixed(0) + '%',
+      k7css: chg7 == null ? (last7 > 0 ? C.green : C.faint2) : (chg7 >= 0 ? C.green : C.red),
       kSwaps: swaps.toLocaleString(), kPeak: f(peakV), kPeakDay: peakDay,
       kToday: f(todayT),
       kTodayChg: (todayChg >= 0 ? '▲ ' : '▼ ') + Math.abs(todayChg).toFixed(0) + '%',
