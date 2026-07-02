@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react';
 import { type Venue } from '@shared';
-import { useDashboard, VENUES } from '../store';
+import { useDashboard, DISPLAY_VENUES } from '../store';
 import { hexA, COL, CH } from '../theme';
 
 const N = 120;
@@ -43,7 +43,7 @@ export function QuoteCanvas() {
 
     const padL = 58, padR = 10, padT = 12, padB = 22;
     const col = COL[d.theme], ch = CH[d.theme]; // theme-aware canvas colors (can't use var())
-    const active = VENUES.filter((v) => d.venues[v]);
+    const active = DISPLAY_VENUES.filter((v) => d.venues[v]);
     if (!active.length) return;
 
     let mn = Infinity, mx = -Infinity;

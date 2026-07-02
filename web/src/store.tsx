@@ -3,7 +3,12 @@ import type { MarketState, QuoteSnapshot, QuoteRow, Fill, DailyVolume, Venue } f
 import { fetchMarkets, fetchFills, connectStream } from './lib/api';
 import type { Theme } from './theme';
 
+// Full venue set — used for the per-venue Record types + quote-series buffers.
 export const VENUES: Venue[] = ['LFJ', 'Clober', 'Vault', 'Bybit'];
+// Venues actually SHOWN: this is a propAMM dashboard, so Clober is represented
+// only by its oracle-vault (propAMM) maker; independent whole-venue Clober flow
+// is not surfaced. Everything user-facing iterates this list.
+export const DISPLAY_VENUES: Venue[] = ['LFJ', 'Vault', 'Bybit'];
 
 /** Read the persisted theme, matching the pre-paint script in index.html. */
 const initialTheme = (): Theme => {
@@ -20,11 +25,10 @@ interface UiState {
   pair: string;
   size: number;
   venues: Record<Venue, boolean>;
-  clScope: 'venue' | 'vault';
   // markouts
   mkProto: string; mkSide: string; mkSize: string; mkPaused: boolean;
   // leaderboard
-  lbWin: string; lbShow: string; lbGroup: string; lbHz: string; lbMk: string; lbWinners: boolean; lbTop: number;
+  lbWin: string; lbGroup: string; lbHz: string; lbMk: string; lbWinners: boolean; lbTop: number;
 }
 
 interface Dashboard extends UiState {
@@ -69,9 +73,8 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
   const [ui, setUi] = useState<UiState>({
     tab: 'exec', theme: initialTheme(), pair: 'MON/USDC', size: 100,
     venues: { LFJ: true, Clober: true, Vault: true, Bybit: true },
-    clScope: 'venue',
     mkProto: 'ALL', mkSide: 'ALL', mkSize: 'ANY', mkPaused: false,
-    lbWin: '24H', lbShow: 'PROPAMM', lbGroup: 'PROTOCOL', lbHz: 'T+0S', lbMk: 'TAKER', lbWinners: true, lbTop: 25,
+    lbWin: '24H', lbGroup: 'PROTOCOL', lbHz: 'T+0S', lbMk: 'TAKER', lbWinners: true, lbTop: 25,
   });
   const [conn, setConn] = useState<'connecting' | 'live' | 'reconnecting'>('connecting');
   const [state, setState] = useState<MarketState | null>(null);
@@ -186,7 +189,7 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
       // canvas colors come from JS getters (not var()), so force a repaint.
       setFrame((f) => f + 1);
     },
-    resetLb: () => setUi((s) => ({ ...s, lbWin: '24H', lbShow: 'PROPAMM', lbGroup: 'PROTOCOL', lbHz: 'T+0S', lbMk: 'TAKER', lbWinners: true, lbTop: 25 })),
+    resetLb: () => setUi((s) => ({ ...s, lbWin: '24H', lbGroup: 'PROTOCOL', lbHz: 'T+0S', lbMk: 'TAKER', lbWinners: true, lbTop: 25 })),
   }), [ui, conn, state, quotes, volume, fills, frame]);
 
   return <Ctx.Provider value={api}>{children}</Ctx.Provider>;

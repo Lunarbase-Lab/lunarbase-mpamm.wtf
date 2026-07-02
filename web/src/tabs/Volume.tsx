@@ -1,7 +1,7 @@
 import { useMemo } from 'react';
 import type { DailyVolume } from '@shared';
 import { useDashboard } from '../store';
-import { C, COL, pill } from '../theme';
+import { C, COL } from '../theme';
 import { fMillions } from '../lib/format';
 
 /** MM-DD from a 'YYYY-MM-DD' UTC day. */
@@ -17,7 +17,6 @@ interface SeriesDef {
 
 export function VolumeTab() {
   const d = useDashboard();
-  const scope = d.clScope;
 
   const vm = useMemo(() => {
     const days = d.volume;
@@ -26,15 +25,11 @@ export function VolumeTab() {
     // market-share in-chart labels: cream over the saturated bands in bright, the band color in dark.
     const msLabelColor = (bandColor: string) => (d.theme === 'light' ? 'rgb(252,251,248)' : bandColor);
 
-    const series: SeriesDef[] = scope === 'vault'
-      ? [
-        { name: 'LFJ', color: col.LFJ, val: (x) => x.lfj, swaps: (x) => x.lfjSwaps },
-        { name: 'Clober · Vault', color: col.Vault, val: (x) => x.cloberVault, swaps: (x) => x.cloberVaultSwaps },
-      ]
-      : [
-        { name: 'LFJ', color: col.LFJ, val: (x) => x.lfj, swaps: (x) => x.lfjSwaps },
-        { name: 'Clober', color: col.Clober, val: (x) => x.cloberVenue, swaps: (x) => x.cloberSwaps },
-      ];
+    // propAMM venues only: LFJ + Clober's oracle-vault cut (independent Clober excluded).
+    const series: SeriesDef[] = [
+      { name: 'LFJ', color: col.LFJ, val: (x) => x.lfj, swaps: (x) => x.lfjSwaps },
+      { name: 'Vault', color: col.Vault, val: (x) => x.cloberVault, swaps: (x) => x.cloberVaultSwaps },
+    ];
 
     const f = (m: number) => fMillions(m);
 
@@ -58,7 +53,7 @@ export function VolumeTab() {
           first: s.name.indexOf('Vault') >= 0 ? '2026-05-15' : '2026-05-13',
         })),
         brkTotalVol: f(0), brkTotalSwaps: '0',
-        volScopeNote: scope === 'vault' ? 'Clober = vault (propAMM) cut' : 'Clober = whole-venue',
+        volScopeNote: 'Clober = oracle-vault (propAMM) cut',
       };
     }
 
@@ -122,8 +117,8 @@ export function VolumeTab() {
       days.forEach((x) => { const v = s.val(x); if (v > pv) { pv = v; pd = mmdd(x.utcDay); } });
       return { v: f(pv), day: pd };
     };
-    // real per-source swap counts (no USD proration): the vault series counts
-    // only vault takes, the venue series counts whole-venue Clober takes (I5).
+    // real per-source swap counts (no USD proration): LFJ counts its own takes,
+    // Vault counts only Clober oracle-vault (propAMM) takes (I5).
     const brkSwaps = series.map((s) => days.reduce((a, x) => a + s.swaps(x), 0));
     const brkSwapTotal = brkSwaps.reduce((a, b) => a + b, 0);
     const brk = series.map((s, k) => {
@@ -160,35 +155,17 @@ export function VolumeTab() {
       msBotPct: (series[0].val(days[nd - 1]) / lt * 100).toFixed(1) + '%',
       msBotColor: msLabelColor(series[0].color),
       brk, brkTotalVol: f(allTot), brkTotalSwaps: brkSwapTotal.toLocaleString(),
-      volScopeNote: scope === 'vault' ? 'Clober = vault (propAMM) cut' : 'Clober = whole-venue',
+      volScopeNote: 'Clober = oracle-vault (propAMM) cut',
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [d.volume, scope, d.theme]);
-
-  const scopePills: { label: string; value: 'venue' | 'vault' }[] = [
-    { label: 'WHOLE-VENUE', value: 'venue' },
-    { label: 'VAULT', value: 'vault' },
-  ];
+  }, [d.volume, d.theme]);
 
   return (
     <div>
-      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', padding: '18px 18px 14px' }}>
-        <div>
-          <div style={{ fontSize: 14, fontWeight: 600, letterSpacing: '.06em', color: C.text }}>PROPAMM VOLUME</div>
-          <div style={{ fontSize: 11, color: C.dim3, marginTop: 6, lineHeight: 1.55, maxWidth: 760 }}>
-            All-time daily notional traded on tracked propAMM pools, split by protocol. Volume is the USD-stable quote leg of each landed swap; buckets are UTC days and today's bucket is partial. Vault = Clober's oracle-vault (propAMM) cut.
-          </div>
-        </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 10, color: C.dim3 }}>
-          <span style={{ color: C.faint2, letterSpacing: '.06em' }}>CLOBER SCOPE</span>
-          <div style={{ display: 'flex', gap: 3 }}>
-            {scopePills.map((p) => {
-              const active = scope === p.value;
-              return (
-                <div key={p.value} onClick={() => d.set('clScope', p.value)} style={pill(active, true)}>{p.label}</div>
-              );
-            })}
-          </div>
+      <div style={{ padding: '18px 18px 14px' }}>
+        <div style={{ fontSize: 14, fontWeight: 600, letterSpacing: '.06em', color: C.text }}>PROPAMM VOLUME</div>
+        <div style={{ fontSize: 11, color: C.dim3, marginTop: 6, lineHeight: 1.55, maxWidth: 760 }}>
+          All-time daily notional traded on tracked propAMM pools, split by protocol. Volume is the USD-stable quote leg of each landed swap; buckets are UTC days and today's bucket is partial. Vault = Clober's oracle-vault (propAMM) cut.
         </div>
       </div>
 

@@ -46,12 +46,13 @@ export function MarkoutsTab() {
       if (d.mkSize === '≥10K' && f.usd < 10000) return false;
       if (d.mkSize === '≥100K' && f.usd < 100000) return false;
       if (d.mkSize === '≥500K' && f.usd < 500000) return false;
-      // CLOBER vault-scope toggle hides whole-venue Clober flow.
-      if (d.clScope === 'vault' && f.protocol === 'Clober' && f.scope !== 'vault') return false;
+      // propAMM dashboard: Clober is represented only by its oracle-vault; drop
+      // independent (whole-venue) Clober takes.
+      if (f.protocol === 'Clober' && f.scope !== 'vault') return false;
       return true;
     };
     return d.fills.filter(flt).sort((a, b) => b.ts - a.ts).slice(0, 52);
-  }, [d.fills, d.mkSide, d.mkProto, d.mkSize, d.clScope]);
+  }, [d.fills, d.mkSide, d.mkProto, d.mkSize]);
 
   // freeze the displayed tape while paused: snapshot the rows when pause flips on.
   const frozenRef = useRef<Fill[] | null>(null);
@@ -68,12 +69,12 @@ export function MarkoutsTab() {
     const since = Date.now() - 86_400_000;
     return d.fills
       .filter((f) => f.ts >= since && !f.pxApprox && f.markoutsBps[0] != null
-        // CLOBER vault scope: exclude independent (whole-venue) Clober takes here too.
-        && !(d.clScope === 'vault' && f.protocol === 'Clober' && f.scope !== 'vault'))
+        // exclude independent (whole-venue) Clober takes — vault only.
+        && !(f.protocol === 'Clober' && f.scope !== 'vault'))
       .map((f) => ({ f, pnl: ((f.markoutsBps[0] as number) / 1e4) * f.usd }))
       .sort((a, b) => Math.abs(b.pnl) - Math.abs(a.pnl))
       .slice(0, 18);
-  }, [d.fills, d.clScope]);
+  }, [d.fills]);
 
   return (
     <div>
@@ -96,13 +97,9 @@ export function MarkoutsTab() {
             <span style={{ color: C.text, fontWeight: 600 }}>SWAP_TAPE</span>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
-            <Pills options={['ALL', 'LFJ', 'CLOBER', 'VAULT']} value={d.mkProto} onChange={(v) => d.set('mkProto', v)} sm />
+            <Pills options={['ALL', 'LFJ', 'VAULT']} value={d.mkProto} onChange={(v) => d.set('mkProto', v)} sm />
             <Pills options={['ALL', 'BUYS', 'SELLS']} value={d.mkSide} onChange={(v) => d.set('mkSide', v)} sm />
             <Pills options={['ANY', '≥10K', '≥100K', '≥500K']} value={d.mkSize} onChange={(v) => d.set('mkSize', v)} sm />
-            <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
-              <span style={{ fontSize: 9, color: C.faint2, letterSpacing: '.04em' }}>CLOBER</span>
-              <Pills options={[{ label: 'VENUE', value: 'venue' }, { label: 'VAULT', value: 'vault' }]} value={d.clScope} onChange={(v) => d.set('clScope', v)} sm />
-            </div>
             <div
               onClick={() => d.set('mkPaused', !d.mkPaused)}
               style={{

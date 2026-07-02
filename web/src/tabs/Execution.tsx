@@ -1,6 +1,6 @@
 import { useMemo } from 'react';
 import { SIZES_USD, type Venue, type QuoteRow } from '@shared';
-import { useDashboard, VENUES } from '../store';
+import { useDashboard, DISPLAY_VENUES } from '../store';
 import { C, hexA, pill, COL } from '../theme';
 import { Panel, PanelHead, Field } from '../components/ui';
 import { QuoteCanvas } from '../components/QuoteCanvas';
@@ -12,7 +12,7 @@ export function ExecutionTab() {
   const d = useDashboard();
   const pair = d.pair, size = d.size;
   const markets = d.state?.markets ?? ['MON/USDC', 'MON/USDT0', 'MON/AUSD', 'MON/USD1'];
-  const active = VENUES.filter((v) => d.venues[v]);
+  const active = DISPLAY_VENUES.filter((v) => d.venues[v]);
   const col = COL[d.theme]; // theme-aware venue colors (swatches / bars / pills)
   const taker = (d.state?.takerBps ?? 10).toFixed(1);
 
@@ -115,7 +115,7 @@ export function ExecutionTab() {
         <div style={{ marginLeft: 'auto' }}>
           <Field label="VENUES">
             <div style={{ display: 'flex', gap: 4 }}>
-              {VENUES.map((v) => {
+              {DISPLAY_VENUES.map((v) => {
                 const on = d.venues[v];
                 return (
                   <div key={v} onClick={() => d.toggleVenue(v)} style={{

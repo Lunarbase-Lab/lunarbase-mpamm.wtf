@@ -35,23 +35,23 @@ const TOP_GRID = '30px 76px 64px 82px 1.3fr 64px 88px 46px 1fr 1fr 76px 56px 80p
 export function LeaderboardTab() {
   const d = useDashboard();
   const fills = d.fills;
-  const { lbWin, lbShow, lbGroup, lbHz, lbMk, lbWinners, lbTop } = d;
+  const { lbWin, lbGroup, lbHz, lbMk, lbWinners, lbTop } = d;
 
   const hzIdx = HZ_IDX[lbHz] ?? 0;
   const sign = lbMk === 'MAKER' ? -1 : 1;
 
   // real time-window slice over the persisted fills (no extrapolation).
-  // SHOW=PROPAMM keeps LFJ + the Clober vault (propAMM) cut, dropping
-  // whole-venue Clober flow (audit I2).
+  // propAMM dashboard: keep LFJ + the Clober oracle-vault cut, always dropping
+  // independent (whole-venue) Clober flow.
   const windowed = useMemo(() => {
     const since = Date.now() - (WIN_MS[lbWin] ?? WIN_MS['24H']);
     return fills.filter((f) => {
       if (f.ts < since) return false;
-      if (lbShow === 'PROPAMM' && f.protocol === 'Clober' && f.scope !== 'vault') return false;
+      if (f.protocol === 'Clober' && f.scope !== 'vault') return false;
       return true;
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [fills, lbWin, lbShow, d.frame]);
+  }, [fills, lbWin, d.frame]);
 
   // Only fills that have a realized markout at the selected horizon feed the
   // percentile / PnL / sparkline math — never coerce null→0 (audit C2). Exclude
@@ -133,10 +133,6 @@ export function LeaderboardTab() {
 
       {/* controls */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 18, flexWrap: 'wrap', padding: '2px 18px 16px', fontSize: 9, color: C.faint2 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
-          <span style={{ letterSpacing: '.06em' }}>SHOW</span>
-          <Pills options={['PROPAMM', 'ALL AMMS']} value={lbShow} onChange={(v) => d.set('lbShow', v)} sm />
-        </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
           <span style={{ letterSpacing: '.06em' }}>GROUP BY</span>
           <Pills options={['PROTOCOL', 'POOL', 'TO ADDRESS', 'CATEGORY']} value={lbGroup} onChange={(v) => d.set('lbGroup', v)} sm />
