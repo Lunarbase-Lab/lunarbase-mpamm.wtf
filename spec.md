@@ -156,7 +156,7 @@ Each cycle the core `getLogs` the union of every adapter's `logSources()` over t
 The public RPC caps `getLogs` to short ranges, so deep replay at the tip is impractical there. Live mode is a **persist-forward indexer**: SQLite is the source of truth for daily-volume history — loaded on boot, advanced forward from decoded fills (priced via the stable quote leg, exact for MON/stable), resumed from `lastProcessedBlock` with a same-day `getLogs` gap-fill.
 - **Fail-closed ingest**: any error in a tail cycle — a `fills`/`state` log source, the block-timestamp lookup, or an adapter `decode()` — **holds the global cursor** and retries the exact range; nothing advances/ingests/emits partially. Fills carry a deterministic `venue-txHash-logIndex` id; daily volume + cursor + fills persist in **one transaction** (idempotent re-tail).
 - **Clober** closed days are seeded once via `backfill()` from the **Goldsky subgraph** (`Σ BookDayData.volumeUSD` = venue, scoped to discovered MON/stable books; `Σ PoolDayData.volumeUSD` = the vault cut).
-- **POE and Metric** currently have **no `backfill()`** — no keyless deep-history source is wired, so they **accrue forward from first run**. Backfilling them is a known follow-up (§7.D8): either a protocol subgraph (if one exists) or an on-chain `Swap` log replay over an archive RPC, aggregated into `DailyVolume[]` (§ "Backfill design").
+- **POE and Metric** (no keyless subgraph) are seeded by a **background on-chain backfill**: the core replays each adapter's `Swap` logs from its `backfillFromUtc` (set to the pool's on-chain deploy day — POE `2026-05-09`, Metric `2026-03-31`) up to the boot head, decodes via the adapter's own `decode()`, and folds into daily volume. It runs OFF the boot path (never blocks the dashboard or the tail): adaptive `getLogs` chunks (start wide, auto-shrink on a range 413) paced under the RPC cap, one `getBlock` per chunk for UTC-day bucketing (a chunk spans ~minutes), closed days only (`< today`, so no overlap with the tail), SET-per-day (idempotent). A day-aligned resume cursor + a `backfill_done_<venue>` flag make it resumable across restarts. Knobs: `BACKFILL` / `BACKFILL_CHUNK` / `BACKFILL_PACE_MS` / `BACKFILL_MERGE_EVERY`.
 
 ### 5.5 Bybit benchmark + pricing
 A single `UsdPricer` shared by the poller (USD→token sizing) and the stream (token→USD volume).
@@ -185,7 +185,7 @@ daily_volume(utc_day, venue_id, usd, swaps)        -- PK (utc_day, venue_id)
 day_meta(utc_day, partial)
 fills(id, venue_id, …, markouts…)                  -- upsert-by-id; ~35-day retention prune
 ```
-Adding/removing a venue never changes the table shape (it's just different `venue_id` values). `schema_version` gates a **fresh-start reset** on structural change — see "Avoiding the reset" for the plan to make venue changes non-destructive.
+Adding/removing a venue never changes the table shape (just different `venue_id` values), so it is **non-destructive**: on boot `reconcileVenues()` prunes only rows whose venue left the registry, keeping every other venue's history. `schema_version` gates a full fresh-start reset **only** on a true STRUCTURAL change (columns / PK).
 
 ### 6.3 API contract (service → frontend)
 ```
@@ -211,7 +211,7 @@ Frontend renders purely off these — never touches the RPC, subgraph, or Bybit 
 | **D5** | Clober attribution = **vault-bookId tagging** via `LiquidityVault.Open` | Only the oracle-vault (propAMM) cut counts; independent-maker CLOB flow is excluded. |
 | **D6** | Pair universe = **MON vs USD stables** | Quote leg = stable amount ⇒ exact USD with no oracle. Non-stable/multi-asset pools (e.g. POE/Metric WBTC, WETH) need the market-universe-generic work (D8). |
 | **D7** | CEX benchmark = **Bybit spot `MONUSDT`**, taker fee = config constant | Binance has no MON spot. Realized-vs-realized at size; taker fee defaults to non-VIP 10 bps, set to the operator's actual rate. |
-| **D8** | **Deferred** | (a) POE/Metric backfill; (b) non-stable / multi-asset market universe; (c) making venue changes non-reset (below). |
+| **D8** | **Deferred** | Non-stable / multi-asset market universe (e.g. POE/Metric WBTC, WETH pools) — needs historical pricing. *(Done since v0.3: POE/Metric on-chain backfill; non-destructive venue reconcile.)* |
 
 ---
 
@@ -220,7 +220,7 @@ Frontend renders purely off these — never touches the RPC, subgraph, or Bybit 
 - **RPC requirements**: `eth_call`, `getLogs`, `eth_subscribe`/polling. Public endpoints cap `getLogs` (~100 blocks) ⇒ persist-forward, chunked ranges. A deep backfill needs an archive/high-limit RPC.
 - **Fail-closed indexing**: a failed required/state log source, block-timestamp lookup, or `decode()` holds the cursor and retries; `tick()` is re-entrancy-guarded; discovery is merge-safe (a factory read never shrinks the tailed set) and `logSources()` throws until discovered.
 - **Boot**: live boot fail-fasts on a chain sanity check (chain id `143`, Multicall3 present) so a supervisor restarts it. `DATA_SOURCE=sim` is the explicit offline simulator (registry-driven, same generic contract).
-- **Schema**: `schema_version` mismatch currently drops + rebuilds the data tables (Clober re-seeds, others accrue forward). See "Avoiding the reset" for the non-destructive plan.
+- **Schema**: a venue leaving the registry is pruned non-destructively on boot (`reconcileVenues`), keeping every other venue's history. Only a true STRUCTURAL `schema_version` bump drops + rebuilds (Clober re-seeds, on-chain venues re-backfill).
 - **Deploy**: Render native GitHub auto-deploy from `main` (health-gated, zero-downtime); persistent disk holds the SQLite DB.
 
 ---
