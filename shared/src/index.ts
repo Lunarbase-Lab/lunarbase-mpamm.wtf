@@ -39,7 +39,8 @@ export interface VenueMeta {
   color: { light: string; dark: string };
   kind: 'amm' | 'clob' | 'vault' | 'cex';
   role: 'venue' | 'reference';
-  /** reference venues that are walked as a taker render a "(taker)" suffix. */
+  /** true when a reference venue is walked as a taker (order book + fee), not at mid.
+   *  Drives the "vs CEX" comparison basis; the Execution prose explains the method. */
   taker?: boolean;
 }
 

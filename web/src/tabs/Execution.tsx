@@ -27,11 +27,11 @@ export function ExecutionTab() {
   // active = chips the user has enabled (all registry venues default on).
   const active = chips.filter((v) => d.venueToggles[v.id]);
   const taker = (d.state?.takerBps ?? 10).toFixed(1);
-  // reference (CEX benchmark) labels — name + a "(taker)" suffix when it's walked
-  // as a taker. Fall back to generic wording before the registry arrives.
+  // reference (CEX benchmark) name. The prose below explains it's walked as a taker
+  // (book + fee), so we don't tag the name itself with a confusing "(taker)" suffix.
   const ref = d.reference;
   const refName = ref?.name ?? 'the CEX reference';
-  const refLabel = ref ? ref.name + (ref.taker ? ' (taker)' : '') : 'The reference (taker)';
+  const refLabel = ref ? ref.name : 'The reference';
 
   const row = (v: VenueMeta, s: number): QuoteRow | undefined =>
     d.quotes?.rows.find((r) => r.venueId === v.id && r.market === pair && r.sizeUsd === s);
@@ -138,7 +138,7 @@ export function ExecutionTab() {
               {chips.map((v) => {
                 const on = d.venueToggles[v.id];
                 const color = venueColor(v, d.theme);
-                const label = v.name.toUpperCase() + (v.taker ? ' (TAKER)' : '');
+                const label = v.name.toUpperCase();
                 return (
                   <div key={v.id} onClick={() => d.toggleVenue(v.id)} style={{
                     display: 'flex', alignItems: 'center', gap: 6, padding: '4px 9px', borderRadius: 4, cursor: 'pointer',
@@ -159,7 +159,7 @@ export function ExecutionTab() {
       {/* QUOTE */}
       <Panel style={{ margin: '0 18px 14px' }}>
         <PanelHead icon="~" title="QUOTE" sub={`${pair} · ${sizeLabel(size)} · last 60s`}
-          right={<div style={{ fontSize: 9, color: C.faint2 }}>solid = ask · dashed = bid · ★ = tightest · vs CEX = realized buy vs {refName}-taker (+ = worse)</div>} />
+          right={<div style={{ fontSize: 9, color: C.faint2 }}>solid = ask · dashed = bid · ★ = tightest · vs CEX = realized buy vs {refName} (+ = worse)</div>} />
         {/* flex row: the plot ends where the legend column begins, so quotes can
             never render underneath it (no absolute overlay). The canvas re-measures
             its own clientWidth each repaint, so it adapts to the narrower slot. */}
