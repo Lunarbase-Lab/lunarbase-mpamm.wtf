@@ -11,7 +11,7 @@
 
 **Changelog v0.3 → v0.4** — **Multi-asset pairs + per-pair CEX references.** The market universe is a **pair registry** (`PAIRS`/`ASSETS`/`TOKENS` in `@shared`): BTC/USDC + ETH/USDC join the MON/stable pairs, adapters discover/decode ONLY registered pairs, and generic base/quote replaces the MON-only assumptions. The single Bybit `ReferenceAdapter` became a **`ReferenceRegistry`** routing per base asset — Bybit `MONUSDT` for MON, **Binance (VIP9)** `BTCUSDT`/`ETHUSDT` for BTC/ETH — with each reference **converted into the pair's own terms** (live `USDCUSDT` stable cross ~±10bps + `WBTCBTC` wrapped/native basis ~−5bps, §5.5); markouts mark per pair (`midForPair`), with a versioned markout model (replayable from the persisted `mid_history` curve). Execution chart seeds from real server-side quote history.
 
-**Changelog v0.2 → v0.3** — **Venue layer refactored into a composable adapter registry** (`server/src/venues/`): one file per protocol implementing `VenueAdapter { venues(), discover(), backfill?(), quote?(), logSources(), decode() }` plus one line in `registry.ts`; the core (indexer, DB, API, frontend) is venue-agnostic and reads name/color/output from the adapter. **Scope narrowed to propAMM-only** (oracle/MM-priced venues, not passive curve DEXes or raw CLOBs): **LFJ Liquidity Book removed** (a passive bin DEX — price emerges from the curve, not a maker); **LFJ POE** (LFJ's oracle-anchored "Public Prop AMM") and **Metric** (oracle-anchored bin AMM) added. Data model generic, keyed by `venueId`; DB long-format (`daily_volume(utc_day, venue_id, …)`). Bybit reference is itself an adapter (`role: 'reference'`).
+**Changelog v0.2 → v0.3** — **Venue layer refactored into a composable adapter registry** (`server/src/venues/`): one file per protocol implementing `VenueAdapter { venues(), discover(), backfill?(), quote?(), logSources(), decode() }` plus one line in `registry.ts`; the core (indexer, DB, API, frontend) is venue-agnostic and reads name/color/output from the adapter. **Scope narrowed to propAMM-only** (oracle/MM-priced venues, not passive curve DEXes or raw CLOBs): **LFJ Liquidity Book removed** (a passive bin DEX — price emerges from the curve, not a maker); **LFJ POE** (LFJ's oracle-anchored "Public Prop AMM") and **Metric** (oracle-anchored bin AMM) added. Data model generic, keyed by `venueId`; DB long-format (`daily_volume(utc_day, venue_id, …)`). The CEX reference is represented as a reference-role venue.
 
 **Changelog v0.1 → v0.2** — Deployment fixed as a backend service. Historical volume derived on-chain (log replay) + a one-time Clober subgraph seed, no venue REST dependency. CEX benchmark switched **Binance → Bybit** (Binance has no MON spot). Clober attribution scoped to the **vault** (propAMM) cut. Pair universe narrowed to **MON vs USD stables**. Taker fee = configurable constant.
 
@@ -215,7 +215,7 @@ GET  /api/volume?from=&to=              daily series (DailyVolume.byVenue)
 GET  /api/fills?days=&limit=            historical fill window (markouts)
 WS   /stream                            channels: state, quotes, fill, volume
 ```
-Frontend renders purely off these — never touches the RPC, subgraph, or Bybit directly.
+Frontend renders purely off these — never touches the RPC, subgraph, or CEX feeds directly.
 
 ---
 

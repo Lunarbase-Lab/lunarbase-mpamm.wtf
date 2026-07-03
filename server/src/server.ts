@@ -12,7 +12,7 @@ import { venueMeta } from './venues/registry.js';
 /**
  * Thin transport over a DataSource (spec §6.3, D1): REST snapshots + a WS
  * stream. The frontend renders purely off these and never touches the chain,
- * subgraph, or Bybit directly.
+ * subgraph, or CEX feeds directly.
  */
 export function startServer(source: DataSource): Server {
   const app = express();

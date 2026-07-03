@@ -3,18 +3,18 @@ import type { QuoteRow } from '@shared';
 /** Small shared numeric / formatting helpers used across the service. */
 
 /**
- * Annotate each venue quote row with its realized cost vs the Bybit-AS-TAKER row
+ * Annotate each venue quote row with its realized cost vs the CEX-as-taker row
  * at the same market+size, sign-normalized so positive = on-chain executes worse
  * (spec §4.2 — the realized-vs-realized comparison). Mutates `venueRows`.
  */
-export function annotateCex(venueRows: QuoteRow[], bybitRows: QuoteRow[]): void {
+export function annotateCex(venueRows: QuoteRow[], cexRows: QuoteRow[]): void {
   const cex = new Map<string, QuoteRow>();
-  for (const b of bybitRows) cex.set(`${b.market}|${b.sizeUsd}`, b);
+  for (const b of cexRows) cex.set(`${b.market}|${b.sizeUsd}`, b);
   for (const r of venueRows) {
     const b = cex.get(`${r.market}|${r.sizeUsd}`);
     if (!b || b.askPx <= 0 || b.bidPx <= 0) continue;
-    if (r.askPx > 0) r.cexAskBps = (r.askPx / b.askPx - 1) * 1e4; // buy MON: pay more ⇒ worse
-    if (r.bidPx > 0) r.cexBidBps = (b.bidPx / r.bidPx - 1) * 1e4; // sell MON: get less ⇒ worse
+    if (r.askPx > 0) r.cexAskBps = (r.askPx / b.askPx - 1) * 1e4; // buy base: pay more ⇒ worse
+    if (r.bidPx > 0) r.cexBidBps = (b.bidPx / r.bidPx - 1) * 1e4; // sell base: get less ⇒ worse
   }
 }
 

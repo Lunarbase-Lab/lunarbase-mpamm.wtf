@@ -214,7 +214,7 @@ export function cexForBase(baseKey: string): CexId {
 /** Notional sizes (USD) probed per pair×side in the exec matrix. */
 export const SIZES_USD = [100, 1000, 10000, 100000] as const;
 
-/** Markout horizons (seconds) joined to the Bybit reference (spec §4.2/4.3). */
+/** Markout horizons (seconds) joined to each pair's CEX reference (spec §4.2/4.3). */
 export const MARKOUT_HORIZONS = [0, 5, 10, 30, 60] as const;
 
 // ──────────────────────────────────────────────────────────────────────────
