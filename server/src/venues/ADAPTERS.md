@@ -9,16 +9,16 @@ new file + one line in `registry.ts`. No core edits.**
 Your data can be **fully on-chain**, from a **subgraph**, or a **mix** — the
 contract is only about the *shapes you return*, not where you get them.
 
-Two shipped adapters are the reference implementations:
-- **`lfj.ts`** — fully on-chain (discover pairs, quote via a view call, decode Swap logs). No backfill.
-- **`clober.ts`** — mixed: subgraph for discovery + closed-day backfill, chain for live quotes + fills (with router attribution + mid-run book discovery).
+The shipped adapters are the reference implementations:
+- **`poe.ts`** / **`metric.ts`** — fully on-chain (discover pools via a factory/immutables read, quote via a view call, decode Swap logs), seeded by the core's background on-chain backfill (`backfillFromUtc`).
+- **`clober.ts`** — mixed: subgraph for discovery + closed-day `backfill()`, chain for live quotes + fills (with router attribution + mid-run book discovery).
 
 ## Quick start
 1. `cp _template.ts myvenue.ts` and fill in the TODOs.
 2. Register it in `registry.ts`:
    ```ts
    import { createMyVenueAdapter } from './myvenue.js';
-   export const ADAPTERS: VenueAdapter[] = [ createLfjAdapter(), createCloberVaultAdapter(), createMyVenueAdapter() ];
+   export const ADAPTERS: VenueAdapter[] = [ createPoeAdapter(), createCloberVaultAdapter(), createMetricAdapter(), createMyVenueAdapter() ];
    ```
 3. `npm -w server run typecheck`, then run it (`npm run dev`) and open the dashboard.
 
@@ -56,7 +56,7 @@ Everything you need is on `ctx` (`AdapterContext`) — **use it instead of impor
 - **Discovery readiness matters:** if `discover()` must enumerate the fill/state contracts, `logSources()` must throw while that discovery state is unavailable. Returning `[]` means the venue truly has no tailable sources; it must not mean "discovery failed".
 - **Decode is cursor-critical:** if your `decode()` throws, the core holds the cursor and retries the whole range. Use this for genuinely unsafe states (e.g. authoritative discovery unavailable). For one malformed/irrelevant log, catch locally and skip that log so the indexer doesn't wedge forever.
 - **Degraded attribution, not a false label:** when an `'attribution'` source's fetch fails, its key is in `decode`'s `failedSources` — use it so you don't assert a confident class. The Clober adapter tags such Takes **`UNKNOWN`** instead of `DIRECT` (we can't tell direct from routed when the router logs are missing).
-- **Self-healing discovery:** `discover()` is re-run periodically (`REDISCOVER_MS`, default 10 min), so missed/mid-run pools recover from your authoritative source. Make `discover()` **merge** into your cache (never replace) so a transient/partial failure can't shrink or wipe it — both `lfj.ts` and `clober.ts` do this. NB: LFJ discovers pairs by a factory *read* (no cursor-holding log source), so a brand-new pair created mid-run is only picked up at the next rediscovery; for the tracked static pair set that's fine — a venue expecting frequent new pools should expose a `'state'` "pool-created" log source instead.
+- **Self-healing discovery:** `discover()` is re-run periodically (`REDISCOVER_MS`, default 10 min), so missed/mid-run pools recover from your authoritative source. Make `discover()` **merge** into your cache (never replace) so a transient/partial failure can't shrink or wipe it — `poe.ts` and `clober.ts` both do this. NB: POE/Metric discover pools by a factory *read* (no cursor-holding log source), so a brand-new pool created mid-run is only picked up at the next rediscovery; for the tracked registered-pair set that's fine — a venue expecting frequent new pools should expose a `'state'` "pool-created" log source instead.
 - **backfill().fills** are persisted to the DB, so they show up in the DB-backed leaderboard/tape (`queryFills`). Contract: their **volume** must come from `backfill().days` (fills are not re-aggregated). **Markouts:** only fills whose horizons are still in the future get aged against the live mid; a historical closed-day fill with `null` markouts is tape-visible but **excluded** from markout/leaderboard stats (never fabricated from a much-later mid). If you can supply final historical markouts, include them in the fill.
 - **Stateful discovery:** `discover()` and `decode()` may mutate closure state (e.g. fold newly-`Open`ed pools from a log source into your cache) — see `clober.ts`'s `mergeVaultBooks`.
 - **Degrade intentionally:** quote-only failures can return empty rows. Fill/state discovery, required log fetches, timestamp lookup, and unsafe decode states must throw/hold the cursor so volume and fills are never silently undercounted.
