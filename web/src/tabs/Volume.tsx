@@ -231,31 +231,35 @@ export function VolumeTab() {
         <div style={{ padding: '9px 12px', borderBottom: `1px solid ${C.line2}`, fontSize: 11, letterSpacing: '.03em' }}>
           <span style={{ color: C.purple }}>~</span> <span style={{ color: C.text, fontWeight: 600 }}>DAILY_VOLUME</span> <span style={{ color: C.faint }}>USD notional by venue · UTC days · {vm.volScopeNote}</span>
         </div>
-        <div style={{ position: 'relative', padding: '16px 18px 8px' }}>
-          <div style={{ position: 'absolute', top: 14, left: 18, fontSize: 8.5, color: C.faint2 }}>{vm.volMaxLabel}</div>
-          <div style={{ position: 'absolute', top: 88, left: 18, fontSize: 8.5, color: C.faint2 }}>{vm.volMidLabel}</div>
-          <div style={{ display: 'flex', alignItems: 'flex-end', gap: 1.5, height: 150, paddingLeft: 42, borderBottom: `1px solid ${C.line}` }}>
-            {vm.volBars.map((b, i) => (
-              <div key={i} style={{ display: 'flex', flexDirection: 'column-reverse', flex: 1, gap: 1, opacity: b.op }}>
-                {b.segs.map((s, j) => <div key={j} style={{ height: `${s.h}px`, background: s.color }} />)}
-              </div>
-            ))}
+        {/* flex row: the bars end where the summary column begins, so the newest
+            (right-most) bars never render underneath it — no absolute overlay. */}
+        <div style={{ display: 'flex', alignItems: 'flex-start', gap: 14, padding: '16px 18px 8px' }}>
+          <div style={{ position: 'relative', flex: 1, minWidth: 0 }}>
+            <div style={{ position: 'absolute', top: -2, left: 0, fontSize: 8.5, color: C.faint2 }}>{vm.volMaxLabel}</div>
+            <div style={{ position: 'absolute', top: 72, left: 0, fontSize: 8.5, color: C.faint2 }}>{vm.volMidLabel}</div>
+            <div style={{ display: 'flex', alignItems: 'flex-end', gap: 1.5, height: 150, paddingLeft: 42, borderBottom: `1px solid ${C.line}` }}>
+              {vm.volBars.map((b, i) => (
+                <div key={i} style={{ display: 'flex', flexDirection: 'column-reverse', flex: 1, gap: 1, opacity: b.op }}>
+                  {b.segs.map((s, j) => <div key={j} style={{ height: `${s.h}px`, background: s.color }} />)}
+                </div>
+              ))}
+            </div>
+            <div style={{ position: 'relative', height: 14, marginTop: 4, marginLeft: 42 }}>
+              {vm.volAxis.map((a, i) => (
+                <div key={i} style={{ position: 'absolute', left: a.left, transform: 'translateX(-50%)', fontSize: 8.5, color: C.faint2 }}>{a.label}</div>
+              ))}
+            </div>
           </div>
-          <div style={{ position: 'relative', height: 14, marginTop: 4, marginLeft: 42 }}>
-            {vm.volAxis.map((a, i) => (
-              <div key={i} style={{ position: 'absolute', left: a.left, transform: 'translateX(-50%)', fontSize: 8.5, color: C.faint2 }}>{a.label}</div>
-            ))}
-          </div>
-          {/* legend box */}
-          <div style={{ position: 'absolute', top: 14, right: 16, background: C.overlay, border: `1px solid ${C.line}`, padding: '8px 10px', minWidth: 200 }}>
+          {/* summary table — a real column now (was an absolute overlay hiding the newest bars) */}
+          <div style={{ flex: 'none', width: 248, background: C.overlay, border: `1px solid ${C.line}`, padding: '8px 10px' }}>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 70px 44px', gap: '3px 8px', fontSize: 8.5, color: C.faint2, letterSpacing: '.05em', paddingBottom: 5, borderBottom: `1px solid ${C.line}` }}>
               <div>VENUE</div><div style={{ textAlign: 'right' }}>ALL-TIME</div><div style={{ textAlign: 'right' }}>SHARE</div>
             </div>
             {vm.legRows.map((r) => (
               <div key={r.name} style={{ display: 'grid', gridTemplateColumns: '1fr 70px 44px', gap: '3px 8px', fontSize: 10.5, padding: '4px 0', alignItems: 'center' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                  <span style={{ width: 8, height: 8, borderRadius: 2, background: r.color }} />
-                  <span style={{ color: C.text2 }}>{r.name}</span>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
+                  <span style={{ width: 8, height: 8, borderRadius: 2, background: r.color, flex: 'none' }} />
+                  <span style={{ color: C.text2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', minWidth: 0 }}>{r.name}</span>
                 </div>
                 <div style={{ textAlign: 'right', color: C.text }}>{r.vol}</div>
                 <div style={{ textAlign: 'right', color: C.dim }}>{r.share}</div>
