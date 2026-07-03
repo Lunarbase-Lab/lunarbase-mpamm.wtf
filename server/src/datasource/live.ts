@@ -56,6 +56,8 @@ export class LiveDataSource extends BaseSource {
   /** chain head captured at boot — the upper bound for on-chain backfill (the
    *  live tail owns every block after it, so the two never overlap). */
   private bootHead = 0n;
+  /** process start — grace period before "reference feed has no mid" notes. */
+  private bootMs = Date.now();
   private timer?: ReturnType<typeof setInterval>;
   private persistTimer?: ReturnType<typeof setInterval>;
   private rediscoverTimer?: ReturnType<typeof setInterval>;
@@ -426,6 +428,19 @@ export class LiveDataSource extends BaseSource {
   private async poll(): Promise<void> {
     const now = Date.now();
     const monUsd = REFERENCES.assetUsd('MON');
+    // Surface a starving reference feed LOUDLY (state.notes): with no base mid
+    // there are no reference rows, no venue bps anchors and no markouts for that
+    // asset's pairs — they silently vanish from the UI otherwise (this is exactly
+    // how the geo-blocked Binance feed on Render hid BTC/ETH; feeds swallow their
+    // own connection errors, so the mid is the observable signal). Grace period
+    // covers the normal cold-start warmup.
+    if (now - this.bootMs > 60_000) {
+      for (const a of Object.values(ASSETS)) {
+        if (REFERENCES.assetUsd(a.key) <= 0) {
+          this.noteOnce(`${a.cex} feed has no ${a.cexSymbol} mid — ${a.symbol} pairs are hidden (reference/markouts unavailable)`);
+        }
+      }
+    }
     // record each PAIR's CEX mid history in its own terms (the markout anchors).
     for (const pair of PAIRS) {
       const mid = REFERENCES.midForPair(pair.symbol);

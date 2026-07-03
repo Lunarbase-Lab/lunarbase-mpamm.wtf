@@ -31,8 +31,13 @@ export const config = {
 
   // Binance spot — the CEX reference for non-MON assets (BTC/ETH); MON has no
   // Binance spot so it stays on Bybit. Symbols come from the asset registry.
-  binanceRest: env.BINANCE_REST_URL ?? 'https://api.binance.com',
-  binanceWs: env.BINANCE_WS_URL ?? 'wss://stream.binance.com:9443',
+  // Defaults are Binance's OFFICIAL public market-data mirror (binance.vision):
+  // identical engine data + the same REST/WS interfaces, but NOT geo-blocked —
+  // api.binance.com returns HTTP 451 from US IPs (e.g. Render Oregon), which
+  // silently starved the BTC/ETH references in prod. We only consume public
+  // market data, so the mirror is strictly the better default everywhere.
+  binanceRest: env.BINANCE_REST_URL ?? 'https://data-api.binance.vision',
+  binanceWs: env.BINANCE_WS_URL ?? 'wss://data-stream.binance.vision',
 
   /** Bybit taker fee (bps) for the MON benchmark — default non-VIP 10 bps. */
   takerBps: num('TAKER_BPS', 10),
