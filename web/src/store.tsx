@@ -3,9 +3,10 @@ import type { MarketState, QuoteSnapshot, QuoteRow, Fill, DailyVolume, VenueMeta
 import { fetchMarkets, fetchFills, connectStream } from './lib/api';
 import type { Theme } from './theme';
 
-/** Read the persisted theme, matching the pre-paint script in index.html. */
+/** Read the persisted theme, matching the pre-paint script in index.html.
+ *  Default is dark; only an explicit 'light' choice opts out. */
 const initialTheme = (): Theme => {
-  try { return localStorage.getItem('pamm-theme') === 'dark' ? 'dark' : 'light'; } catch { return 'light'; }
+  try { return localStorage.getItem('pamm-theme') === 'light' ? 'light' : 'dark'; } catch { return 'dark'; }
 };
 export type Tab = 'exec' | 'volume' | 'markouts' | 'leaderboard';
 const N = 120; // canvas rolling window (≈60s @ 500ms)

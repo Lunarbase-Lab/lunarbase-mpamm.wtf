@@ -33,10 +33,11 @@
       href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap"
       rel="stylesheet"
     />
-    <!-- Apply the stored theme before first paint so there's no wrong-theme flash. -->
+    <!-- Apply the stored theme before first paint so there's no wrong-theme flash.
+         Default is dark; only an explicit 'light' choice opts out. -->
     <script>
-      try { document.documentElement.dataset.theme = localStorage.getItem('pamm-theme') === 'dark' ? 'dark' : 'light'; }
-      catch (e) { document.documentElement.dataset.theme = 'light'; }
+      try { document.documentElement.dataset.theme = localStorage.getItem('pamm-theme') === 'light' ? 'light' : 'dark'; }
+      catch (e) { document.documentElement.dataset.theme = 'dark'; }
     </script>
   </head>
   <body>
