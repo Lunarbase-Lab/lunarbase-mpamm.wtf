@@ -1,40 +1,38 @@
-import type { PublicClient } from 'viem';
 import { parseAbi } from 'viem';
 import type { QuoteRow, Fill, Side, VenueMeta } from '@shared';
-import { TOKENS, isMonAddress } from '@shared';
+import { TOKENS, assetForToken, baseTokenOf, pairFor } from '@shared';
 import { fromUnits, toUnits, shortHex } from '../util.js';
 import type { VenueAdapter, AdapterContext, LogBundle } from './adapter.js';
 
 /**
- * Metric OMM adapter — an oracle-anchored bin AMM (propAMM), fully on-chain.
+ * Metric OMM adapter — an oracle-anchored bin AMM (propAMM), fully on-chain and
+ * generic over base/quote (MON/USDC, BTC/USDC, ETH/USDC — every pool is a tracked
+ * base asset vs a USD stable).
  *
- * Metric pools aren't x*y=k: each pool has a per-pool PriceProvider that feeds an
- * off-chain oracle bid/ask, and the SwapRouter simulates a swap over the pool's
- * binned liquidity around that provided price. So:
- *   PriceProvider.getBidAndAskPrice()  → the fair bid/ask (Q64.64 "X64")
+ *   PriceProvider.getBidAndAskPrice()   → the fair bid/ask (Q64.64 "X64")
  *   Router.quoteSwap(pool, …, bid, ask) → realized deltas (eth_call, no state change)
  *   Pool.Swap(…, amount0Delta, amount1Delta, …) → the landed fill
  *
- * Scope: only MON/stable pools (this dashboard's universe) are surfaced — Metric's
- * WBTC/WETH pools are different assets and are skipped. No backfill (Metric has no
- * keyless deep-history source here), so its volume accumulates forward from boot.
- * ABIs: @nradko/metric-omm-sdk-v0. Verified live on Monad.
+ * No backfill source is keyless, so its volume is seeded by the core's background
+ * on-chain replay from `backfillFromUtc`. ABIs: @nradko/metric-omm-sdk-v0.
+ * Verified live on Monad.
  */
 
-/** Metric display venue — its per-theme color is the single source of truth the frontend reads. */
 const METRIC_VENUE: VenueMeta = { id: 'metric', name: 'Metric', color: { light: '#0F9D8C', dark: '#2DD4BF' }, kind: 'amm', role: 'venue' };
 
 /** Shared MetricOmmSwapRouter on Monad (same for every pool). */
 const ROUTER = '0xaF9ADa6b6eC7993CE146f6c0bF98f7211CDfD3e5' as const;
 
-/** Metric OMM pools to track — MON/stable only. Verified on-chain (getImmutables
+/** Metric OMM pools to track — base/stable only (verified on-chain: getImmutables
  *  resolves each pool's PriceProvider + token layout, so a stale entry fails loud). */
 const KNOWN_POOLS: `0x${string}`[] = [
-  '0xFA32f9ec28787d1F9C5BA5c39e54e59984FEF3f0', // wmonusdc → MON/USDC
+  '0xFA32f9ec28787d1F9C5BA5c39e54e59984FEF3f0', // WMON/USDC
+  '0x2D82AC42334b394A9a8d8f097d61DC1c6B065Fd8', // WBTC/USDC
+  '0x354D92279cA0190fF275095fE6A2a6989BAa66Fb', // WETH/USDC
 ];
 
 /** Price-limit sentinels (Q64.64) so a quote walks the full binned liquidity for
- *  the size: no upper bound buying MON, no lower bound selling it. */
+ *  the size: no upper bound buying the base, no lower bound selling it. */
 const PRICE_LIMIT_UP = (1n << 128n) - 1n;
 const PRICE_LIMIT_DOWN = 1n;
 
@@ -52,17 +50,17 @@ const ev = (abi: readonly unknown[], name: string) => abi.find((x: any) => x.typ
 interface MetricPool {
   pool: `0x${string}`;
   priceProvider: `0x${string}`;
-  market: string;       // 'MON/USDC'
-  monIsToken0: boolean; // is MON (WMON) token0 of the pool?
+  market: string;        // 'BTC/USDC'
+  baseIsToken0: boolean;
+  baseToken: string;     // TOKENS key of the base wrapper ('WMON'|'WBTC'|'WETH')
+  baseDec: number;
   stableSym: string;
   stableDec: number;
 }
 
-const WMON = TOKENS.WMON;
-
 /**
  * Metric OMM adapter — on-chain discovery (getImmutables) + oracle-quote
- * (PriceProvider + Router.quoteSwap) + Pool.Swap fill decode. No backfill.
+ * (PriceProvider + Router.quoteSwap) + Pool.Swap fill decode. No backfill().
  */
 export function createMetricAdapter(): VenueAdapter {
   let pools: MetricPool[] = [];
@@ -71,9 +69,8 @@ export function createMetricAdapter(): VenueAdapter {
 
   return {
     venues: () => [METRIC_VENUE],
-    // seed daily volume by replaying Pool.Swap on-chain from the WMON/USDC pool's
-    // deployment (block 65042020 · 2026-03-31) — no keyless subgraph. Runs in the
-    // background — see live.ts.
+    // seed daily volume by replaying Pool.Swap on-chain from the earliest pool's
+    // deployment era (WMON/USDC block 65042020 · 2026-03-31). Background — see live.ts.
     backfillFromUtc: '2026-03-31',
 
     async discover(ctx: AdapterContext) {
@@ -90,24 +87,34 @@ export function createMetricAdapter(): VenueAdapter {
         const priceProvider = im[1] as `0x${string}`;
         const token0 = String(im[2]).toLowerCase();
         const token1 = String(im[3]).toLowerCase();
-        // keep exactly MON/stable pools (one side MON, the other a known stable).
-        if (isMonAddress(token0) === isMonAddress(token1)) continue;
-        const monIsToken0 = isMonAddress(token0);
-        const stableAddr = monIsToken0 ? token1 : token0;
+        // keep base/stable pools: exactly one side a tracked base asset, the other a stable.
+        const a0 = assetForToken(token0), a1 = assetForToken(token1);
+        if (!!a0 === !!a1) continue; // both/neither base → skip (stable/stable, unknown/unknown)
+        const baseIsToken0 = !!a0;
+        const base = (baseIsToken0 ? a0 : a1)!;
+        const stableAddr = baseIsToken0 ? token1 : token0;
         const stable = Object.values(TOKENS).find((t) => t.stable && t.address.toLowerCase() === stableAddr);
         if (!stable) continue;
-        found.push({ pool: KNOWN_POOLS[i], priceProvider, market: `MON/${stable.symbol}`, monIsToken0, stableSym: stable.symbol, stableDec: stable.decimals });
+        // REGISTERED pairs only (@shared PAIRS) — a pool for an unregistered combo
+        // would emit a market with no reference rows / markout routing.
+        const pair = pairFor(base.key, stable.symbol);
+        if (!pair) { ctx.log(`Metric: pool ${KNOWN_POOLS[i].slice(0, 8)}… (${base.symbol}/${stable.symbol}) is not a registered pair — skipped`); continue; }
+        const baseTok = baseTokenOf(base.key);
+        if (!baseTok) continue;
+        found.push({
+          pool: KNOWN_POOLS[i], priceProvider, market: pair.symbol,
+          baseIsToken0, baseToken: base.token, baseDec: baseTok.decimals,
+          stableSym: stable.symbol, stableDec: stable.decimals,
+        });
       }
       pools = found;
       byAddr = new Map(pools.map((p) => [p.pool.toLowerCase(), p]));
       discovered = true;
-      ctx.log(`Metric: ${pools.length} MON/stable pool(s)`);
+      ctx.log(`Metric: ${pools.length} base/stable pool(s)`);
     },
 
     async quote(ctx: AdapterContext, sizesUsd: readonly number[]): Promise<QuoteRow[]> {
       if (!pools.length) return [];
-      const monUsd = ctx.referenceMid();
-      if (monUsd <= 0) return [];
 
       // 1) each pool's oracle bid/ask (needed as quoteSwap args).
       const ppRes = await ctx.client.multicall({
@@ -115,24 +122,27 @@ export function createMetricAdapter(): VenueAdapter {
         allowFailure: true,
       });
 
-      // 2) quoteSwap for each pool × size, both sides (eth_call — nonpayable, no state change).
-      type Leg = { pool: MetricPool; size: number; side: Side; reqIn: bigint };
+      // 2) quoteSwap for each pool × size × side (eth_call — no state change).
+      type Leg = { pool: MetricPool; size: number; side: Side; reqIn: bigint; basePx: number };
       const legs: Leg[] = [];
-      const calls: { address: `0x${string}`; abi: typeof metricRouterAbi; functionName: 'quoteSwap'; args: readonly [ `0x${string}`, boolean, bigint, bigint, bigint, bigint] }[] = [];
+      const calls: { address: `0x${string}`; abi: typeof metricRouterAbi; functionName: 'quoteSwap'; args: readonly [`0x${string}`, boolean, bigint, bigint, bigint, bigint] }[] = [];
       pools.forEach((p, i) => {
         const r = ppRes[i];
         if (r.status !== 'success') return;
+        // bps anchor = the pair-terms CEX mid (wrap basis + stable cross applied),
+        // NOT the raw USDT price — venue quotes are in the pair's stable terms.
+        const basePx = ctx.pricer.pairMid(p.market);
+        if (basePx <= 0) return;
         const [bid, ask] = r.result as readonly [bigint, bigint];
-        // zeroForOne swaps token0→token1: selling MON when MON is token0.
-        const sellZeroForOne = p.monIsToken0;
+        const sellZeroForOne = p.baseIsToken0; // token0→token1 sells the base when base is token0
         for (const size of sizesUsd) {
-          // BUY MON: exact-in the stable, no upper price bound.
+          // BUY base: exact-in the stable, no upper price bound.
           const buyIn = toUnits(size, p.stableDec);
-          legs.push({ pool: p, size, side: 'buy', reqIn: buyIn });
+          legs.push({ pool: p, size, side: 'buy', reqIn: buyIn, basePx });
           calls.push({ address: ROUTER, abi: metricRouterAbi, functionName: 'quoteSwap', args: [p.pool, !sellZeroForOne, buyIn, PRICE_LIMIT_UP, bid, ask] });
-          // SELL MON: exact-in WMON worth `size`, no lower price bound.
-          const sellIn = toUnits(ctx.pricer.tokenForUsd('WMON', size), WMON.decimals);
-          legs.push({ pool: p, size, side: 'sell', reqIn: sellIn });
+          // SELL base: exact-in base worth `size`, no lower price bound.
+          const sellIn = toUnits(ctx.pricer.tokenForUsd(p.baseToken, size), p.baseDec);
+          legs.push({ pool: p, size, side: 'sell', reqIn: sellIn, basePx });
           calls.push({ address: ROUTER, abi: metricRouterAbi, functionName: 'quoteSwap', args: [p.pool, sellZeroForOne, sellIn, PRICE_LIMIT_DOWN, bid, ask] });
         }
       });
@@ -147,15 +157,15 @@ export function createMetricAdapter(): VenueAdapter {
         const r = qRes[i];
         if (r.status !== 'success') continue;
         const [d0, d1] = r.result as readonly [bigint, bigint];
-        const monDelta = l.pool.monIsToken0 ? d0 : d1;
-        const stableDelta = l.pool.monIsToken0 ? d1 : d0;
-        const monH = fromUnits(abs(monDelta), WMON.decimals);
+        const baseDelta = l.pool.baseIsToken0 ? d0 : d1;
+        const stableDelta = l.pool.baseIsToken0 ? d1 : d0;
+        const baseH = fromUnits(abs(baseDelta), l.pool.baseDec);
         const stH = fromUnits(abs(stableDelta), l.pool.stableDec);
-        if (monH <= 0 || stH <= 0) continue;
-        const px = stH / monH; // stable per MON
-        const bps = (px / monUsd - 1) * 1e4;
+        if (baseH <= 0 || stH <= 0) continue;
+        const px = stH / baseH; // stable per base
+        const bps = (px / l.basePx - 1) * 1e4;
         // filled full when the exact-input leg consumed (almost) the whole requested input.
-        const usedIn = l.side === 'buy' ? abs(stableDelta) : abs(monDelta);
+        const usedIn = l.side === 'buy' ? abs(stableDelta) : abs(baseDelta);
         const legFull = usedIn >= (l.reqIn * 999n) / 1000n;
 
         const key = `${l.pool.market}|${l.size}`;
@@ -187,13 +197,13 @@ export function createMetricAdapter(): VenueAdapter {
         const a = l.args;
         if (!a || a.amount0Delta === undefined || a.amount1Delta === undefined) continue;
         const d0 = BigInt(a.amount0Delta), d1 = BigInt(a.amount1Delta);
-        const monDelta = p.monIsToken0 ? d0 : d1;
-        const stableDelta = p.monIsToken0 ? d1 : d0;
-        const baseAmount = fromUnits(abs(monDelta), WMON.decimals);
+        const baseDelta = p.baseIsToken0 ? d0 : d1;
+        const stableDelta = p.baseIsToken0 ? d1 : d0;
+        const baseAmount = fromUnits(abs(baseDelta), p.baseDec);
         const usd = fromUnits(abs(stableDelta), p.stableDec);
         if (baseAmount <= 0 || usd <= 0) continue;
-        const execPx = usd / baseAmount; // realized stable-per-MON (real markouts, no pxApprox)
-        // stable INTO the pool (positive delta) ⇒ the trader bought MON.
+        const execPx = usd / baseAmount; // realized stable-per-base (real markouts, no pxApprox)
+        // stable INTO the pool (positive delta) ⇒ the trader bought the base.
         const side: Side = stableDelta > 0n ? 'buy' : 'sell';
         out.push({
           id: `metric-${String(l.transactionHash).toLowerCase()}-${l.logIndex}`,

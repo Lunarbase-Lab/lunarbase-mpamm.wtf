@@ -2,7 +2,7 @@
   "name": "mpamm.wtf",
   "private": true,
   "version": "0.1.0",
-  "description": "Real-time dashboard for prop AMMs on Monad mainnet (LFJ Liquidity Book v2.2 + Clober V2), benchmarked vs Bybit MONUSDT.",
+  "description": "Real-time dashboard for propAMMs on Monad mainnet (LFJ POE, Metric, Clober Vault) — per-pair CEX reference (Bybit for MON, Binance for BTC/ETH), converted into pair terms.",
   "packageManager": "npm@11.6.2",
   "workspaces": [
     "shared",

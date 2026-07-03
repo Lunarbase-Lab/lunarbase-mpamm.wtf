@@ -12,7 +12,7 @@ import { venueMeta } from './venues/registry.js';
 /**
  * Thin transport over a DataSource (spec §6.3, D1): REST snapshots + a WS
  * stream. The frontend renders purely off these and never touches the chain,
- * subgraph, or Bybit directly.
+ * subgraph, or CEX feeds directly.
  */
 export function startServer(source: DataSource): Server {
   const app = express();
@@ -50,6 +50,14 @@ export function startServer(source: DataSource): Server {
   app.get('/api/venues', (_req, res) => res.json(venueMeta()));
 
   app.get('/api/quotes', (_req, res) => res.json(source.getQuotes()));
+  // the last ~60s of real quote ticks for one (market, size) — seeds the
+  // Execution chart on load / pair-switch so it never fabricates flat history.
+  app.get('/api/quotes/history', (req, res) => {
+    const market = typeof req.query.market === 'string' ? req.query.market : '';
+    const size = positiveNumberParam(req.query.size);
+    if (!market || size === undefined) return res.status(400).json({ error: 'market and size query params required' });
+    res.json(source.quoteHistory(market, size));
+  });
   app.get('/api/fills', (req, res) => {
     // ?days=N → last N days (from the persisted store); ?limit caps the count.
     const days = positiveNumberParam(req.query.days);

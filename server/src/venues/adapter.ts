@@ -23,12 +23,10 @@ export interface AdapterContext {
   client: PublicClient;
   /** range-chunked getLogs (the public RPC caps eth_getLogs spans). */
   getLogs: typeof getLogsChunked;
-  /** token→USD pricing (stables = $1, MON off the reference mid). */
+  /** token→USD pricing (stables = $1, base assets off their CEX reference). */
   pricer: UsdPricer;
   config: Config;
   log: (m: string) => void;
-  /** the CEX reference mid (MON/USD) — rarely needed; markouts are computed by the core. */
-  referenceMid: () => number;
 }
 
 /** A group of on-chain logs the core fetches each cycle for this adapter and
@@ -94,16 +92,29 @@ export interface VenueAdapter {
 }
 
 /**
- * The CEX reference (Bybit) — the benchmark for markouts and the Execution
- * comparison, NOT a fill-producing venue. Exactly one is registered.
+ * The CEX reference registry — the benchmarks for markouts + the Execution
+ * comparison, routed PER BASE ASSET (Bybit for MON, Binance for BTC/ETH). These
+ * are NOT fill-producing venues; one registry owns every CEX feed.
  */
-export interface ReferenceAdapter {
-  meta(): VenueMeta;
+export interface ReferenceRegistry {
   start(): Promise<void>;
   stop(): void;
-  monUsd(): number;
-  mid(): number;
-  changePct(): number;
-  /** the CEX taker walk per market×size (the benchmark quote rows). */
-  quote(ctx: AdapterContext, sizesUsd: readonly number[]): QuoteRow[];
+  /** the CEX benchmark venue metas (role: 'reference'). */
+  metas(): VenueMeta[];
+  /** the reference venue id benchmarking a base asset ('bybit' | 'binance'). */
+  refVenueIdForBase(base: string): string;
+  /** USD(≈USDT) price of a base asset (MON/BTC/ETH) — for notional sizing and
+   *  the header, NOT for bps anchoring (that needs the pair's quote terms). */
+  assetUsd(base: string): number;
+  /** the CEX reference mid for a PAIR, expressed in the pair's own terms:
+   *  baseUSDT mid × wrap basis (WBTCBTC for wrapped BTC) ÷ the stable's USDT
+   *  cross (USDCUSDT for USDC pairs). This is the bps anchor + markout mark —
+   *  like-for-like with what actually trades on-chain (spec §5.5). */
+  midForPair(market: string): number;
+  /** 24h change % for a base asset. */
+  changePctFor(base: string): number;
+  /** taker-walk benchmark rows for every tracked pair, each routed to and tagged
+   *  with the pair's CEX (venueId = 'bybit' | 'binance'), prices converted into
+   *  the pair's quote terms (wrap basis + stable cross). */
+  quote(sizesUsd: readonly number[]): QuoteRow[];
 }

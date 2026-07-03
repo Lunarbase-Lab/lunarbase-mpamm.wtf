@@ -43,9 +43,10 @@ export function QuoteCanvas() {
 
     const padL = 58, padR = 10, padT = 12, padB = 22;
     const ch = CH[d.theme]; // theme-aware canvas chrome colors (can't use var())
-    // propAMM venues + the CEX reference, filtered by the user's toggles. Colors,
-    // ids and the set itself come from the registry — nothing hardcoded here.
-    const chips: VenueMeta[] = d.reference ? [...d.displayVenues, d.reference] : d.displayVenues;
+    // propAMM venues + the selected pair's CEX reference (Bybit for MON, Binance for
+    // BTC/ETH), filtered by the user's toggles. Everything comes from the registry.
+    const cexRef = d.referenceFor(d.pair);
+    const chips: VenueMeta[] = cexRef ? [...d.displayVenues, cexRef] : d.displayVenues;
     const active = chips.filter((v) => d.venueToggles[v.id]);
     if (!active.length) return;
 
@@ -64,11 +65,15 @@ export function QuoteCanvas() {
 
     ctx.font = '9px "JetBrains Mono", monospace';
     ctx.lineWidth = 1;
+    // adaptive precision so a label always FITS the axis gutter — toFixed(5) on a
+    // 5-digit price (BTC ~62,000) is 11 chars, wider than padL, and the leading
+    // digit clips off-canvas ("62210.02" rendered as "2210.02").
+    const fmtPx = (p: number) => (p >= 1000 ? p.toFixed(1) : p >= 1 ? p.toFixed(3) : p.toFixed(5));
     for (let g = 0; g <= 4; g++) {
       const p = mn + (mx - mn) * g / 4, y = Y(p);
       ctx.strokeStyle = ch.grid;
       ctx.beginPath(); ctx.moveTo(padL, y); ctx.lineTo(w - padR, y); ctx.stroke();
-      ctx.fillStyle = ch.label; ctx.textAlign = 'right'; ctx.fillText(p.toFixed(5), padL - 6, y + 3);
+      ctx.fillStyle = ch.label; ctx.textAlign = 'right'; ctx.fillText(fmtPx(p), padL - 6, y + 3);
     }
     ctx.textAlign = 'center';
     // time axis spans (N-1) samples at the service's real quote cadence (audit I6).

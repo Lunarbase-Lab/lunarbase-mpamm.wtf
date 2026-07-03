@@ -1,5 +1,5 @@
-import { useEffect, useMemo } from 'react';
-import { SIZES_USD, type VenueMeta, type QuoteRow } from '@shared';
+import { useEffect, useMemo, useRef } from 'react';
+import { SIZES_USD, TOKENS, ASSETS, pairOf, type VenueMeta, type QuoteRow } from '@shared';
 import { useDashboard } from '../store';
 import { C, hexA, pill, venueColor } from '../theme';
 import { Panel, PanelHead, Field } from '../components/ui';
@@ -7,31 +7,38 @@ import { QuoteCanvas } from '../components/QuoteCanvas';
 import { sgn, sizeLabel, percentile, stdev } from '../lib/format';
 
 const AX = 22; // bps axis half-range for the depth ladder
-const DEFAULT_MARKETS = ['MON/USDC', 'MON/USDT0', 'MON/AUSD', 'MON/USD1'];
+const DEFAULT_MARKETS = ['MON/USDC', 'BTC/USDC', 'ETH/USDC'];
 
 export function ExecutionTab() {
   const d = useDashboard();
   const pair = d.pair, size = d.size;
   const allMarkets = d.state?.markets ?? DEFAULT_MARKETS;
+  // markets a display venue has EVER quoted this session — STICKY, so a momentary
+  // gap in a WS frame (a CEX feed blip) can't hide a market or bounce the pair.
+  const seenMarkets = useRef<Set<string>>(new Set());
   const markets = useMemo(() => {
-    if (!d.quotes) return allMarkets;
-    const venueIds = new Set(d.displayVenues.map((v) => v.id));
-    const withVenue = new Set(d.quotes.rows.filter((r) => venueIds.has(r.venueId)).map((r) => r.market));
-    return allMarkets.filter((m) => withVenue.has(m));
+    if (d.quotes) {
+      const venueIds = new Set(d.displayVenues.map((v) => v.id));
+      for (const r of d.quotes.rows) if (venueIds.has(r.venueId) && (r.bidPx > 0 || r.askPx > 0)) seenMarkets.current.add(r.market);
+    }
+    const list = allMarkets.filter((m) => seenMarkets.current.has(m));
+    return list.length ? list : allMarkets;
   }, [allMarkets, d.quotes, d.displayVenues]);
   useEffect(() => {
-    if (markets.length && !markets.includes(pair)) d.set('pair', markets[0]);
-  }, [markets, pair, d]);
-  // toggle chips: every propAMM venue + the CEX reference (if the registry has one).
-  const chips: VenueMeta[] = d.reference ? [...d.displayVenues, d.reference] : d.displayVenues;
+    // only revert when the pair isn't a registered market at all — never on a blip.
+    if (allMarkets.length && !allMarkets.includes(pair)) d.set('pair', markets[0] ?? allMarkets[0]);
+  }, [allMarkets, markets, pair, d]);
+  // the CEX benchmark for the SELECTED pair — routed by base asset (Bybit for MON,
+  // Binance for BTC/ETH). The prose explains it's walked as a taker (book + fee).
+  const ref = d.referenceFor(pair);
+  // toggle chips: every propAMM venue + the selected pair's CEX reference.
+  const chips: VenueMeta[] = ref ? [...d.displayVenues, ref] : d.displayVenues;
   // active = chips the user has enabled (all registry venues default on).
   const active = chips.filter((v) => d.venueToggles[v.id]);
-  const taker = (d.state?.takerBps ?? 10).toFixed(1);
-  // reference (CEX benchmark) name. The prose below explains it's walked as a taker
-  // (book + fee), so we don't tag the name itself with a confusing "(taker)" suffix.
-  const ref = d.reference;
   const refName = ref?.name ?? 'the CEX reference';
   const refLabel = ref ? ref.name : 'The reference';
+  // taker fee shown = the selected pair's CEX row fee (Bybit ~10bps, Binance VIP9 ~2.25bps).
+  const taker = (d.quotes?.rows.find((r) => r.venueId === ref?.id && r.market === pair)?.feeBps ?? d.state?.takerBps ?? 10).toFixed(1);
 
   const row = (v: VenueMeta, s: number): QuoteRow | undefined =>
     d.quotes?.rows.find((r) => r.venueId === v.id && r.market === pair && r.sizeUsd === s);
@@ -109,6 +116,20 @@ export function ExecutionTab() {
     return notes.length ? notes.join(' · ') : null;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [d.quotes, d.venueToggles, d.venues, pair, size, d.frame, d.theme]);
+
+  // ⚠ unit-conversion notes for the selected pair (pamm.wtf-style): the CEX
+  // reference is shown in the pair's OWN terms — wrapped basis + stable cross —
+  // driven by the @shared registries, nothing hardcoded per pair.
+  const basisNotes = useMemo(() => {
+    const p = pairOf(pair);
+    if (!p) return [];
+    const notes: string[] = [];
+    const wrapSym = ASSETS[p.base]?.wrapBasisSymbol;
+    if (wrapSym) notes.push(`${pair} trades a wrapped asset — the ${refName} reference is adjusted by the ${wrapSym} mid (wrapped/native basis, a proxy for the bridged asset), so the CEX line is shown in wrapped terms for a like-for-like comparison.`);
+    const crossSym = TOKENS[p.quote]?.usdtCross;
+    if (crossSym) notes.push(`${pair} is quoted in ${p.quote} but the ${refName} book is USDT — the reference is converted by the live ${crossSym} mid (the ${p.quote}/USDT basis is real, ~±10bps), not a $1 peg.`);
+    return notes;
+  }, [pair, refName]);
 
   return (
     <div>
@@ -202,6 +223,11 @@ export function ExecutionTab() {
             ⓘ {hint}
           </div>
         )}
+        {basisNotes.map((n, i) => (
+          <div key={i} style={{ padding: '0 14px 10px', fontSize: 9.5, color: C.amber, lineHeight: 1.5 }}>
+            ⚠ {n}
+          </div>
+        ))}
       </Panel>
 
       {/* BID_ASK_DEPTH */}
@@ -257,7 +283,7 @@ export function ExecutionTab() {
               <div style={{ textAlign: 'right', color: C.faint2 }}>{r.n}</div>
             </div>
           ))}
-          <div style={{ fontSize: 9, color: C.faint3, marginTop: 9 }}>p50 = median round-trip spread (bps, bid/ask vs the {refName} MONUSDT mid) · σ = spread stdev · ★ = tightest p50 in window</div>
+          <div style={{ fontSize: 9, color: C.faint3, marginTop: 9 }}>p50 = median round-trip spread (bps, bid/ask vs the {refName} mid) · σ = spread stdev · ★ = tightest p50 in window</div>
         </div>
       </Panel>
     </div>

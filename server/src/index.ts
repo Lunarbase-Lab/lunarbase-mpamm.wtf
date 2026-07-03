@@ -5,7 +5,7 @@ import { LiveDataSource } from './datasource/live.js';
 import type { DataSource } from './datasource/index.js';
 
 async function main(): Promise<void> {
-  // Live (real chain + Bybit) by default; the simulator is an explicit opt-in.
+  // Live (real chain + CEX references) by default; the simulator is an explicit opt-in.
   // A live boot failure is fatal — we never silently serve simulated data in
   // production. A process supervisor should restart the service.
   const source: DataSource = config.source === 'sim' ? new SimDataSource() : new LiveDataSource();

@@ -21,12 +21,14 @@ function catLabel(c: string): string {
 
 export function MarkoutsTab() {
   const d = useDashboard();
-  const { venuesById, displayVenues, reference } = d;
+  const { venuesById, displayVenues, references } = d;
 
   // venue display name + colour, resolved from the registry by Fill.venueId.
   const venueName = (f: Fill): string => venuesById[f.venueId]?.name ?? f.venueId;
   const venueNameUpper = (f: Fill): string => venueName(f).toUpperCase();
-  const refName = reference?.name ?? 'the CEX reference';
+  // markouts are routed PER PAIR (Bybit for MON, Binance for BTC/ETH), so the
+  // prose names every reference rather than mislabeling the whole tab as one CEX.
+  const refNames = references.length ? references.map((r) => r.name).join(' / ') : 'the CEX reference';
 
   // local 1s tick so age-based markout reveal advances even when no new fills land.
   const [, setTick] = useState(0);
@@ -75,7 +77,7 @@ export function MarkoutsTab() {
       <div style={{ padding: '18px 18px 14px' }}>
         <div style={{ fontSize: 14, fontWeight: 600, letterSpacing: '.06em', color: C.text }}>SWAP MARKOUTS</div>
         <div style={{ fontSize: 11, color: C.dim3, marginTop: 6, lineHeight: 1.55, maxWidth: 880 }}>
-          On-chain swaps joined to the <span style={{ color: venueColor(reference, d.theme) }}>{refName}</span> reference BBO for markouts at 0 / 5 / 10 / 30 / 60 seconds.{' '}
+          On-chain swaps joined to each pair's CEX reference BBO (<span style={{ color: C.text3 }}>{refNames}</span> — Bybit for MON, Binance for BTC/ETH) for markouts at 0 / 5 / 10 / 30 / 60 seconds.{' '}
           <span style={{ color: C.green }}>Positive bps</span> = the taker got a favorable fill vs the CEX reference; <span style={{ color: C.red }}>negative</span> = adverse. Later horizons fill in as each swap ages past them.
         </div>
       </div>

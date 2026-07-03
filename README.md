@@ -1,17 +1,21 @@
 # propAMM · Monad — execution monitor
 
-A real-time dashboard for **prop AMMs on Monad mainnet** — LFJ Liquidity Book v2.2 (bin AMM)
-and Clober V2 (on-chain CLOB) — benchmarked against **Bybit `MONUSDT`** spot. It surfaces four
-views: live execution quality, filled volume, swap markouts, and a markout leaderboard.
+A real-time dashboard for **propAMMs on Monad mainnet** — oracle/MM-priced venues only
+(**LFJ POE**, **Metric**, **Clober Vault**), a composable adapter per protocol. Each pair is
+benchmarked against its **own CEX reference** — Bybit `MONUSDT` for MON, Binance (VIP9 taker)
+`BTCUSDT`/`ETHUSDT` for BTC/ETH — **converted into the pair's own terms** (live `USDCUSDT`
+stable cross + `WBTCBTC` wrapped/native basis, never a $1 peg). It surfaces four views: live
+execution quality, filled volume, swap markouts, and a markout leaderboard.
 
 This is the full-stack implementation of the [`propAMM.dc.html`](design/propAMM.dc.html) design
 (see [`spec.md`](spec.md) for the domain model). The design is preserved under [`design/`](design/).
 
 ```
-┌─────────────┐   Multicall3 eth_call (quotes)   ┌──────────────┐   REST + WS    ┌─────────────┐
-│ Monad RPC   │──  getLogs tail (fills) ────────▶│   server/    │───────────────▶│    web/     │
-│ Bybit V5 WS │──  MONUSDT book + BBO ──────────▶│ DataSource   │  /api  /stream │ React tabs  │
-└─────────────┘                                  └──────────────┘                └─────────────┘
+┌──────────────┐   Multicall3 eth_call (quotes)   ┌──────────────┐   REST + WS    ┌─────────────┐
+│ Monad RPC    │──  getLogs tail (fills) ────────▶│   server/    │───────────────▶│    web/     │
+│ Bybit V5 WS  │──  MONUSDT book + crosses ──────▶│ DataSource   │  /api  /stream │ React tabs  │
+│ Binance WS   │──  BTC/ETH books + WBTCBTC ─────▶│              │                │             │
+└──────────────┘                                  └──────────────┘                └─────────────┘
 ```
 
 ## Quick start
@@ -22,7 +26,7 @@ npm run dev          # backend (live) on :8787 + Vite on :5173 → open http://l
 ```
 
 By default the backend runs **live** — real Monad RPC (Multicall3 quotes + `getLogs` fills) + the
-Bybit feed. It fails fast if the chain is unreachable rather than serving fabricated data. To run
+CEX reference feeds (Bybit + Binance). It fails fast if the chain is unreachable rather than serving fabricated data. To run
 fully offline against the deterministic **simulator** (a faithful port of the design's data model,
 no external dependencies):
 
@@ -36,28 +40,32 @@ DATA_SOURCE=sim npm run dev      # or set DATA_SOURCE=sim in .env
 
 | Path        | What                                                                            |
 |-------------|---------------------------------------------------------------------------------|
-| `shared/`   | The contract: `Quote`/`Fill`/`DailyVolume`/`MarketState` types + verified addresses (spec App. A). |
-| `server/`   | Node + TS service. `DataSource` (live / sim), chain + venue layer, Bybit feed, aggregation, SQLite, REST/WS. |
-| `web/`      | Vite + React + TS frontend. Four tabs, pixel-faithful to the design, rendering purely off the API. |
+| `shared/`   | The contract: `QuoteRow`/`Fill`/`DailyVolume`/`MarketState` types (keyed by `venueId`), the `PAIRS`/`ASSETS`/`TOKENS` registries + verified addresses (spec App. A). |
+| `server/`   | Node + TS service. `DataSource` (live / sim), the venue-adapter registry, Bybit + Binance reference feeds, aggregation, SQLite, REST/WS. |
+| `web/`      | Vite + React + TS frontend. Four tabs, pixel-faithful to the design, rendering purely off the API (venues/pairs never hardcoded). |
 
 ## Backend (`server/`)
 
-A single service owns the RPC/WS/Bybit connections and serves a thin frontend (spec D1). It is
-built around a `DataSource` interface with two implementations:
+A single service owns the RPC/WS/CEX connections and serves a thin frontend (spec D1). Venues are
+**composable adapters** (`server/src/venues/` — one file + one registry line per protocol; see
+`ADAPTERS.md`); the core is venue-agnostic. Two `DataSource` implementations:
 
-- **`LiveDataSource`** — quotes via Multicall3 `eth_call` (LFJ `getSwapOut`, Clober
-  `getExpectedOutput`) at block cadence; the Bybit book walked realized-vs-realized at size with
-  the taker fee overlaid; fills tailed from `getLogs` (LFJ `Swap`, Clober `Take`) and bucketed
-  into UTC-day volume; each fill joined to the Bybit mid for 0/5/10/30/60s markouts.
-- **`SimDataSource`** — a server-side port of the design's `DCLogic` simulation, run only when
-  `DATA_SOURCE=sim` (offline development / demos).
+- **`LiveDataSource`** — quotes via each adapter's Multicall3 `eth_call` reads (POE `getQuote`,
+  Metric `quoteSwap`, Clober `getExpectedOutput`) at block cadence; the pair's CEX book walked
+  realized-vs-realized at size with the taker fee overlaid, converted into the pair's own terms
+  (stable cross + wrap basis, spec §5.5); fills tailed from `getLogs` via each adapter's
+  `decode()` and bucketed into UTC-day volume; each fill joined to its **pair's** CEX mid for
+  0/5/10/30/60s markouts.
+- **`SimDataSource`** — a registry-driven simulator, run only when `DATA_SOURCE=sim`
+  (offline development / demos).
 
 REST: `GET /api/markets`, `/api/quotes`, `/api/volume`, `/api/fills?days=&limit=`, `/api/health`.
 WS `/stream` channels: `state`, `quotes`, `fill`, `volume`.
 
 **What's persisted:** the SQLite DB holds the durable history — daily-volume aggregates, the
-`lastProcessedBlock` cursor, and **decoded fills** (expensive to re-derive: log decode + a
-Bybit-mid markout join, so they're stored with a retention window rather than re-fetched). The
+`lastProcessedBlock` cursor, **decoded fills** (expensive to re-derive: log decode + a
+pair-CEX-mid markout join, so they're stored with a retention window rather than re-fetched), and
+the **per-pair mid curve** (`mid_history`, so a markout-model change can replay instead of null). The
 current quote matrix stays in memory (replace-on-poll, cheap). So the tape / markouts / leaderboard
 are served from real history (`/api/fills?days=N`), not just a live buffer.
 
@@ -70,10 +78,11 @@ replay, live mode **indexes forward** — the SQLite DB is the source of truth f
 history:
 
 - **Boot:** load persisted days + `lastProcessedBlock` from the DB.
-- **Seed (once, cheap):** closed Clober days are filled from the Goldsky subgraph
-  (`Σ BookDayData.volumeUSD` = whole-venue, `Σ PoolDayData.volumeUSD` = vault/propAMM cut).
-  LFJ has no keyless source, so it **accumulates forward** from first run (set `LFJ_API_KEY` to
-  seed it from LFJ analytics).
+- **Seed:** closed Clober Vault days are filled once from the Goldsky subgraph
+  (`Σ BookDayData.volumeUSD` over **registered** vault books). POE + Metric (no keyless
+  subgraph) are seeded by a **background on-chain backfill** — each adapter's `Swap` logs
+  replayed from its pool's deploy day, chunked/paced under the RPC caps, resumable across
+  restarts (spec §5.4).
 - **Resume:** a same-day restart gap-fills `getLogs` from `lastProcessedBlock` → tip (no gap);
   a cold start or cross-midnight restart starts forward at the tip.
 - **Forward:** every block, decoded fills advance today's bucket and are persisted; a throttled
@@ -99,57 +108,32 @@ view-model from the contract data:
 
 It ships as a **single container**: one Node process serves the REST/WS API **and** the built
 frontend on the same origin (so the SPA's relative `/api` + `/stream` URLs need no config). Because
-it's a stateful WS indexer (persistent Bybit/Monad connections, a poll loop, SQLite), host it on a
+it's a stateful WS indexer (persistent CEX/Monad connections, a poll loop, SQLite), host it on a
 **persistent-process** platform — not serverless/edge. Run **one replica** (single-writer SQLite +
 in-memory state).
 
 The [`Dockerfile`](Dockerfile) builds the frontend and runs the server serving it.
 
-### Railway (configured)
+### Render (production — mpamm.wtf)
 
-[`railway.json`](railway.json) points Railway at the Dockerfile with a `/api/health` healthcheck.
+[`render.yaml`](render.yaml) is the blueprint: one always-on Docker web service with a
+`/api/health` health check and a **persistent disk** at `/data` (`DB_PATH=/data/mpamm.db` is
+baked into the image) so the SQLite history survives deploys.
 
-1. Create a Railway project from this repo (or `railway up`). It builds the Dockerfile.
-2. Add a **Volume** mounted at `/data` so the SQLite history survives deploys (`DB_PATH=/data/mpamm.db`
-   is baked into the image).
-3. Set service **Variables**:
-   - `RPC_HTTP_URL`, `RPC_WS_URL` — a **trusted Monad node** (the public endpoint works but is
-     rate-limited and `getLogs`-capped).
-   - optional: `DATA_SOURCE=sim` (demo), `TAKER_BPS`, `SEED_SINCE_UTC`, `LFJ_API_KEY` (seeds LFJ
-     history), `SUBGRAPH_URL`.
-   - Do **not** set `PORT`/`API_PORT` — Railway injects `PORT` and the image maps it to `API_PORT`.
-4. Generate a public domain. Dashboard at `/`, API at `/api/*`, stream at `/stream` (wss).
+- **Deploys are Render-native**: every push to `main` builds the Dockerfile and deploys
+  (health-gated, zero-downtime). [`ci.yml`](.github/workflows/ci.yml) runs verification
+  (typecheck server+web → build frontend → build Docker image) on every push + PR.
+- Service **Variables**: `RPC_HTTP_URL` — a **trusted Monad node** (the public endpoint works
+  but is rate-limited and `getLogs`-capped, which slows the on-chain backfill). Optional:
+  `DATA_SOURCE=sim` (demo), `TAKER_BPS`, `BINANCE_TAKER_BPS`, `SEED_SINCE_UTC`, `SUBGRAPH_URL`,
+  `BACKFILL=off`, `BACKFILL_CHUNK`, `BACKFILL_PACE_MS`.
 
 ### Any container host / local
 
 ```bash
 docker build -t mpamm .
 docker run --rm -p 8787:8787 -v mpamm-data:/data \
-  -e RPC_HTTP_URL=https://your-monad-node -e RPC_WS_URL=wss://your-monad-node \
+  -e RPC_HTTP_URL=https://your-monad-node \
   mpamm
 # open http://localhost:8787
 ```
-
-### CI / auto-deploy (GitHub Actions → Railway)
-
-[`.github/workflows/ci.yml`](.github/workflows/ci.yml) runs on every push + PR:
-
-- **verify** — `npm ci` → typecheck (server + web) → build the frontend → build the Docker image.
-- **deploy** — only on **push to `main`**, and only **after `verify` is green** (`railway up`), so a
-  broken commit never ships. Runs under a GitHub `production` environment (add a required reviewer
-  there if you want manual approval gates).
-
-One-time setup:
-
-1. Push this repo to GitHub.
-2. Create the Railway project + service once (dashboard, or `railway init` then a first `railway up`),
-   add the `/data` volume, and set the RPC variables (see above).
-3. Create a Railway **project token**: Project → Settings → Tokens (scope it to the prod environment).
-4. In GitHub → repo **Settings → Secrets and variables → Actions**:
-   - Secret **`RAILWAY_TOKEN`** = the project token.
-   - Variable **`RAILWAY_SERVICE`** = the service name.
-   - Variable **`RAILWAY_PUBLIC_URL`** (optional) = your domain, shown on the deployment.
-5. **Disconnect Railway's own GitHub auto-deploy** for `main` (Service → Settings) so the Action is
-   the single deploy path — otherwise a push triggers two builds.
-
-Now every green push to `main` auto-deploys.

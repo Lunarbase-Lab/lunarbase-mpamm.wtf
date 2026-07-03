@@ -108,7 +108,6 @@ export function LeaderboardTab() {
   });
 
   const groupLbl = lbGroup.toLowerCase();
-  const refName = d.reference?.name ?? 'the CEX reference';
 
   return (
     <div>
@@ -116,7 +115,7 @@ export function LeaderboardTab() {
         <div>
           <div style={{ fontSize: 14, fontWeight: 600, letterSpacing: '.06em', color: C.text }}>MARKOUT LEADERBOARD</div>
           <div style={{ fontSize: 11, color: C.dim3, marginTop: 6, lineHeight: 1.55, maxWidth: 760 }}>
-            Percentile distribution of markouts and the biggest single-swap winners / losers, per group, over the selected window. Markouts vs {refName} MONUSDT BBO mid; pool PnL = Σ(markout_bps × size_usd / 10000).
+            Percentile distribution of markouts and the biggest single-swap winners / losers, per group, over the selected window. Markouts vs each pair's CEX BBO mid (Bybit for MON, Binance for BTC/ETH); pool PnL = Σ(markout_bps × size_usd / 10000).
           </div>
         </div>
         <Pills options={['24H', '7D', '30D']} value={lbWin} onChange={(v) => d.set('lbWin', v)} sm />
@@ -215,10 +214,10 @@ export function LeaderboardTab() {
           {topRows.map((x, i) => {
             const f = x.f;
             const base = f.usd / f.execPx;
-            const stable = f.market.split('/')[1];
+            const [baseSym, stable] = f.market.split('/');
             const buy = f.side.toLowerCase() === 'buy';
-            const inAmt = buy ? fmtAmt(f.usd) + ' ' + stable : fmtAmt(base) + ' MON';
-            const outAmt = buy ? fmtAmt(base) + ' MON' : fmtAmt(f.usd) + ' ' + stable;
+            const inAmt = buy ? fmtAmt(f.usd) + ' ' + stable : fmtAmt(base) + ' ' + baseSym;
+            const outAmt = buy ? fmtAmt(base) + ' ' + baseSym : fmtAmt(f.usd) + ' ' + stable;
             return (
               <a
                 key={f.id}
