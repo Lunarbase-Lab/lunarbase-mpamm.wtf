@@ -21,7 +21,7 @@ export type FillCategory = 'DIRECT' | 'ROUTER' | 'AGG' | 'CEX/DEX' | 'UNKNOWN';
 export type DataSourceMode = 'live' | 'sim';
 
 /**
- * Venue identity — the composable unit. Every venue (LFJ, Clober Vault, …) and
+ * Venue identity — the composable unit. Every venue (LFJ POE, Clober Vault, …) and
  * the CEX reference (Bybit) is described by one of these, produced by its
  * adapter on the backend and shipped to the frontend so NOTHING about a venue
  * is hardcoded in the core: name, color and grouping all come from here.
@@ -31,9 +31,9 @@ export type DataSourceMode = 'live' | 'sim';
  * it provides the markout/quote reference and shows only in Execution.
  */
 export interface VenueMeta {
-  /** stable key used everywhere as `Fill.venueId` / `QuoteRow.venueId` (e.g. 'lfj', 'clober-vault', 'bybit'). */
+  /** stable key used everywhere as `Fill.venueId` / `QuoteRow.venueId` (e.g. 'poe', 'clober-vault', 'bybit'). */
   id: string;
-  /** display name (e.g. 'LFJ', 'Clober Vault', 'Bybit'). */
+  /** display name (e.g. 'LFJ POE', 'Clober Vault', 'Bybit'). */
   name: string;
   /** venue color per theme — the single source of truth for line/bar/swatch color. */
   color: { light: string; dark: string };
@@ -55,9 +55,6 @@ export const HISTORY_START_UTC = '2026-05-13';
 
 export const ADDR = {
   multicall3: '0xcA11bde05977b3631167028862bE2a173976CA11',
-  // LFJ Liquidity Book v2.2
-  lbFactory: '0xb43120c4745967fa9b93E79C149E66B0f2D6Fe0c',
-  lbRouter: '0x18556DA13313f3532c54711497A8FedAC273220E',
   // Clober V2
   bookManager: '0x6657d192273731C3cAc646cc82D5F28D0CBE8CCC',
   bookViewer: '0xe424c211e2Ed8a5B6d1C57FA493C41715568D238',
@@ -81,7 +78,7 @@ export interface TokenInfo {
 
 /**
  * MON has two on-chain representations and venues differ (spec §8, §9.4):
- *  - LFJ (ERC-20 AMM) pairs use the WMON wrapper.
+ *  - ERC-20 AMM pools (POE, Metric) use the WMON wrapper.
  *  - Clober (V4-style) books + the LiquidityVault use NATIVE MON (the zero
  *    address, via isNative()).
  * Both are the same asset (same price, 18 decimals). Treat them as MON.
@@ -145,7 +142,7 @@ export interface QuoteRow {
    *  spreadBps is not meaningful. Set by the Clober/Vault quoter (CLOB books that
    *  quote a genuine ask but no real bid at the requested size, or vice-versa). */
   oneSided?: boolean;
-  /** venue fee in bps (LFJ getSwapOut fee); 0 for CLOB venues. */
+  /** venue fee in bps (e.g. POE getQuote fee); 0 for CLOB venues. */
   feeBps: number;
   /** realized cost vs Bybit-AS-TAKER at this size, sign-normalized so positive
    *  = on-chain executes worse (spec §4.2): cexAskBps for buying MON, cexBidBps

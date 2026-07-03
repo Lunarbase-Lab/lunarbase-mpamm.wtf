@@ -15,9 +15,9 @@ type Stmt = ReturnType<DatabaseSync['prepare']>;
  * Schema is venue-agnostic (long format): daily volume is one row per
  * (day, venue_id), and a fill carries a `venue_id` — so adding a venue never
  * touches this file. On a schema bump we start fresh (drop + rebuild): Clober
- * vault history re-seeds from the subgraph and LFJ rebuilds forward.
+ * vault history re-seeds from the subgraph and on-chain venues rebuild forward.
  */
-const SCHEMA_VERSION = '2';
+const SCHEMA_VERSION = '3';
 
 export class VolumeStore {
   private db: DatabaseSync;

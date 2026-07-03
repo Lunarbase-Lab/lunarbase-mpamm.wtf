@@ -7,7 +7,7 @@ import type { VenueAdapter, AdapterContext, LogBundle } from './adapter.js';
  * Delete the methods/patterns you don't need. Full guide: ADAPTERS.md.
  *
  * Three sourcing patterns (mix freely):
- *   A. on-chain only  — discover + logSources + decode, NO backfill (like LFJ).
+ *   A. on-chain only  — discover + logSources + decode, NO backfill (like POE / Metric).
  *   B. subgraph seed + on-chain tail — add backfill() (like Clober Vault).
  *   C. quote-only     — implement quote(); return [] from logSources()/decode().
  */

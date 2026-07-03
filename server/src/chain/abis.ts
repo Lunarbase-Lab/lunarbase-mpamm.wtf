@@ -5,24 +5,6 @@ import { parseAbi } from 'viem';
  * structs from the inline tuple syntax.
  */
 
-// LFJ Liquidity Book v2.2 — LBPair
-export const lbPairAbi = parseAbi([
-  'function getSwapOut(uint128 amountIn, bool swapForY) view returns (uint128 amountInLeft, uint128 amountOut, uint128 fee)',
-  'function getTokenX() view returns (address)',
-  'function getTokenY() view returns (address)',
-  'function getActiveId() view returns (uint24)',
-  'function getBinStep() view returns (uint16)',
-  'function getReserves() view returns (uint128 reserveX, uint128 reserveY)',
-  'event Swap(address indexed sender, address indexed to, uint24 id, bytes32 amountsIn, bytes32 amountsOut, uint24 volatilityAccumulator, bytes32 totalFees, bytes32 protocolFees)',
-]);
-
-// LFJ — LBFactory (discovery)
-export const lbFactoryAbi = parseAbi([
-  'function getNumberOfLBPairs() view returns (uint256)',
-  'function getAllLBPairs(address tokenX, address tokenY) view returns ((uint16 binStep, address LBPair, bool createdByOwner, bool ignoredForRouting)[])',
-  'event LBPairCreated(address indexed tokenX, address indexed tokenY, uint256 indexed binStep, address LBPair, uint256 pid)',
-]);
-
 // Clober V2 — BookManager (core events)
 export const bookManagerAbi = parseAbi([
   'event Take(uint192 indexed bookId, address indexed user, int24 tick, uint64 unit)',

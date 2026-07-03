@@ -1,6 +1,6 @@
 import type { VenueMeta } from '@shared';
 import type { VenueAdapter, ReferenceAdapter } from './adapter.js';
-import { createLfjAdapter } from './lfj.js';
+import { createPoeAdapter } from './poe.js';
 import { createCloberVaultAdapter } from './clober.js';
 import { createMetricAdapter } from './metric.js';
 import { createBybitReference } from './bybit-reference.js';
@@ -8,13 +8,14 @@ import { createBybitReference } from './bybit-reference.js';
 /**
  * The venue registry — the ONE place venues are wired in.
  *
- * To plug in a protocol: drop an adapter file next to lfj.ts / clober.ts, then
- * add one line to ADAPTERS below. Nothing else in the core changes — the
- * indexer, DB, API and frontend are all venue-agnostic and read everything
- * (name, color, output) from the adapter. See ADAPTERS.md + _template.ts.
+ * This dashboard is dedicated to propAMM-style venues (oracle/MM-priced), not
+ * passive curve DEXes or raw CLOBs. To plug in a protocol: drop an adapter file
+ * next to poe.ts / metric.ts, then add one line to ADAPTERS below. Nothing else
+ * in the core changes — the indexer, DB, API and frontend are all venue-agnostic
+ * and read everything (name, color, output) from the adapter. See ADAPTERS.md.
  */
 export const ADAPTERS: VenueAdapter[] = [
-  createLfjAdapter(),
+  createPoeAdapter(),
   createCloberVaultAdapter(),
   createMetricAdapter(),
 ];

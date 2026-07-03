@@ -42,8 +42,6 @@ export const config = {
   dbPath: env.DB_PATH ?? 'data/mpamm.db',
   /** Clober Goldsky subgraph — one-time seed of historical daily volume. */
   subgraphUrl: env.SUBGRAPH_URL ?? 'https://api.goldsky.com/api/public/project_clsljw95chutg01w45cio46j0/subgraphs/v2-subgraph-monad/latest/gn',
-  /** Optional LFJ analytics key; without it, LFJ history grows forward only. */
-  lfjApiKey: env.LFJ_API_KEY ?? '',
   /** First UTC day to seed history from. */
   seedSinceUtc: env.SEED_SINCE_UTC ?? HISTORY_START_UTC,
   /** Snapshot persistence cadence (ms). */

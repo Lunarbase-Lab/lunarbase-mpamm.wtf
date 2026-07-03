@@ -19,7 +19,7 @@ const CLOBER_VAULT_VENUE: VenueMeta = { id: 'clober-vault', name: 'Clober Vault'
  * deploy block is impractical on the public RPC (getLogs is range-capped), so
  * this scans recent Open logs to build a book cache + vault-bookId set; if that
  * yields nothing, Clober rows are simply absent and the matrix degrades to
- * LFJ + Bybit (allowFailure, spec §8).
+ * the other venues + Bybit (allowFailure, spec §8).
  */
 
 const ZERO = '0x0000000000000000000000000000000000000000';
