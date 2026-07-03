@@ -27,8 +27,6 @@ export interface AdapterContext {
   pricer: UsdPricer;
   config: Config;
   log: (m: string) => void;
-  /** the CEX reference mid (MON/USD) — rarely needed; markouts are computed by the core. */
-  referenceMid: () => number;
 }
 
 /** A group of on-chain logs the core fetches each cycle for this adapter and
@@ -94,16 +92,24 @@ export interface VenueAdapter {
 }
 
 /**
- * The CEX reference (Bybit) — the benchmark for markouts and the Execution
- * comparison, NOT a fill-producing venue. Exactly one is registered.
+ * The CEX reference registry — the benchmarks for markouts + the Execution
+ * comparison, routed PER BASE ASSET (Bybit for MON, Binance for BTC/ETH). These
+ * are NOT fill-producing venues; one registry owns every CEX feed.
  */
-export interface ReferenceAdapter {
-  meta(): VenueMeta;
+export interface ReferenceRegistry {
   start(): Promise<void>;
   stop(): void;
-  monUsd(): number;
-  mid(): number;
-  changePct(): number;
-  /** the CEX taker walk per market×size (the benchmark quote rows). */
-  quote(ctx: AdapterContext, sizesUsd: readonly number[]): QuoteRow[];
+  /** the CEX benchmark venue metas (role: 'reference'). */
+  metas(): VenueMeta[];
+  /** the reference venue id benchmarking a base asset ('bybit' | 'binance'). */
+  refVenueIdForBase(base: string): string;
+  /** USD price of a base asset (MON/BTC/ETH). */
+  assetUsd(base: string): number;
+  /** CEX BBO mid for a base asset. */
+  midFor(base: string): number;
+  /** 24h change % for a base asset. */
+  changePctFor(base: string): number;
+  /** taker-walk benchmark rows for every tracked pair, each routed to and tagged
+   *  with the pair's CEX (venueId = 'bybit' | 'binance'). */
+  quote(sizesUsd: readonly number[]): QuoteRow[];
 }

@@ -1,34 +1,33 @@
 import { parseAbi } from 'viem';
-import type { QuoteRow, Fill, Side, VenueMeta } from '@shared';
-import { TOKENS, isMonAddress } from '@shared';
+import type { QuoteRow, Fill, Side, VenueMeta, TokenInfo } from '@shared';
+import { TOKENS, ASSETS, assetForToken, baseTokenOf } from '@shared';
 import { fromUnits, toUnits, shortHex } from '../util.js';
 import type { VenueAdapter, AdapterContext, LogBundle } from './adapter.js';
 
 /**
- * LFJ POE adapter — LFJ's "Public Prop AMM" on Monad, fully on-chain.
+ * LFJ POE adapter — LFJ's "Public Prop AMM" on Monad, fully on-chain and generic
+ * over base/quote (any tracked base asset vs a USD stable; POE currently lists
+ * MON/USDC only).
  *
  * POE is a propAMM, NOT LFJ's Liquidity Book: each pool prices off a ClapOracle
- * (Concentrated-Liquidity Constant-Product), market makers set price/ranges/fees,
- * and depositors fund the vault. Unlike Metric we don't fetch the oracle bid/ask
- * ourselves — the pool's own `getQuote` returns an executable, fee-inclusive
- * amount, so the read is a single view call:
+ * (Concentrated-Liquidity Constant-Product); the pool's own `getQuote` returns an
+ * executable, fee-inclusive amount, so the read is a single view call:
  *   Factory.getPool(x, y)                        → the pool for a token pair
  *   Pool.getTokens()                             → canonical tokenX / tokenY
  *   Pool.getQuote(swapXtoY, amountIn)            → amountOut (+ actualAmountIn, fees)
  *   Pool.Swap(…, actualAmountIn, amountOut, …)   → the landed fill
  *
- * Scope: MON/stable pools only (this dashboard's universe) — POE's stable/stable
- * pools (e.g. AUSD/USDC) are skipped. No backfill (no keyless deep-history source),
- * so volume accumulates forward from boot. ABIs: LFJ POE OraclePool
+ * No backfill (no keyless deep-history source) — volume is seeded by the core's
+ * background on-chain replay from `backfillFromUtc`. ABIs: LFJ POE OraclePool
  * (developers.lfj.gg/poe). Verified live on Monad.
  */
 
-/** LFJ POE display venue — keeps LFJ's brand palette (POE is an LFJ product). The
- *  per-theme color is the single source of truth the frontend reads. */
+/** LFJ POE display venue — keeps LFJ's brand palette (POE is an LFJ product). */
 const POE_VENUE: VenueMeta = { id: 'poe', name: 'LFJ POE', color: { light: '#FF4D00', dark: '#6E8BFF' }, kind: 'amm', role: 'venue' };
 
 /** POE OraclePoolFactory on Monad (sorts token args internally). */
 const FACTORY = '0x78120F2C0EBF0cc8B7E7749e62D36e6523dD711D' as const;
+const ZERO = '0x0000000000000000000000000000000000000000';
 
 const poeFactoryAbi = parseAbi([
   'function getPool(address tokenX, address tokenY) view returns (address)',
@@ -44,54 +43,55 @@ const ev = (abi: readonly unknown[], name: string) => abi.find((x: any) => x.typ
 interface PoePool {
   pool: `0x${string}`;
   market: string;    // 'MON/USDC'
-  monIsX: boolean;   // is MON (WMON) tokenX of the pool?
+  baseIsX: boolean;  // is the base asset tokenX of the pool?
+  baseToken: string; // TOKENS key of the base wrapper ('WMON'|'WBTC'|'WETH')
+  baseDec: number;
   stableSym: string;
   stableDec: number;
 }
 
-const WMON = TOKENS.WMON;
-
 /**
  * LFJ POE adapter — on-chain discovery (Factory.getPool + Pool.getTokens) +
- * executable quotes (Pool.getQuote) + Pool.Swap fill decode. No backfill.
+ * executable quotes (Pool.getQuote) + Pool.Swap fill decode. No backfill().
  */
 export function createPoeAdapter(): VenueAdapter {
   // MERGE, never replace (LFJ review #3): getPool is a factory READ, not a
   // cursor-holding log source, so a transient/partial discovery must only
-  // ADD/refresh pools — never shrink the tailed set (which would advance the
-  // cursor past an omitted pool's swaps) or drop an address a live tail may
-  // still decode against.
-  const byMarket = new Map<string, PoePool>(); // current pick per market — source of truth for tailing/quoting
-  const byAddr = new Map<string, PoePool>();   // every pool ever seen — for decode lookups
+  // ADD/refresh pools — never shrink the tailed set or drop an address a live
+  // tail may still decode against.
+  const byMarket = new Map<string, PoePool>();
+  const byAddr = new Map<string, PoePool>();
   let discovered = false;
 
   return {
     venues: () => [POE_VENUE],
     // seed daily volume by replaying Pool.Swap on-chain from the WMON/USDC pool's
-    // deployment (block 73455416 · 2026-05-09) — POE has no keyless subgraph. The
-    // core runs this in the background, chunked + paced + resumable (live.ts).
+    // deployment (block 73455416 · 2026-05-09). Background — see live.ts.
     backfillFromUtc: '2026-05-09',
 
     async discover(ctx: AdapterContext) {
       const stables = Object.values(TOKENS).filter((t) => t.stable);
-      // phase 1: resolve the POE pool for each MON/stable pair.
+      const baseToks = Object.values(ASSETS).map((a) => baseTokenOf(a.key)).filter(Boolean) as TokenInfo[];
+      const combos: { baseTok: TokenInfo; stable: TokenInfo }[] = [];
+      for (const baseTok of baseToks) for (const stable of stables) combos.push({ baseTok, stable });
+
+      // phase 1: resolve the POE pool for each base/stable pair.
       const poolRes = await ctx.client.multicall({
-        contracts: stables.map((s) => ({ address: FACTORY, abi: poeFactoryAbi, functionName: 'getPool' as const, args: [WMON.address, s.address] as const })),
+        contracts: combos.map((c) => ({ address: FACTORY, abi: poeFactoryAbi, functionName: 'getPool' as const, args: [c.baseTok.address, c.stable.address] as const })),
         allowFailure: true,
       });
-      const candidates: { pool: `0x${string}`; stable: (typeof stables)[number] }[] = [];
-      for (let i = 0; i < stables.length; i++) {
+      const candidates: { pool: `0x${string}`; baseTok: TokenInfo; stable: TokenInfo }[] = [];
+      for (let i = 0; i < combos.length; i++) {
         const r = poolRes[i];
-        // fail closed: an RPC error on a configured lookup holds the cursor (throws),
-        // rather than silently dropping a pool we'd otherwise tail.
-        if (r.status !== 'success') throw new Error(`POE getPool failed for ${WMON.symbol}/${stables[i].symbol}`);
+        // fail closed: an RPC error on a configured lookup holds the cursor (throws).
+        if (r.status !== 'success') throw new Error(`POE getPool failed for ${combos[i].baseTok.symbol}/${combos[i].stable.symbol}`);
         const addr = String(r.result).toLowerCase() as `0x${string}`;
-        if (addr === '0x0000000000000000000000000000000000000000') continue; // no POE pool for this pair — normal
-        candidates.push({ pool: addr, stable: stables[i] });
+        if (addr === ZERO) continue; // no POE pool for this pair — normal
+        candidates.push({ pool: addr, baseTok: combos[i].baseTok, stable: combos[i].stable });
       }
-      if (!candidates.length) { discovered = true; ctx.log(`POE: 0 MON/stable pool(s)`); return; }
+      if (!candidates.length) { discovered = true; ctx.log('POE: 0 base/stable pool(s)'); return; }
 
-      // phase 2: resolve canonical token order (which side is WMON) per pool.
+      // phase 2: canonical token order (which side is the base) per pool.
       const tokRes = await ctx.client.multicall({
         contracts: candidates.map((c) => ({ address: c.pool, abi: poePoolAbi, functionName: 'getTokens' as const })),
         allowFailure: true,
@@ -99,44 +99,47 @@ export function createPoeAdapter(): VenueAdapter {
       for (let i = 0; i < candidates.length; i++) {
         const r = tokRes[i];
         if (r.status !== 'success') throw new Error(`POE getTokens failed for ${candidates[i].pool}`);
-        const [tx, ty] = r.result as readonly [string, string];
-        const xIsMon = isMonAddress(tx), yIsMon = isMonAddress(ty);
-        if (xIsMon === yIsMon) throw new Error(`POE pool ${candidates[i].pool} is not a MON/stable pool`); // fail closed
+        const [tx] = r.result as readonly [string, string];
+        const c = candidates[i];
+        const base = assetForToken(c.baseTok.address);
+        if (!base) continue;
         const p: PoePool = {
-          pool: candidates[i].pool,
-          market: `MON/${candidates[i].stable.symbol}`,
-          monIsX: xIsMon,
-          stableSym: candidates[i].stable.symbol,
-          stableDec: candidates[i].stable.decimals,
+          pool: c.pool,
+          market: `${base.symbol}/${c.stable.symbol}`,
+          baseIsX: String(tx).toLowerCase() === c.baseTok.address.toLowerCase(),
+          baseToken: base.token,
+          baseDec: c.baseTok.decimals,
+          stableSym: c.stable.symbol,
+          stableDec: c.stable.decimals,
         };
         byMarket.set(p.market, p);
         byAddr.set(p.pool.toLowerCase(), p);
       }
       discovered = true;
-      ctx.log(`POE: ${byMarket.size} MON/stable pool(s)`);
+      ctx.log(`POE: ${byMarket.size} base/stable pool(s)`);
     },
 
     async quote(ctx: AdapterContext, sizesUsd: readonly number[]): Promise<QuoteRow[]> {
       const pools = [...byMarket.values()];
       if (!pools.length) return [];
-      const monUsd = ctx.referenceMid();
-      if (monUsd <= 0) return [];
 
       // getQuote(swapXtoY, amountIn) per pool × size × side (view — eth_call).
-      type Leg = { pool: PoePool; size: number; side: Side; reqIn: bigint; inDec: number; outDec: number };
+      type Leg = { pool: PoePool; size: number; side: Side; reqIn: bigint; inDec: number; outDec: number; basePx: number };
       const legs: Leg[] = [];
       const calls: { address: `0x${string}`; abi: typeof poePoolAbi; functionName: 'getQuote'; args: readonly [boolean, bigint] }[] = [];
       for (const p of pools) {
+        const basePx = ctx.pricer.usdPerToken(p.baseToken);
+        if (basePx <= 0) continue;
         for (const size of sizesUsd) {
-          // BUY MON: spend the stable. swapXtoY sends X→Y, so buying MON is X→Y when
-          // the stable is X (i.e. MON is NOT X).
+          // BUY base: spend the stable. swapXtoY sends X→Y, so buying the base is
+          // X→Y when the stable is X (i.e. the base is NOT X).
           const buyIn = toUnits(size, p.stableDec);
-          legs.push({ pool: p, size, side: 'buy', reqIn: buyIn, inDec: p.stableDec, outDec: WMON.decimals });
-          calls.push({ address: p.pool, abi: poePoolAbi, functionName: 'getQuote', args: [!p.monIsX, buyIn] });
-          // SELL MON: spend WMON worth `size`. swapXtoY when MON IS X.
-          const sellIn = toUnits(ctx.pricer.tokenForUsd('WMON', size), WMON.decimals);
-          legs.push({ pool: p, size, side: 'sell', reqIn: sellIn, inDec: WMON.decimals, outDec: p.stableDec });
-          calls.push({ address: p.pool, abi: poePoolAbi, functionName: 'getQuote', args: [p.monIsX, sellIn] });
+          legs.push({ pool: p, size, side: 'buy', reqIn: buyIn, inDec: p.stableDec, outDec: p.baseDec, basePx });
+          calls.push({ address: p.pool, abi: poePoolAbi, functionName: 'getQuote', args: [!p.baseIsX, buyIn] });
+          // SELL base: spend base worth `size`. swapXtoY when the base IS X.
+          const sellIn = toUnits(ctx.pricer.tokenForUsd(p.baseToken, size), p.baseDec);
+          legs.push({ pool: p, size, side: 'sell', reqIn: sellIn, inDec: p.baseDec, outDec: p.stableDec, basePx });
+          calls.push({ address: p.pool, abi: poePoolAbi, functionName: 'getQuote', args: [p.baseIsX, sellIn] });
         }
       }
       if (!calls.length) return [];
@@ -153,10 +156,8 @@ export function createPoeAdapter(): VenueAdapter {
         const inH = fromUnits(actualAmountIn, l.inDec);
         const outH = fromUnits(amountOut, l.outDec);
         if (inH <= 0 || outH <= 0) continue;
-        // realized stable-per-MON (all-in; actualAmountIn is gross of fee)
-        const px = l.side === 'buy' ? inH / outH : outH / inH;
-        const bps = (px / monUsd - 1) * 1e4;
-        // filled full when the pool consumed (almost) the whole requested input.
+        const px = l.side === 'buy' ? inH / outH : outH / inH; // stable per base (all-in)
+        const bps = (px / l.basePx - 1) * 1e4;
         const legFull = actualAmountIn >= (l.reqIn * 999n) / 1000n;
         const feeBps = ((actualAmountIn > 0n ? Number(feeIn) / Number(actualAmountIn) : 0) + (amountOut > 0n ? Number(feeOut) / Number(amountOut) : 0)) * 1e4;
 
@@ -190,15 +191,15 @@ export function createPoeAdapter(): VenueAdapter {
         const a = l.args;
         if (!a || a.actualAmountIn === undefined || a.amountOut === undefined) continue;
         const actualAmountIn = BigInt(a.actualAmountIn), amountOut = BigInt(a.amountOut);
-        // swapXtoY sends tokenX→tokenY, so the input is MON exactly when swapXtoY === monIsX.
-        const inputIsMon = Boolean(a.swapXtoY) === p.monIsX;
-        const monRaw = inputIsMon ? actualAmountIn : amountOut;
-        const stableRaw = inputIsMon ? amountOut : actualAmountIn;
-        const baseAmount = fromUnits(monRaw, WMON.decimals);
+        // swapXtoY sends tokenX→tokenY, so the input is the base exactly when swapXtoY === baseIsX.
+        const inputIsBase = Boolean(a.swapXtoY) === p.baseIsX;
+        const baseRaw = inputIsBase ? actualAmountIn : amountOut;
+        const stableRaw = inputIsBase ? amountOut : actualAmountIn;
+        const baseAmount = fromUnits(baseRaw, p.baseDec);
         const usd = fromUnits(stableRaw, p.stableDec);
         if (baseAmount <= 0 || usd <= 0) continue;
-        const execPx = usd / baseAmount; // realized stable-per-MON (real markouts, no pxApprox)
-        const side: Side = inputIsMon ? 'sell' : 'buy'; // spent MON ⇒ sell
+        const execPx = usd / baseAmount; // realized stable-per-base (real markouts, no pxApprox)
+        const side: Side = inputIsBase ? 'sell' : 'buy'; // spent base ⇒ sell
         out.push({
           id: `poe-${String(l.transactionHash).toLowerCase()}-${l.logIndex}`,
           venueId: POE_VENUE.id,

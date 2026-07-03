@@ -1,5 +1,6 @@
 import { createContext, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import type { MarketState, QuoteSnapshot, QuoteRow, Fill, DailyVolume, VenueMeta } from '@shared';
+import { pairOf, cexForBase } from '@shared';
 import { fetchMarkets, fetchFills, connectStream } from './lib/api';
 import type { Theme } from './theme';
 
@@ -38,7 +39,10 @@ interface Dashboard extends UiState {
   // in the UI reads these; nothing about a venue is hardcoded client-side.
   venues: VenueMeta[];
   displayVenues: VenueMeta[];              // role === 'venue' (propAMM makers)
-  reference: VenueMeta | undefined;        // role === 'reference' (CEX benchmark)
+  reference: VenueMeta | undefined;        // default CEX benchmark (first reference)
+  references: VenueMeta[];                  // all CEX benchmarks (role === 'reference')
+  /** the CEX benchmark for a market, routed by base asset (Bybit for MON, Binance for BTC/ETH). */
+  referenceFor: (market: string) => VenueMeta | undefined;
   venuesById: Record<string, VenueMeta>;
   series: Record<string, Series>;
   samples: Record<string, number[]>;
@@ -125,7 +129,13 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
   const reseed = () => {
     const q = quotesRef.current;
     const ids = idsRef.current;
-    const next = emptySeries(ids);
+    // Mutate the buffers IN PLACE (keep the seriesRef/samplesRef object references
+    // stable) so `d.series` — captured in the api memo — can never point at a stale
+    // pre-reseed object. Clear every buffer, drop de-registered venues, then refill.
+    const S = seriesRef.current, SM = samplesRef.current;
+    for (const id of ids) { const s = (S[id] ??= { bid: [], ask: [] }); s.bid.length = 0; s.ask.length = 0; (SM[id] ??= []).length = 0; }
+    for (const id of Object.keys(S)) if (!ids.includes(id)) delete S[id];
+    for (const id of Object.keys(SM)) if (!ids.includes(id)) delete SM[id];
     if (q) {
       const { pair, size } = selRef.current;
       for (const id of ids) {
@@ -134,13 +144,11 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
         for (let i = 0; i < N; i++) {
           // flat pre-fill (no jitter) — the chart is a discrete STEP chart, so the
           // pre-fill holds flat and real streaming quotes step it (no smoothing).
-          if (r.bidPx > 0) next[id].bid.push(r.bidPx);
-          if (r.askPx > 0) next[id].ask.push(r.askPx);
+          if (r.bidPx > 0) S[id].bid.push(r.bidPx);
+          if (r.askPx > 0) S[id].ask.push(r.askPx);
         }
       }
     }
-    seriesRef.current = next;
-    samplesRef.current = emptySamples(ids);
   };
 
   // adopt a fresh registry: re-key the per-venue buffers and default a toggle for
@@ -203,19 +211,26 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
   useEffect(() => { reseed(); setFrame((f) => f + 1); /* eslint-disable-next-line */ }, [venueIds(state).join(',')]);
 
   const venues = state?.venues ?? [];
-  const { displayVenues, reference, venuesById } = useMemo(() => {
+  const { displayVenues, references, reference, venuesById } = useMemo(() => {
     const byId: Record<string, VenueMeta> = {};
     for (const v of venues) byId[v.id] = v;
+    const refs = venues.filter((v) => v.role === 'reference');
     return {
       displayVenues: venues.filter((v) => v.role === 'venue'),
-      reference: venues.find((v) => v.role === 'reference'),
+      references: refs,
+      reference: refs[0],
       venuesById: byId,
     };
   }, [venues]);
+  // the CEX benchmark for a market, routed by base asset (Bybit for MON, Binance for BTC/ETH).
+  const referenceFor = useMemo(() => (market: string): VenueMeta | undefined => {
+    const base = pairOf(market)?.base;
+    return base ? venuesById[cexForBase(base)] : reference;
+  }, [venuesById, reference]);
 
   const api = useMemo<Dashboard>(() => ({
     ...ui, conn, state, quotes, volume, fills, frame,
-    venues, displayVenues, reference, venuesById,
+    venues, displayVenues, reference, references, referenceFor, venuesById,
     series: seriesRef.current, samples: samplesRef.current,
     set: (k, v) => setUi((s) => ({ ...s, [k]: v })),
     toggleVenue: (id) => setUi((s) => ({ ...s, venueToggles: { ...s.venueToggles, [id]: !s.venueToggles[id] } })),
@@ -231,7 +246,7 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
       setFrame((f) => f + 1);
     },
     resetLb: () => setUi((s) => ({ ...s, lbWin: '24H', lbGroup: 'PROTOCOL', lbHz: 'T+0S', lbMk: 'TAKER', lbWinners: true, lbTop: 25 })),
-  }), [ui, conn, state, quotes, volume, fills, frame, venues, displayVenues, reference, venuesById]);
+  }), [ui, conn, state, quotes, volume, fills, frame, venues, displayVenues, reference, references, referenceFor, venuesById]);
 
   return <Ctx.Provider value={api}>{children}</Ctx.Provider>;
 }

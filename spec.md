@@ -6,7 +6,7 @@
 | **Date** | 2026-07-03 |
 | **Scope** | Real-time dashboard for **propAMMs** on Monad mainnet |
 | **Venues** | LFJ POE · Metric · Clober Vault (composable adapter registry) |
-| **CEX benchmark** | Bybit spot (`MONUSDT`) |
+| **CEX benchmark** | per base asset — Bybit (MON) · Binance VIP9 (BTC/ETH) |
 | **Reference model** | [pamm.wtf](https://pamm.wtf) (information architecture, not implementation) |
 
 **Changelog v0.2 → v0.3** — **Venue layer refactored into a composable adapter registry** (`server/src/venues/`): one file per protocol implementing `VenueAdapter { venues(), discover(), backfill?(), quote?(), logSources(), decode() }` plus one line in `registry.ts`; the core (indexer, DB, API, frontend) is venue-agnostic and reads name/color/output from the adapter. **Scope narrowed to propAMM-only** (oracle/MM-priced venues, not passive curve DEXes or raw CLOBs): **LFJ Liquidity Book removed** (a passive bin DEX — price emerges from the curve, not a maker); **LFJ POE** (LFJ's oracle-anchored "Public Prop AMM") and **Metric** (oracle-anchored bin AMM) added. Data model generic, keyed by `venueId`; DB long-format (`daily_volume(utc_day, venue_id, …)`). Bybit reference is itself an adapter (`role: 'reference'`).
@@ -40,7 +40,7 @@ Built and run as a **backend service** (§7.D1): the service owns the RPC/WS/Byb
 - No trade execution — strictly read-only. No wallet, no order placement.
 - No chains other than Monad mainnet.
 - **No non-propAMM venues** — passive curve DEXes (e.g. LFJ Liquidity Book, Uniswap-style) and raw CLOBs are out of scope by design.
-- No pairs beyond **MON vs USD stables** (§5; non-stable pairs need historical pricing — the "market-universe-generic" work is deferred).
+- Base/stable pairs only (MON, BTC, ETH vs USD stables) — the quote leg is a stable, so USD is exact with no oracle. Non-stable *quote* legs (token/token) remain out of scope.
 - No deep historical analytics (per-maker league tables, PnL). Daily volume is the only persisted aggregate; fills are retained on a rolling window.
 
 ---
@@ -78,7 +78,7 @@ Rolling window (~60s) of live quotes per pair at a chosen notional, expressed as
 Mark `filledFull = false` when the pool/book exhausts before the full notional (surfaced as a `PARTIAL` tag). The Bybit reference chip defaults **on** so the benchmark stays visible during propAMM quote gaps.
 
 ### 4.2 Volume (`[2]`)
-Stacked daily-notional-by-venue. Each landed swap contributes the USD value of its **stable quote leg**, bucketed by UTC day; today's bucket is partial and ticks up live. Because the universe is **MON vs stables**, the quote leg *is* the stable amount → **exact USD with no price oracle**, for both history and live. A per-venue summary (all-time, share, swaps) sits beside the chart.
+Stacked daily-notional-by-venue. Each landed swap contributes the USD value of its **stable quote leg**, bucketed by UTC day; today's bucket is partial and ticks up live. Because every tracked pair is **base vs a USD stable**, the quote leg *is* the stable amount → **exact USD with no price oracle**, for both history and live. A per-venue summary (all-time, share, swaps) sits beside the chart.
 
 ### 4.3 Markouts (`[3]`)
 Live normalized fill tape + post-trade markouts: each fill's realized price vs the Bybit mid at T+{0s…}, aging in as it crosses each horizon. Fills whose realized price is approximated (no true execPx) are excluded from markouts rather than fabricating ~0 edge. Rows link to the tx on the explorer.
@@ -209,8 +209,8 @@ Frontend renders purely off these — never touches the RPC, subgraph, or Bybit 
 | **D3** | Scope = **propAMM-only** | Oracle/MM-priced venues only (POE, Metric, Clober Vault). Passive curve DEXes (incl. LFJ Liquidity Book) and raw CLOBs are excluded by design. |
 | **D4** | History = **persist-forward indexer** + optional per-adapter `backfill()` | SQLite is the source of truth; Clober seeds from its subgraph; POE/Metric accrue forward until a backfill source is wired (D8). |
 | **D5** | Clober attribution = **vault-bookId tagging** via `LiquidityVault.Open` | Only the oracle-vault (propAMM) cut counts; independent-maker CLOB flow is excluded. |
-| **D6** | Pair universe = **MON vs USD stables** | Quote leg = stable amount ⇒ exact USD with no oracle. Non-stable/multi-asset pools (e.g. POE/Metric WBTC, WETH) need the market-universe-generic work (D8). |
-| **D7** | CEX benchmark = **Bybit spot `MONUSDT`**, taker fee = config constant | Binance has no MON spot. Realized-vs-realized at size; taker fee defaults to non-VIP 10 bps, set to the operator's actual rate. |
+| **D6** | Universe = **base/stable pairs via a registry** | `@shared` ASSETS + PAIRS (MON/USDC, BTC/USDC, ETH/USDC) — add an asset + a pool and it lists. Quote leg = stable ⇒ exact USD. Adapters are generic over base/quote (WBTC's 8 decimals handled; `assetForToken` replaces MON-specific checks). |
+| **D7** | CEX benchmark = **per-asset registry** | Routed by asset (`ASSETS.cex`): Bybit for MON (no Binance MON spot), Binance VIP9 for BTC/ETH. Realized-vs-realized at size; taker fees are config constants (Bybit 10 bps, Binance 2.25 bps). |
 | **D8** | **Deferred** | Non-stable / multi-asset market universe (e.g. POE/Metric WBTC, WETH pools) — needs historical pricing. *(Done since v0.3: POE/Metric on-chain backfill; non-destructive venue reconcile.)* |
 
 ---

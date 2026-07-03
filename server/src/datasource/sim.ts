@@ -1,6 +1,6 @@
 import { BaseSource } from './index.js';
 import {
-  MARKETS, SIZES_USD, HISTORY_START_UTC,
+  MARKETS, SIZES_USD, HISTORY_START_UTC, ASSETS, pairOf, cexForBase,
   type DataSourceMode, type MarketState, type QuoteSnapshot, type QuoteRow,
   type Fill, type DailyVolume, type VenueMeta, type Side, type FillCategory,
 } from '@shared';
@@ -16,8 +16,9 @@ import { venueMeta, validateRegistry } from '../venues/registry.js';
  * deterministically by registry order — no venue names are hardcoded.
  */
 
-const PAIR_MULT: Record<string, number> = { 'MON/USDC': 1.0, 'MON/USDT0': 1.15, 'MON/AUSD': 1.4, 'MON/USD1': 1.6 };
-const BASE_MON = 0.01928;
+/** Rough synthetic USD prices per base asset (dev only; the live source uses the CEX feeds). */
+const ASSET_PX: Record<string, number> = { MON: 0.01928, BTC: 98000, ETH: 3500 };
+const BASE_MON = ASSET_PX.MON;
 
 interface SimFill extends Fill { bornMs: number; }
 interface Param { offset: number; half: number; slip: number; markoutBias: number; weight: number }
@@ -41,10 +42,15 @@ export class SimDataSource extends BaseSource {
 
   private venues: VenueMeta[] = venueMeta();
   private display: VenueMeta[] = this.venues.filter((v) => v.role === 'venue');
-  private reference: VenueMeta | undefined = this.venues.find((v) => v.role === 'reference');
+  private references: VenueMeta[] = this.venues.filter((v) => v.role === 'reference');
   private param: Record<string, Param> = {};
 
-  private mon = BASE_MON;
+  private px: Record<string, number> = { ...ASSET_PX };
+  /** MON price alias (the header/`monUsd`), backed by the per-asset price map. */
+  private get mon(): number { return this.px.MON; }
+  private set mon(v: number) { this.px.MON = v; }
+  /** synthetic USD price for a market's base asset. */
+  private basePx(market: string): number { const b = pairOf(market)?.base; return (b && this.px[b]) || this.px.MON || 1; }
   private chg = 2.3;
   private block = 84_500_000;
   private days: DailyVolume[] = [];
@@ -91,13 +97,13 @@ export class SimDataSource extends BaseSource {
 
   // ── quote model ─────────────────────────────────────────────────────────────
   private quoteAt(id: string, market: string, size: number): { bidBps: number; askBps: number; bidPx: number; askPx: number } {
-    const pm = PAIR_MULT[market] ?? 1;
+    const mid = this.basePx(market);
     const p = this.param[id];
     const sizeStep = Math.log10(size / 100);
-    const hsz = p.half * pm + p.slip * sizeStep;
+    const hsz = p.half + p.slip * sizeStep;
     const o = p.offset;
     const bid = o - hsz, ask = o + hsz;
-    return { bidBps: bid, askBps: ask, bidPx: this.mon * (1 + bid / 1e4), askPx: this.mon * (1 + ask / 1e4) };
+    return { bidBps: bid, askBps: ask, bidPx: mid * (1 + bid / 1e4), askPx: mid * (1 + ask / 1e4) };
   }
 
   private buildMatrix(): QuoteRow[] {
@@ -119,19 +125,24 @@ export class SimDataSource extends BaseSource {
         }
       }
     }
-    // reference (CEX) taker rows: a tight symmetric band + the taker fee.
+    // reference (CEX) taker rows: routed per market (Bybit for MON, Binance for
+    // BTC/ETH), a tight symmetric band + that CEX's taker fee.
     const refRows: QuoteRow[] = [];
-    if (this.reference) {
-      const half = 0.15 + config.takerBps;
-      for (const market of MARKETS) {
-        for (const size of SIZES_USD) {
-          const bid = -half, ask = half;
-          refRows.push({
-            venueId: this.reference.id, market, sizeUsd: size,
-            bidBps: bid, askBps: ask, bidPx: this.mon * (1 + bid / 1e4), askPx: this.mon * (1 + ask / 1e4),
-            spreadBps: ask - bid, filledFull: true, feeBps: config.takerBps, ts,
-          });
-        }
+    const refIds = new Set(this.references.map((r) => r.id));
+    for (const market of MARKETS) {
+      const base = pairOf(market)?.base ?? 'MON';
+      const refId = cexForBase(base);
+      if (!refIds.has(refId)) continue;
+      const takerBps = refId === 'binance' ? config.binanceTakerBps : config.takerBps;
+      const half = 0.15 + takerBps;
+      const mid = this.basePx(market);
+      for (const size of SIZES_USD) {
+        const bid = -half, ask = half;
+        refRows.push({
+          venueId: refId, market, sizeUsd: size,
+          bidBps: bid, askBps: ask, bidPx: mid * (1 + bid / 1e4), askPx: mid * (1 + ask / 1e4),
+          spreadBps: ask - bid, filledFull: true, feeBps: takerBps, ts,
+        });
       }
     }
     annotateCex(rows, refRows);
@@ -139,8 +150,10 @@ export class SimDataSource extends BaseSource {
   }
 
   private mutate(): void {
-    this.mon *= 1 + rnd() * 0.0006;
-    this.mon = clamp(this.mon, BASE_MON * 0.95, BASE_MON * 1.05);
+    for (const key of Object.keys(ASSETS)) {
+      const anchor = ASSET_PX[key] ?? 1;
+      this.px[key] = clamp((this.px[key] ?? anchor) * (1 + rnd() * 0.0006), anchor * 0.95, anchor * 1.05);
+    }
     this.chg = clamp(this.chg + rnd() * 0.05, -8, 8);
     for (const v of this.display) {
       const p = this.param[v.id];
@@ -208,7 +221,7 @@ export class SimDataSource extends BaseSource {
     const cr = Math.random();
     const cat: FillCategory = cr < 0.14 ? 'ROUTER' : cr < 0.22 ? 'AGG' : cr < 0.34 ? 'CEX/DEX' : 'DIRECT';
     const usd = big ? 60000 + Math.random() * 640000 : (Math.random() < 0.72 ? 50 + Math.random() * 9000 : 9000 + Math.random() * 90000);
-    const execPx = this.mon * (1 + rnd() * 0.0009);
+    const execPx = this.basePx(market) * (1 + rnd() * 0.0009);
     const e0 = (this.param[v.id]?.markoutBias ?? 0) + rnd() * 1.6;
     const ss = side === 'buy' ? 1 : -1;
     let dd = 0;

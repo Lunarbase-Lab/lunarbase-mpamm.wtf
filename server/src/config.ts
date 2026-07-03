@@ -29,7 +29,15 @@ export const config = {
   bybitWs: env.BYBIT_WS_URL ?? 'wss://stream.bybit.com/v5/public/spot',
   bybitSymbol: env.BYBIT_SYMBOL ?? 'MONUSDT',
 
+  // Binance spot — the CEX reference for non-MON assets (BTC/ETH); MON has no
+  // Binance spot so it stays on Bybit. Symbols come from the asset registry.
+  binanceRest: env.BINANCE_REST_URL ?? 'https://api.binance.com',
+  binanceWs: env.BINANCE_WS_URL ?? 'wss://stream.binance.com:9443',
+
+  /** Bybit taker fee (bps) for the MON benchmark — default non-VIP 10 bps. */
   takerBps: num('TAKER_BPS', 10),
+  /** Binance taker fee (bps) for the BTC/ETH benchmark — default VIP9 (2.25 bps). */
+  binanceTakerBps: num('BINANCE_TAKER_BPS', 2.25),
   quoteIntervalMs: num('QUOTE_INTERVAL_MS', 500),
 
   sizesUsd: [...SIZES_USD],

@@ -10,7 +10,7 @@
 // Domain vocabulary
 // ──────────────────────────────────────────────────────────────────────────
 
-/** buy/sell of the base asset (MON). */
+/** buy/sell of the base asset (MON/BTC/ETH). */
 export type Side = 'buy' | 'sell';
 
 /** Routing classification for a fill, shown in the tape/leaderboard. `UNKNOWN`
@@ -93,6 +93,8 @@ export const TOKENS: Record<string, TokenInfo> = {
   USD1: { symbol: 'USD1', address: '0x111111d2bf19e43c34263401e0cad979ed1cdb61', decimals: 18, stable: true },
   WMON: { symbol: 'WMON', address: WMON_ADDRESS, decimals: 18, stable: false },
   MON: { symbol: 'MON', address: NATIVE_MON, decimals: 18, stable: false },
+  WBTC: { symbol: 'WBTC', address: '0x0555e30da8f98308edb960aa94c0db47230d2b9c', decimals: 8, stable: false },
+  WETH: { symbol: 'WETH', address: '0xee8c0e9f1bffb4eb878d8f15f368a02a35481242', decimals: 18, stable: false },
 };
 
 /** A set of every token address that denotes MON (WMON wrapper + native MON). */
@@ -108,9 +110,82 @@ export function isMonSymbol(sym: string | undefined): boolean {
   return sym === 'WMON' || sym === 'MON';
 }
 
-/** v1 pair universe — MON vs USD stables (spec D5). */
-export const MARKETS = ['MON/USDC', 'MON/USDT0', 'MON/AUSD', 'MON/USD1'] as const;
-export type Market = (typeof MARKETS)[number];
+/** Which CEX benchmarks an asset. MON (and any MON derivative) → Bybit (Binance
+ *  has no MON spot); everything else → Binance at the VIP9 taker tier. */
+export type CexId = 'bybit' | 'binance';
+
+/**
+ * A tradeable BASE asset. The dashboard is generic over base/quote: a venue pool
+ * is `base`/`quote`, where `base` is one of these assets (priced by its `cex`)
+ * and `quote` is a USD stable. `token` is the on-chain ERC-20 wrapper key in
+ * TOKENS used for sizing/decoding (MON also has a native representation).
+ */
+export interface AssetSpec {
+  /** asset key, also used as `Pair.base` (e.g. 'MON'|'BTC'|'ETH'). */
+  key: string;
+  /** display symbol (e.g. 'MON'). */
+  symbol: string;
+  /** ERC-20 wrapper token key in TOKENS (e.g. 'WMON'|'WBTC'|'WETH'). */
+  token: string;
+  /** CEX that prices/benchmarks this asset. */
+  cex: CexId;
+  /** the CEX spot symbol (e.g. 'MONUSDT'|'BTCUSDT'|'ETHUSDT'). */
+  cexSymbol: string;
+}
+
+/** The base-asset registry. Add an asset here + a pool in an adapter to list it. */
+export const ASSETS: Record<string, AssetSpec> = {
+  MON: { key: 'MON', symbol: 'MON', token: 'WMON', cex: 'bybit', cexSymbol: 'MONUSDT' },
+  BTC: { key: 'BTC', symbol: 'BTC', token: 'WBTC', cex: 'binance', cexSymbol: 'BTCUSDT' },
+  ETH: { key: 'ETH', symbol: 'ETH', token: 'WETH', cex: 'binance', cexSymbol: 'ETHUSDT' },
+};
+
+/** A tracked market: a base asset vs a USD-stable quote. `symbol` is the display
+ *  key used as `Fill.market` / `QuoteRow.market` (e.g. 'BTC/USDC'). */
+export interface Pair {
+  symbol: string;
+  /** base asset key (ASSETS). */
+  base: string;
+  /** quote stable token key (TOKENS). */
+  quote: string;
+}
+
+/** The pair registry — the markets the dashboard tracks. Venues quote/land fills
+ *  on whichever of these they have a pool for; empty ones are hidden by the UI. */
+export const PAIRS: Pair[] = [
+  { symbol: 'MON/USDC', base: 'MON', quote: 'USDC' },
+  { symbol: 'BTC/USDC', base: 'BTC', quote: 'USDC' },
+  { symbol: 'ETH/USDC', base: 'ETH', quote: 'USDC' },
+];
+
+/** Market symbols (derived from the pair registry). */
+export const MARKETS: readonly string[] = PAIRS.map((p) => p.symbol);
+export type Market = string;
+
+/** The base asset for a key ('MON'|'BTC'|'ETH'). */
+export function assetOf(baseKey: string): AssetSpec | undefined {
+  return ASSETS[baseKey];
+}
+/** The pair for a market symbol. */
+export function pairOf(symbol: string): Pair | undefined {
+  return PAIRS.find((p) => p.symbol === symbol);
+}
+/** The ERC-20 wrapper TokenInfo for a base asset (WMON/WBTC/WETH). */
+export function baseTokenOf(baseKey: string): TokenInfo | undefined {
+  const a = ASSETS[baseKey];
+  return a ? TOKENS[a.token] : undefined;
+}
+/** The base asset denoted by an on-chain token address (native MON, WMON, WBTC,
+ *  WETH). Replaces MON-specific checks so adapters are asset-generic. */
+export function assetForToken(addr: string): AssetSpec | undefined {
+  const a = addr.toLowerCase();
+  if (isMonAddress(a)) return ASSETS.MON;
+  return Object.values(ASSETS).find((as) => TOKENS[as.token]?.address.toLowerCase() === a);
+}
+/** Which CEX benchmarks a base asset (default Bybit). */
+export function cexForBase(baseKey: string): CexId {
+  return ASSETS[baseKey]?.cex ?? 'bybit';
+}
 
 /** Notional sizes (USD) probed per pair×side in the exec matrix. */
 export const SIZES_USD = [100, 1000, 10000, 100000] as const;
@@ -123,7 +198,8 @@ export const MARKOUT_HORIZONS = [0, 5, 10, 30, 60] as const;
 // ──────────────────────────────────────────────────────────────────────────
 
 /** One realized quote for (venue, market, size). bid/ask are in bps vs the
- *  Bybit MONUSDT BBO mid; px is quote-per-base (stable per MON). */
+ *  pair's CEX BBO mid (Bybit for MON, Binance for BTC/ETH); px is quote-per-base
+ *  (stable per base asset). */
 export interface QuoteRow {
   /** which venue this quote belongs to (VenueMeta.id). */
   venueId: string;
@@ -144,10 +220,10 @@ export interface QuoteRow {
   oneSided?: boolean;
   /** venue fee in bps (e.g. POE getQuote fee); 0 for CLOB venues. */
   feeBps: number;
-  /** realized cost vs Bybit-AS-TAKER at this size, sign-normalized so positive
-   *  = on-chain executes worse (spec §4.2): cexAskBps for buying MON, cexBidBps
-   *  for selling. The honest realized-vs-realized comparison. Undefined for the
-   *  Bybit benchmark row itself. */
+  /** realized cost vs the pair's CEX-AS-TAKER at this size, sign-normalized so
+   *  positive = on-chain executes worse (spec §4.2): cexAskBps for buying the
+   *  base, cexBidBps for selling. The honest realized-vs-realized comparison.
+   *  Undefined for the CEX benchmark row itself. */
   cexAskBps?: number;
   cexBidBps?: number;
   ts: number;
@@ -172,9 +248,9 @@ export interface Fill {
   market: string;
   side: Side;
   category: FillCategory;
-  /** USD value of the stable quote leg (exact for MON/stable pairs). */
+  /** USD value of the stable quote leg (exact for base/stable pairs). */
   usd: number;
-  /** base (MON) amount of the fill. */
+  /** base-asset amount of the fill (MON/BTC/ETH). */
   baseAmount: number;
   /** realized execution price, quote-per-base. */
   execPx: number;
@@ -190,7 +266,7 @@ export interface Fill {
   pool: string;
   blockNumber: number;
   ts: number;
-  /** markout in bps vs Bybit reference at [0,5,10,30,60]s; null until aged. */
+  /** markout in bps vs the pair's CEX reference at [0,5,10,30,60]s; null until aged. */
   markoutsBps: (number | null)[];
 }
 

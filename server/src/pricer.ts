@@ -1,17 +1,21 @@
-import { TOKENS } from '@shared';
+import { TOKENS, assetForToken } from '@shared';
 
 /**
  * UsdPricer (spec §5.5) — shared by the poller (USD→token notional sizing) and
- * the stream (token→USD volume). Stables peg to $1; MON/WMON priced off Bybit.
+ * the stream (token→USD volume). Stables peg to $1; a base asset (MON/BTC/ETH)
+ * is priced by its CEX via `assetUsd(assetKey)` (Bybit for MON, Binance for the
+ * rest — routed through the reference registry). Fully asset-generic: it maps a
+ * token → its base asset → USD price, so a new asset needs no pricer change.
  */
 export class UsdPricer {
-  constructor(private readonly monUsd: () => number) {}
+  constructor(private readonly assetUsd: (assetKey: string) => number) {}
 
   usdPerToken(symbol: string): number {
     const t = TOKENS[symbol];
     if (!t) return 0;
     if (t.stable) return 1;
-    return this.monUsd();
+    const asset = assetForToken(t.address); // WMON→MON, WBTC→BTC, WETH→ETH
+    return asset ? this.assetUsd(asset.key) : 0;
   }
 
   /** token amount (human units) for a USD notional. */

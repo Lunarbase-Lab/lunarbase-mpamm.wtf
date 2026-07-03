@@ -43,9 +43,10 @@ export function QuoteCanvas() {
 
     const padL = 58, padR = 10, padT = 12, padB = 22;
     const ch = CH[d.theme]; // theme-aware canvas chrome colors (can't use var())
-    // propAMM venues + the CEX reference, filtered by the user's toggles. Colors,
-    // ids and the set itself come from the registry — nothing hardcoded here.
-    const chips: VenueMeta[] = d.reference ? [...d.displayVenues, d.reference] : d.displayVenues;
+    // propAMM venues + the selected pair's CEX reference (Bybit for MON, Binance for
+    // BTC/ETH), filtered by the user's toggles. Everything comes from the registry.
+    const cexRef = d.referenceFor(d.pair);
+    const chips: VenueMeta[] = cexRef ? [...d.displayVenues, cexRef] : d.displayVenues;
     const active = chips.filter((v) => d.venueToggles[v.id]);
     if (!active.length) return;
 
