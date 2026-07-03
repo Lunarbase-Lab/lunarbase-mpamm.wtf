@@ -18,7 +18,7 @@ export const config = {
   /** When set, serve the built frontend (web/dist) from this path same-origin
    *  (production single-service). Unset in dev — Vite serves the frontend. */
   webDist: env.WEB_DIST ?? '',
-  // Production default: live (real Monad RPC + Bybit). Set DATA_SOURCE=sim to
+  // Production default: live (real Monad RPC + CEX references). Set DATA_SOURCE=sim to
   // run the fully offline deterministic simulator instead.
   source: (env.DATA_SOURCE?.toLowerCase() === 'sim' ? 'sim' : 'live') as SourcePref,
 

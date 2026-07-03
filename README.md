@@ -79,7 +79,7 @@ history:
 
 - **Boot:** load persisted days + `lastProcessedBlock` from the DB.
 - **Seed:** closed Clober Vault days are filled once from the Goldsky subgraph
-  (`Σ PoolDayData.volumeUSD` over **registered** vault books). POE + Metric (no keyless
+  (`Σ BookDayData.volumeUSD` over **registered** vault books). POE + Metric (no keyless
   subgraph) are seeded by a **background on-chain backfill** — each adapter's `Swap` logs
   replayed from its pool's deploy day, chunked/paced under the RPC caps, resumable across
   restarts (spec §5.4).

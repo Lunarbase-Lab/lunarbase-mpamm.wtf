@@ -2,8 +2,9 @@
  * One-time historical seed for daily Clober volume (spec Appendix B). The
  * public RPC can't backfill deep history (getLogs is range-capped), so the
  * Goldsky subgraph is used purely as a startup accelerator — never as a live
- * source of truth. Whole-venue = Σ BookDayData.volumeUSD; vault (propAMM cut)
- * = Σ PoolDayData.volumeUSD, both grouped by UTC day.
+ * source of truth. The Clober Vault adapter passes registered vault book ids, so
+ * the seed uses Σ BookDayData.volumeUSD over exactly the same books live decode
+ * accepts, grouped by UTC day.
  *
  * SECURITY: the response is third-party data — treated as numbers only.
  */
@@ -23,8 +24,8 @@ async function gql(url: string, query: string): Promise<any> {
   return j;
 }
 
-/** Sum BookDayData.volumeUSD by UTC day for a specific set of books (the
- *  dashboard's MON/stable scope), paginating by skip. */
+/** Sum BookDayData.volumeUSD by UTC day for a specific set of registered
+ *  base/stable books, paginating by skip. */
 async function sumBookDayData(url: string, bookIds: string[], sinceTs: number): Promise<Map<string, number>> {
   const byDay = new Map<string, number>();
   if (!bookIds.length) return byDay;
@@ -49,9 +50,9 @@ async function sumBookDayData(url: string, bookIds: string[], sinceTs: number): 
 }
 
 /**
- * Historical Clober daily volume keyed by UTC day, scoped to the dashboard's
- * MON/stable universe (spec D5). venue = Σ over all MON/stable books; vault
- * (propAMM cut) = Σ over the vault books among them. Throws on transport error.
+ * Historical Clober daily volume keyed by UTC day, scoped by the caller's book
+ * lists. The Clober Vault adapter passes only registered vault books, matching
+ * live decode. Throws on transport error.
  */
 export async function seedCloberDaily(
   url: string, sinceUtc: string, venueBookIds: string[], vaultBookIds: string[],

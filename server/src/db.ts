@@ -9,7 +9,7 @@ type Stmt = ReturnType<DatabaseSync['prepare']>;
  * SQLite persistence (spec §6.2). The DB is the source of truth for history:
  * daily-volume aggregates + the lastProcessedBlock cursor, and decoded fills
  * (the tape/markouts/leaderboard are expensive to re-derive — log decode + a
- * Bybit-mid join — so they're stored, not just held in a live window). The
+ * pair-CEX-mid join — so they're stored, not just held in a live window). The
  * current quote matrix stays in memory (replace-on-poll, cheap to refetch).
  *
  * Schema is venue-agnostic (long format): daily volume is one row per
@@ -50,6 +50,8 @@ const REMARK_FROM_MID_HISTORY = false; // 'pair-mid-1' changed the mid definitio
 /** how far a persisted mid sample may sit from a horizon's mark time and still
  *  be used in a replay (persist cadence is ~5s → one interval + slack). */
 const MID_REPLAY_TOL_MS = 6_000;
+const NULL_MARKOUTS_JSON = JSON.stringify(MARKOUT_HORIZONS.map(() => null));
+const nullMarkouts = (): (number | null)[] => MARKOUT_HORIZONS.map(() => null);
 
 /** one persisted point of a pair's CEX mid curve (pair terms). */
 export interface MidPoint { ts: number; market: string; mid: number }
@@ -123,6 +125,10 @@ export class VolumeStore {
     if (!fillCols.some((c) => c.name === 'px_approx')) {
       this.db.exec(`ALTER TABLE fills ADD COLUMN px_approx INTEGER NOT NULL DEFAULT 0`);
     }
+    // Defense in depth: pxApprox fills must never expose persisted markouts. This
+    // normalizes adapter-supplied/backfilled rows and cleans any rows written by a
+    // prior build that aged approximate fills before the live guard existed.
+    this.db.prepare(`UPDATE fills SET markouts_bps = ? WHERE px_approx != 0 AND markouts_bps != ?`).run(NULL_MARKOUTS_JSON, NULL_MARKOUTS_JSON);
 
     this.db.prepare(`INSERT INTO meta (key, value) VALUES ('schema_version', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value`).run(SCHEMA_VERSION);
 
@@ -136,8 +142,7 @@ export class VolumeStore {
         const { remarked, nulled } = this.remarkRetainedFills();
         console.log(`[mpamm] markout model → ${MARKOUT_MODEL_VERSION}: replayed ${remarked} fill(s) from mid_history, nulled ${nulled}`);
       } else {
-        const nulls = JSON.stringify([null, null, null, null, null]);
-        const info = this.db.prepare(`UPDATE fills SET markouts_bps = ? WHERE markouts_bps != ?`).run(nulls, nulls);
+        const info = this.db.prepare(`UPDATE fills SET markouts_bps = ? WHERE markouts_bps != ?`).run(NULL_MARKOUTS_JSON, NULL_MARKOUTS_JSON);
         if (Number(info.changes) > 0) console.log(`[mpamm] markout model → ${MARKOUT_MODEL_VERSION}: reset markouts on ${info.changes} retained fill(s)`);
       }
       this.db.prepare(`INSERT INTO meta (key, value) VALUES ('markout_model_version', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value`).run(MARKOUT_MODEL_VERSION);
@@ -164,8 +169,9 @@ export class VolumeStore {
     for (const [venueId, vd] of Object.entries(d.byVenue)) this.dayStmt.run(d.utcDay, venueId, vd.usd, vd.swaps);
   }
   private runFill(f: Fill): void {
+    const markouts = f.pxApprox ? NULL_MARKOUTS_JSON : JSON.stringify(f.markoutsBps);
     this.fillStmt.run(f.id, f.ts, f.blockNumber, f.venueId, f.market, f.side, f.category,
-      f.usd, f.baseAmount, f.execPx, f.pxApprox ? 1 : 0, f.txHash, f.to, f.pool, JSON.stringify(f.markoutsBps));
+      f.usd, f.baseAmount, f.execPx, f.pxApprox ? 1 : 0, f.txHash, f.to, f.pool, markouts);
   }
 
   getMeta(key: string): string | undefined {
@@ -297,14 +303,13 @@ export class VolumeStore {
   remarkRetainedFills(): { remarked: number; nulled: number } {
     const rows = this.db.prepare(`SELECT id, ts, market, side, exec_px, px_approx FROM fills`).all() as Array<Record<string, any>>;
     const upd = this.db.prepare(`UPDATE fills SET markouts_bps = ? WHERE id = ?`);
-    const allNull = JSON.stringify([null, null, null, null, null]);
     let remarked = 0, nulled = 0;
     this.db.exec('BEGIN');
     try {
       for (const r of rows) {
         // an approximate-price fill has no true execPx — replaying mid/execPx
         // would fabricate the very markouts the pxApprox contract excludes.
-        if (r.px_approx) { upd.run(allNull, r.id); nulled++; continue; }
+        if (r.px_approx) { upd.run(NULL_MARKOUTS_JSON, r.id); nulled++; continue; }
         const ss = r.side === 'buy' ? 1 : -1;
         const marks: (number | null)[] = MARKOUT_HORIZONS.map((h) => {
           const mid = this.midNearPersisted(r.market, r.ts + h * 1000);
@@ -325,14 +330,15 @@ export class VolumeStore {
 }
 
 function rowToFill(r: Record<string, any>): Fill {
+  const pxApprox = !!r.px_approx;
   return {
     id: r.id, ts: r.ts, blockNumber: r.block_number, venueId: r.venue_id,
     market: r.market, side: r.side, category: r.category,
     usd: r.usd, baseAmount: r.base_amount, execPx: r.exec_px,
     // restore the approximate-price flag so a persisted pxApprox fill stays
     // excluded from markout/leaderboard stats across restarts (shared contract).
-    ...(r.px_approx ? { pxApprox: true } : {}),
+    ...(pxApprox ? { pxApprox: true } : {}),
     txHash: r.tx_hash, to: r.to_label, pool: r.pool,
-    markoutsBps: JSON.parse(r.markouts_bps),
+    markoutsBps: pxApprox ? nullMarkouts() : JSON.parse(r.markouts_bps),
   };
 }

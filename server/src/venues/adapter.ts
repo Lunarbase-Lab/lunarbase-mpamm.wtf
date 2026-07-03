@@ -23,7 +23,7 @@ export interface AdapterContext {
   client: PublicClient;
   /** range-chunked getLogs (the public RPC caps eth_getLogs spans). */
   getLogs: typeof getLogsChunked;
-  /** token→USD pricing (stables = $1, MON off the reference mid). */
+  /** token→USD pricing (stables = $1, base assets off their CEX reference). */
   pricer: UsdPricer;
   config: Config;
   log: (m: string) => void;

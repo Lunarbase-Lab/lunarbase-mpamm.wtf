@@ -161,9 +161,9 @@ Each cycle the core `getLogs` the union of every adapter's `logSources()` over t
 - **Fills** — persisted to SQLite (upsert-by-id so aging markouts update in place) + an in-memory ring for cold-start.
 
 ### 5.4 Historical backfill — persist-forward indexer + optional seed
-The public RPC caps `getLogs` to short ranges, so deep replay at the tip is impractical there. Live mode is a **persist-forward indexer**: SQLite is the source of truth for daily-volume history — loaded on boot, advanced forward from decoded fills (priced via the stable quote leg, exact for MON/stable), resumed from `lastProcessedBlock` with a same-day `getLogs` gap-fill.
+The public RPC caps `getLogs` to short ranges, so deep replay at the tip is impractical there. Live mode is a **persist-forward indexer**: SQLite is the source of truth for daily-volume history — loaded on boot, advanced forward from decoded fills (priced via the stable quote leg, exact for registered base/stable pairs), resumed from `lastProcessedBlock` with a same-day `getLogs` gap-fill.
 - **Fail-closed ingest**: any error in a tail cycle — a `fills`/`state` log source, the block-timestamp lookup, or an adapter `decode()` — **holds the global cursor** and retries the exact range; nothing advances/ingests/emits partially. Fills carry a deterministic `venue-txHash-logIndex` id; daily volume + cursor + fills persist in **one transaction** (idempotent re-tail).
-- **Clober** closed days are seeded once via `backfill()` from the **Goldsky subgraph** (`Σ BookDayData.volumeUSD` = venue, scoped to discovered MON/stable books; `Σ PoolDayData.volumeUSD` = the vault cut).
+- **Clober** closed days are seeded once via `backfill()` from the **Goldsky subgraph** (`Σ BookDayData.volumeUSD` over registered vault books, using the same pair gate as live decode).
 - **POE and Metric** (no keyless subgraph) are seeded by a **background on-chain backfill**: the core replays each adapter's `Swap` logs from its `backfillFromUtc` (set to the pool's on-chain deploy day — POE `2026-05-09`, Metric `2026-03-31`) up to the boot head, decodes via the adapter's own `decode()`, and folds into daily volume. It runs OFF the boot path (never blocks the dashboard or the tail): adaptive `getLogs` chunks (start wide, auto-shrink on a range 413) paced under the RPC cap, one `getBlock` per chunk for UTC-day bucketing (a chunk spans ~minutes), closed days only (`< today`, so no overlap with the tail), SET-per-day (idempotent). A day-aligned resume cursor + a `backfill_done_<venue>` flag make it resumable across restarts. Knobs: `BACKFILL` / `BACKFILL_CHUNK` / `BACKFILL_PACE_MS` / `BACKFILL_MERGE_EVERY`.
 
 ### 5.5 CEX references + pricing — the reference is in the PAIR'S OWN TERMS
@@ -210,7 +210,7 @@ Adding/removing a venue never changes the table shape (just different `venue_id`
 ```
 GET  /api/venues                        the venue registry (VenueMeta[]) — UI renders from this
 GET  /api/markets                       tracked markets + current state snapshot (incl. venues)
-GET  /api/quotes                        latest quote matrix (incl. Bybit "vs CEX" cols)
+GET  /api/quotes                        latest quote matrix (incl. per-pair "vs CEX" cols)
 GET  /api/volume?from=&to=              daily series (DailyVolume.byVenue)
 GET  /api/fills?days=&limit=            historical fill window (markouts)
 WS   /stream                            channels: state, quotes, fill, volume
@@ -289,7 +289,7 @@ Frontend renders purely off these — never touches the RPC, subgraph, or Bybit 
 **Primary: on-chain** (RPC `eth_call` / logs). Live quotes, live fills, and forward volume all derive from chain state + logs.
 
 **Seed / cross-check:**
-- **Clober subgraph** (Goldsky, public): `https://api.goldsky.com/api/public/project_clsljw95chutg01w45cio46j0/subgraphs/v2-subgraph-monad/latest/gn`. Entities incl. `BookDayData`, `PoolDayData`, `Take`, `Pool`, `Book`. Used by `backfill()` for closed-day volume.
+- **Clober subgraph** (Goldsky, public): `https://api.goldsky.com/api/public/project_clsljw95chutg01w45cio46j0/subgraphs/v2-subgraph-monad/latest/gn`. Entities incl. `BookDayData`, `Take`, `Pool`, `Book`. Used by `backfill()` for registered vault-book closed-day volume.
 - POE/Metric: no keyless historical source wired yet (§5.4, D8).
 
 ## Appendix C — Event signatures & quote interfaces (verified on-chain)

@@ -22,13 +22,14 @@ export type DataSourceMode = 'live' | 'sim';
 
 /**
  * Venue identity — the composable unit. Every venue (LFJ POE, Clober Vault, …) and
- * the CEX reference (Bybit) is described by one of these, produced by its
+ * CEX reference venue is described by one of these, produced by its
  * adapter on the backend and shipped to the frontend so NOTHING about a venue
  * is hardcoded in the core: name, color and grouping all come from here.
  *
  * `role: 'venue'` = a propAMM/on-chain venue that lands fills and shows in
- * Volume/Markouts/Leaderboard. `role: 'reference'` = the CEX benchmark (Bybit):
- * it provides the markout/quote reference and shows only in Execution.
+ * Volume/Markouts/Leaderboard. `role: 'reference'` = a CEX benchmark venue
+ * (Bybit for MON, Binance for BTC/ETH): it provides the markout/quote reference
+ * and shows only in Execution.
  */
 export interface VenueMeta {
   /** stable key used everywhere as `Fill.venueId` / `QuoteRow.venueId` (e.g. 'poe', 'clober-vault', 'bybit'). */
