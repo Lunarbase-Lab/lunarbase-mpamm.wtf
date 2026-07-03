@@ -115,6 +115,11 @@ export class LiveDataSource extends BaseSource {
 
   // ── history: load + seed + resume (persist-forward indexer) ─────────────────
   private async initHistory(): Promise<void> {
+    // 0. prune any venue that left the registry (non-destructive — every
+    //    remaining venue's history is kept, unlike a schema reset). Runs before
+    //    we load days so a removed venue's stale rows never reach the UI/totals.
+    const pruned = this.store.reconcileVenues([...this.knownVenueIds]);
+    if (pruned.volume || pruned.fills) this.notes.push(`pruned ${pruned.volume} volume row(s) + ${pruned.fills} fill(s) for removed venue(s)`);
     // 1. authoritative persisted history
     this.days = this.store.all();
     // load recent fills for live serving; drop rows past the retention window

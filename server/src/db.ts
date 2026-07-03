@@ -13,9 +13,12 @@ type Stmt = ReturnType<DatabaseSync['prepare']>;
  * current quote matrix stays in memory (replace-on-poll, cheap to refetch).
  *
  * Schema is venue-agnostic (long format): daily volume is one row per
- * (day, venue_id), and a fill carries a `venue_id` — so adding a venue never
- * touches this file. On a schema bump we start fresh (drop + rebuild): Clober
- * vault history re-seeds from the subgraph and on-chain venues rebuild forward.
+ * (day, venue_id), and a fill carries a `venue_id` — so adding/removing a venue
+ * never changes the table shape. A venue that leaves the registry is pruned
+ * non-destructively on boot (`reconcileVenues`), keeping every OTHER venue's
+ * history. `SCHEMA_VERSION` only gates a true STRUCTURAL change (columns / PK);
+ * on such a bump we start fresh (Clober re-seeds from the subgraph, on-chain
+ * venues rebuild forward) — a venue swap alone no longer resets anything.
  */
 const SCHEMA_VERSION = '3';
 
@@ -101,6 +104,20 @@ export class VolumeStore {
 
   upsert(d: DailyVolume): void { this.runDay(d); }
   upsertMany(days: DailyVolume[]): void { for (const d of days) this.runDay(d); }
+
+  /**
+   * Prune rows whose venue_id is no longer in the registry (a venue was removed)
+   * — non-destructive: every REMAINING venue's history is kept, unlike a schema
+   * reset. Called once on boot. Guarded against an empty keep-set so a
+   * misconfigured registry can never wipe the whole table.
+   */
+  reconcileVenues(keepIds: string[]): { volume: number; fills: number } {
+    if (!keepIds.length) return { volume: 0, fills: 0 };
+    const q = keepIds.map(() => '?').join(',');
+    const v = this.db.prepare(`DELETE FROM daily_volume WHERE venue_id NOT IN (${q})`).run(...keepIds);
+    const f = this.db.prepare(`DELETE FROM fills WHERE venue_id NOT IN (${q})`).run(...keepIds);
+    return { volume: Number(v.changes), fills: Number(f.changes) };
+  }
 
   /** Reconstruct DailyVolume[] from the long (day, venue) rows + partial flags. */
   all(): DailyVolume[] {
