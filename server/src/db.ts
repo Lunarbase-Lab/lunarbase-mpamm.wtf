@@ -98,6 +98,7 @@ export class VolumeStore {
         usd          REAL NOT NULL,
         base_amount  REAL NOT NULL,
         exec_px      REAL NOT NULL,
+        px_approx    INTEGER NOT NULL DEFAULT 0,
         tx_hash      TEXT NOT NULL,
         to_label     TEXT NOT NULL,
         pool         TEXT NOT NULL,
@@ -114,6 +115,15 @@ export class VolumeStore {
         PRIMARY KEY (market, ts)
       ) WITHOUT ROWID;
     `);
+    // additive migration (PRAGMA-guarded, no reset): fills gained px_approx so a
+    // persisted approximate-price fill keeps its exclusion flag across restarts —
+    // without it, a pxApprox fill reloaded from the DB would silently enter the
+    // markout/leaderboard stats the shared contract promises it stays out of.
+    const fillCols = this.db.prepare(`PRAGMA table_info(fills)`).all() as Array<{ name: string }>;
+    if (!fillCols.some((c) => c.name === 'px_approx')) {
+      this.db.exec(`ALTER TABLE fills ADD COLUMN px_approx INTEGER NOT NULL DEFAULT 0`);
+    }
+
     this.db.prepare(`INSERT INTO meta (key, value) VALUES ('schema_version', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value`).run(SCHEMA_VERSION);
 
     // markout-model migration: retained fills marked under an older model keep
@@ -141,8 +151,8 @@ export class VolumeStore {
       ON CONFLICT(utc_day) DO UPDATE SET partial = excluded.partial`);
     this.metaStmt = this.db.prepare(`INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value`);
     this.fillStmt = this.db.prepare(`
-      INSERT INTO fills (id, ts, block_number, venue_id, market, side, category, usd, base_amount, exec_px, tx_hash, to_label, pool, markouts_bps)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO fills (id, ts, block_number, venue_id, market, side, category, usd, base_amount, exec_px, px_approx, tx_hash, to_label, pool, markouts_bps)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET markouts_bps = excluded.markouts_bps`);
     this.midStmt = this.db.prepare(`
       INSERT INTO mid_history (market, ts, mid) VALUES (?, ?, ?)
@@ -155,7 +165,7 @@ export class VolumeStore {
   }
   private runFill(f: Fill): void {
     this.fillStmt.run(f.id, f.ts, f.blockNumber, f.venueId, f.market, f.side, f.category,
-      f.usd, f.baseAmount, f.execPx, f.txHash, f.to, f.pool, JSON.stringify(f.markoutsBps));
+      f.usd, f.baseAmount, f.execPx, f.pxApprox ? 1 : 0, f.txHash, f.to, f.pool, JSON.stringify(f.markoutsBps));
   }
 
   getMeta(key: string): string | undefined {
@@ -285,12 +295,16 @@ export class VolumeStore {
    * horizon vs none.
    */
   remarkRetainedFills(): { remarked: number; nulled: number } {
-    const rows = this.db.prepare(`SELECT id, ts, market, side, exec_px FROM fills`).all() as Array<Record<string, any>>;
+    const rows = this.db.prepare(`SELECT id, ts, market, side, exec_px, px_approx FROM fills`).all() as Array<Record<string, any>>;
     const upd = this.db.prepare(`UPDATE fills SET markouts_bps = ? WHERE id = ?`);
+    const allNull = JSON.stringify([null, null, null, null, null]);
     let remarked = 0, nulled = 0;
     this.db.exec('BEGIN');
     try {
       for (const r of rows) {
+        // an approximate-price fill has no true execPx — replaying mid/execPx
+        // would fabricate the very markouts the pxApprox contract excludes.
+        if (r.px_approx) { upd.run(allNull, r.id); nulled++; continue; }
         const ss = r.side === 'buy' ? 1 : -1;
         const marks: (number | null)[] = MARKOUT_HORIZONS.map((h) => {
           const mid = this.midNearPersisted(r.market, r.ts + h * 1000);
@@ -315,6 +329,9 @@ function rowToFill(r: Record<string, any>): Fill {
     id: r.id, ts: r.ts, blockNumber: r.block_number, venueId: r.venue_id,
     market: r.market, side: r.side, category: r.category,
     usd: r.usd, baseAmount: r.base_amount, execPx: r.exec_px,
+    // restore the approximate-price flag so a persisted pxApprox fill stays
+    // excluded from markout/leaderboard stats across restarts (shared contract).
+    ...(r.px_approx ? { pxApprox: true } : {}),
     txHash: r.tx_hash, to: r.to_label, pool: r.pool,
     markoutsBps: JSON.parse(r.markouts_bps),
   };

@@ -26,7 +26,7 @@ npm run dev          # backend (live) on :8787 + Vite on :5173 → open http://l
 ```
 
 By default the backend runs **live** — real Monad RPC (Multicall3 quotes + `getLogs` fills) + the
-Bybit feed. It fails fast if the chain is unreachable rather than serving fabricated data. To run
+CEX reference feeds (Bybit + Binance). It fails fast if the chain is unreachable rather than serving fabricated data. To run
 fully offline against the deterministic **simulator** (a faithful port of the design's data model,
 no external dependencies):
 
@@ -63,8 +63,9 @@ REST: `GET /api/markets`, `/api/quotes`, `/api/volume`, `/api/fills?days=&limit=
 WS `/stream` channels: `state`, `quotes`, `fill`, `volume`.
 
 **What's persisted:** the SQLite DB holds the durable history — daily-volume aggregates, the
-`lastProcessedBlock` cursor, and **decoded fills** (expensive to re-derive: log decode + a
-Bybit-mid markout join, so they're stored with a retention window rather than re-fetched). The
+`lastProcessedBlock` cursor, **decoded fills** (expensive to re-derive: log decode + a
+pair-CEX-mid markout join, so they're stored with a retention window rather than re-fetched), and
+the **per-pair mid curve** (`mid_history`, so a markout-model change can replay instead of null). The
 current quote matrix stays in memory (replace-on-poll, cheap). So the tape / markouts / leaderboard
 are served from real history (`/api/fills?days=N`), not just a live buffer.
 
@@ -107,7 +108,7 @@ view-model from the contract data:
 
 It ships as a **single container**: one Node process serves the REST/WS API **and** the built
 frontend on the same origin (so the SPA's relative `/api` + `/stream` URLs need no config). Because
-it's a stateful WS indexer (persistent Bybit/Monad connections, a poll loop, SQLite), host it on a
+it's a stateful WS indexer (persistent CEX/Monad connections, a poll loop, SQLite), host it on a
 **persistent-process** platform — not serverless/edge. Run **one replica** (single-writer SQLite +
 in-memory state).
 
