@@ -74,6 +74,11 @@ export interface TokenInfo {
   decimals: number;
   /** USD stablecoin pegged to $1 (spec §5.5). */
   stable: boolean;
+  /** CEX `<STABLE>USDT` cross symbol used to convert a USDT-quoted reference
+   *  into THIS stable's terms (e.g. USDC → 'USDCUSDT', ~±10bps of real basis).
+   *  Unset = treated ≡ USDT (exact for USDT0 — it IS Tether's USDT on Monad;
+   *  an approximation for unlisted stables like AUSD). */
+  usdtCross?: string;
 }
 
 /**
@@ -87,10 +92,10 @@ export const NATIVE_MON = '0x0000000000000000000000000000000000000000';
 export const WMON_ADDRESS = '0x3bd359c1119da7da1d913d1c4d2b7c461115433a';
 
 export const TOKENS: Record<string, TokenInfo> = {
-  USDC: { symbol: 'USDC', address: '0x754704bc059f8c67012fed69bc8a327a5aafb603', decimals: 6, stable: true },
-  USDT0: { symbol: 'USDT0', address: '0xe7cd86e13ac4309349f30b3435a9d337750fc82d', decimals: 6, stable: true },
-  AUSD: { symbol: 'AUSD', address: '0x00000000efe302beaa2b3e6e1b18d08d69a9012a', decimals: 6, stable: true },
-  USD1: { symbol: 'USD1', address: '0x111111d2bf19e43c34263401e0cad979ed1cdb61', decimals: 18, stable: true },
+  USDC: { symbol: 'USDC', address: '0x754704bc059f8c67012fed69bc8a327a5aafb603', decimals: 6, stable: true, usdtCross: 'USDCUSDT' },
+  USDT0: { symbol: 'USDT0', address: '0xe7cd86e13ac4309349f30b3435a9d337750fc82d', decimals: 6, stable: true }, // Tether's omnichain USDT — ≡ USDT, no cross
+  AUSD: { symbol: 'AUSD', address: '0x00000000efe302beaa2b3e6e1b18d08d69a9012a', decimals: 6, stable: true }, // no CEX listing — $1 peg assumed
+  USD1: { symbol: 'USD1', address: '0x111111d2bf19e43c34263401e0cad979ed1cdb61', decimals: 18, stable: true, usdtCross: 'USD1USDT' },
   WMON: { symbol: 'WMON', address: WMON_ADDRESS, decimals: 18, stable: false },
   MON: { symbol: 'MON', address: NATIVE_MON, decimals: 18, stable: false },
   WBTC: { symbol: 'WBTC', address: '0x0555e30da8f98308edb960aa94c0db47230d2b9c', decimals: 8, stable: false },
@@ -131,12 +136,17 @@ export interface AssetSpec {
   cex: CexId;
   /** the CEX spot symbol (e.g. 'MONUSDT'|'BTCUSDT'|'ETHUSDT'). */
   cexSymbol: string;
+  /** CEX wrapped/native basis symbol (Binance): the on-chain asset is a WRAPPED
+   *  representation, so the native reference is multiplied by this mid to show
+   *  the CEX line in wrapped terms (e.g. BTC → 'WBTCBTC', ~−5bps live; pamm.wtf
+   *  does the same). Unset when wrap ≡ native (WMON, canonical WETH). */
+  wrapBasisSymbol?: string;
 }
 
 /** The base-asset registry. Add an asset here + a pool in an adapter to list it. */
 export const ASSETS: Record<string, AssetSpec> = {
   MON: { key: 'MON', symbol: 'MON', token: 'WMON', cex: 'bybit', cexSymbol: 'MONUSDT' },
-  BTC: { key: 'BTC', symbol: 'BTC', token: 'WBTC', cex: 'binance', cexSymbol: 'BTCUSDT' },
+  BTC: { key: 'BTC', symbol: 'BTC', token: 'WBTC', cex: 'binance', cexSymbol: 'BTCUSDT', wrapBasisSymbol: 'WBTCBTC' },
   ETH: { key: 'ETH', symbol: 'ETH', token: 'WETH', cex: 'binance', cexSymbol: 'ETHUSDT' },
 };
 

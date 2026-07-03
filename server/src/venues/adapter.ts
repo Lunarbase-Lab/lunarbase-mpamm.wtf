@@ -103,13 +103,18 @@ export interface ReferenceRegistry {
   metas(): VenueMeta[];
   /** the reference venue id benchmarking a base asset ('bybit' | 'binance'). */
   refVenueIdForBase(base: string): string;
-  /** USD price of a base asset (MON/BTC/ETH). */
+  /** USD(≈USDT) price of a base asset (MON/BTC/ETH) — for notional sizing and
+   *  the header, NOT for bps anchoring (that needs the pair's quote terms). */
   assetUsd(base: string): number;
-  /** CEX BBO mid for a base asset. */
-  midFor(base: string): number;
+  /** the CEX reference mid for a PAIR, expressed in the pair's own terms:
+   *  baseUSDT mid × wrap basis (WBTCBTC for wrapped BTC) ÷ the stable's USDT
+   *  cross (USDCUSDT for USDC pairs). This is the bps anchor + markout mark —
+   *  like-for-like with what actually trades on-chain (spec §5.5). */
+  midForPair(market: string): number;
   /** 24h change % for a base asset. */
   changePctFor(base: string): number;
   /** taker-walk benchmark rows for every tracked pair, each routed to and tagged
-   *  with the pair's CEX (venueId = 'bybit' | 'binance'). */
+   *  with the pair's CEX (venueId = 'bybit' | 'binance'), prices converted into
+   *  the pair's quote terms (wrap basis + stable cross). */
   quote(sizesUsd: readonly number[]): QuoteRow[];
 }

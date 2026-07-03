@@ -34,7 +34,9 @@ interface VenueAdapter {
 }
 ```
 Everything you need is on `ctx` (`AdapterContext`) — **use it instead of importing globals**:
-`ctx.client` (viem), `ctx.getLogs`, `ctx.pricer` (token→USD; stables=$1, MON off the mid), `ctx.config`, `ctx.log`, `ctx.referenceMid()`.
+`ctx.client` (viem), `ctx.getLogs`, `ctx.pricer` (`usdPerToken`/`tokenForUsd` for USD notional sizing; **`pairMid(market)`** = the pair's CEX reference mid in the pair's own terms — wrap basis + stable cross applied — use it as the bps anchor when quoting), `ctx.config`, `ctx.log`.
+
+**Only quote/emit REGISTERED pairs** (`@shared` `PAIRS`; check a combo with `pairFor(baseKey, stableSym)`). An unregistered market has no reference rows and no markout routing — the core drops it.
 
 ## What to return
 - **`VenueMeta`** — `{ id, name, color: { light, dark }, kind: 'amm'|'clob'|'vault'|'cex', role: 'venue' }`. `id` is the stable key used as `Fill.venueId` / `QuoteRow.venueId`. `color` is the single source of truth the UI uses for lines/bars/swatches.

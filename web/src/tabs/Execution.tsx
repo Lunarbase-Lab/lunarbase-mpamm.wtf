@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef } from 'react';
-import { SIZES_USD, type VenueMeta, type QuoteRow } from '@shared';
+import { SIZES_USD, TOKENS, ASSETS, pairOf, type VenueMeta, type QuoteRow } from '@shared';
 import { useDashboard } from '../store';
 import { C, hexA, pill, venueColor } from '../theme';
 import { Panel, PanelHead, Field } from '../components/ui';
@@ -117,6 +117,20 @@ export function ExecutionTab() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [d.quotes, d.venueToggles, d.venues, pair, size, d.frame, d.theme]);
 
+  // ⚠ unit-conversion notes for the selected pair (pamm.wtf-style): the CEX
+  // reference is shown in the pair's OWN terms — wrapped basis + stable cross —
+  // driven by the @shared registries, nothing hardcoded per pair.
+  const basisNotes = useMemo(() => {
+    const p = pairOf(pair);
+    if (!p) return [];
+    const notes: string[] = [];
+    const wrapSym = ASSETS[p.base]?.wrapBasisSymbol;
+    if (wrapSym) notes.push(`${pair} trades a wrapped asset — the ${refName} reference is adjusted by the ${wrapSym} mid (wrapped/native basis, a proxy for the bridged asset), so the CEX line is shown in wrapped terms for a like-for-like comparison.`);
+    const crossSym = TOKENS[p.quote]?.usdtCross;
+    if (crossSym) notes.push(`${pair} is quoted in ${p.quote} but the ${refName} book is USDT — the reference is converted by the live ${crossSym} mid (the ${p.quote}/USDT basis is real, ~±10bps), not a $1 peg.`);
+    return notes;
+  }, [pair, refName]);
+
   return (
     <div>
       <div style={{ padding: '18px 18px 10px' }}>
@@ -209,6 +223,11 @@ export function ExecutionTab() {
             ⓘ {hint}
           </div>
         )}
+        {basisNotes.map((n, i) => (
+          <div key={i} style={{ padding: '0 14px 10px', fontSize: 9.5, color: C.amber, lineHeight: 1.5 }}>
+            ⚠ {n}
+          </div>
+        ))}
       </Panel>
 
       {/* BID_ASK_DEPTH */}

@@ -6,7 +6,7 @@
 | **Date** | 2026-07-03 |
 | **Scope** | Real-time dashboard for **propAMMs** on Monad mainnet |
 | **Venues** | LFJ POE · Metric · Clober Vault (composable adapter registry) |
-| **CEX benchmark** | per base asset — Bybit (MON) · Binance VIP9 (BTC/ETH) |
+| **CEX benchmark** | per base asset — Bybit (MON) · Binance VIP9 (BTC/ETH), converted into each pair's terms (stable cross + wrap basis, §5.5) |
 | **Reference model** | [pamm.wtf](https://pamm.wtf) (information architecture, not implementation) |
 
 **Changelog v0.2 → v0.3** — **Venue layer refactored into a composable adapter registry** (`server/src/venues/`): one file per protocol implementing `VenueAdapter { venues(), discover(), backfill?(), quote?(), logSources(), decode() }` plus one line in `registry.ts`; the core (indexer, DB, API, frontend) is venue-agnostic and reads name/color/output from the adapter. **Scope narrowed to propAMM-only** (oracle/MM-priced venues, not passive curve DEXes or raw CLOBs): **LFJ Liquidity Book removed** (a passive bin DEX — price emerges from the curve, not a maker); **LFJ POE** (LFJ's oracle-anchored "Public Prop AMM") and **Metric** (oracle-anchored bin AMM) added. Data model generic, keyed by `venueId`; DB long-format (`daily_volume(utc_day, venue_id, …)`). Bybit reference is itself an adapter (`role: 'reference'`).
@@ -72,7 +72,7 @@ Borrow pamm.wtf's information architecture; build the UI custom. Every tab rende
 ### 4.1 Execution (`[1]`)
 Rolling window (~60s) of live quotes per pair at a chosen notional, expressed as **realized cost in bps vs. Bybit**. For each pair × side × notional:
 1. **On-chain realized** — simulate the fill via the adapter's `quote()` (§5.1); `realized = quote-per-base`, venue-fee-inclusive.
-2. **Bybit realized** — walk the live Bybit `MONUSDT` book (§5.5) for the **same base size**, then overlay the **taker fee** (config constant). Realized-vs-realized at size — the only honest comparison for size-sensitive flow.
+2. **CEX realized** — walk the pair's CEX book (Bybit `MONUSDT` / Binance `BTCUSDT`/`ETHUSDT`, §5.5) for the **same base size**, convert into the pair's terms (wrap basis + stable cross), then overlay the **taker fee** (config constant). Realized-vs-realized at size — the only honest comparison for size-sensitive flow.
 3. **vs CEX (bps)** = realized on-chain buy vs Bybit-as-taker, sign-normalized so positive = on-chain worse.
 
 Mark `filledFull = false` when the pool/book exhausts before the full notional (surfaced as a `PARTIAL` tag). The Bybit reference chip defaults **on** so the benchmark stays visible during propAMM quote gaps.
@@ -158,10 +158,19 @@ The public RPC caps `getLogs` to short ranges, so deep replay at the tip is impr
 - **Clober** closed days are seeded once via `backfill()` from the **Goldsky subgraph** (`Σ BookDayData.volumeUSD` = venue, scoped to discovered MON/stable books; `Σ PoolDayData.volumeUSD` = the vault cut).
 - **POE and Metric** (no keyless subgraph) are seeded by a **background on-chain backfill**: the core replays each adapter's `Swap` logs from its `backfillFromUtc` (set to the pool's on-chain deploy day — POE `2026-05-09`, Metric `2026-03-31`) up to the boot head, decodes via the adapter's own `decode()`, and folds into daily volume. It runs OFF the boot path (never blocks the dashboard or the tail): adaptive `getLogs` chunks (start wide, auto-shrink on a range 413) paced under the RPC cap, one `getBlock` per chunk for UTC-day bucketing (a chunk spans ~minutes), closed days only (`< today`, so no overlap with the tail), SET-per-day (idempotent). A day-aligned resume cursor + a `backfill_done_<venue>` flag make it resumable across restarts. Knobs: `BACKFILL` / `BACKFILL_CHUNK` / `BACKFILL_PACE_MS` / `BACKFILL_MERGE_EVERY`.
 
-### 5.5 Bybit benchmark + pricing
-A single `UsdPricer` shared by the poller (USD→token sizing) and the stream (token→USD volume).
-- Stables (USDC, USDT0, AUSD, USD1) pegged to $1; MON USD price from the **Bybit `MONUSDT`** feed (also the exec benchmark).
-- **Bybit V5** WS `wss://stream.bybit.com/v5/public/spot` — `orderbook.50.MONUSDT` (snapshot+delta) + `tickers.MONUSDT` (BBO); REST for cold-start snapshot + tick/lot size. Exec walks the maintained book for the requested base size, overlays the taker-fee constant.
+### 5.5 CEX references + pricing — the reference is in the PAIR'S OWN TERMS
+The deep CEX books are USDT-quoted and native-asset; the on-chain pairs trade **wrapped assets in USDC**. Both mismatches are real, live-priced markets — not $1 pegs — so the reference for a pair is constructed as:
+
+```
+refPx(pair) = <BASE>USDT px × wrapBasis(base) ÷ usdtCross(quote)
+```
+
+- **`usdtCross(quote)`** — the stable's `<STABLE>USDT` mid on the SAME exchange as the base feed (Bybit `USDCUSDT` for MON pairs, Binance `USDCUSDT` for BTC/ETH). The USDC/USDT basis runs **~±10bps** — larger than most spreads shown, so a $1-peg assumption would fabricate a systematic on-chain "edge". `USDT0` needs no cross (it IS Tether's USDT on Monad); `USD1` crosses via `USD1USDT` where listed; `AUSD` (unlisted) stays peg-assumed. Registry: `TokenInfo.usdtCross`.
+- **`wrapBasis(base)`** — the wrapped/native mid for wrapped assets (Binance **`WBTCBTC`**, ~−5bps live): the CEX line is shown in wrapped terms, like-for-like with the WBTC that actually trades on-chain (pamm.wtf does the same). Caveat: WBTCBTC prices Ethereum's WBTC — a proxy for Monad's bridged WBTC. WMON/canonical-WETH need none. Registry: `AssetSpec.wrapBasisSymbol`.
+- **Taker walks stay on the deep USDT books**; realized walk prices are converted by the same factors at the cross MIDS (cross books are ~1bp wide, so converting at mid adds <1bp — far below the ~10bp basis it removes). An unwarm cross falls back to 1 rather than zeroing the reference.
+- **Markouts are marked per PAIR** against the converted mid (`midForPair`), so MON/USDC and MON/USDT0 fills age against different, correct anchors. Validated live: the synthetic BTC reference lands within ~0.1bp of Binance's actual `BTCUSDC` book, and Metric's BTC "edge" collapsed from a fake −13bps to +0.5bps.
+- `UsdPricer` (USD→token sizing, token→USD volume): stables ≈ $1 and base assets at their USDT mids — sizing tolerance, NOT used for bps anchoring.
+- **Feeds**: Bybit V5 WS (`orderbook.50.MONUSDT` + tickers incl. cross symbols); Binance combined stream (`@depth20@100ms` + `@bookTicker` for BTCUSDT/ETHUSDT + crosses + WBTCBTC). REST cold-start snapshots on both; auto-reconnect re-snapshots.
 
 ---
 
@@ -210,7 +219,7 @@ Frontend renders purely off these — never touches the RPC, subgraph, or Bybit 
 | **D4** | History = **persist-forward indexer** + optional per-adapter `backfill()` | SQLite is the source of truth; Clober seeds from its subgraph; POE/Metric accrue forward until a backfill source is wired (D8). |
 | **D5** | Clober attribution = **vault-bookId tagging** via `LiquidityVault.Open` | Only the oracle-vault (propAMM) cut counts; independent-maker CLOB flow is excluded. |
 | **D6** | Universe = **base/stable pairs via a registry** | `@shared` ASSETS + PAIRS (MON/USDC, BTC/USDC, ETH/USDC) — add an asset + a pool and it lists. Quote leg = stable ⇒ exact USD. Adapters are generic over base/quote (WBTC's 8 decimals handled; `assetForToken` replaces MON-specific checks). |
-| **D7** | CEX benchmark = **per-asset registry** | Routed by asset (`ASSETS.cex`): Bybit for MON (no Binance MON spot), Binance VIP9 for BTC/ETH. Realized-vs-realized at size; taker fees are config constants (Bybit 10 bps, Binance 2.25 bps). |
+| **D7** | CEX benchmark = **per-asset registry, converted into the pair's terms** | Routed by asset (`ASSETS.cex`): Bybit for MON (no Binance MON spot), Binance VIP9 for BTC/ETH. The USDT-quoted reference is converted by the live stable cross (`USDCUSDT`, ~±10bps) and the wrapped/native basis (`WBTCBTC`, ~−5bps) — never a $1 peg or a wrap≡native assumption (§5.5). Realized-vs-realized at size; taker fees are config constants (Bybit 10 bps, Binance 2.25 bps). |
 | **D8** | **Deferred** | Non-stable / multi-asset market universe (e.g. POE/Metric WBTC, WETH pools) — needs historical pricing. *(Done since v0.3: POE/Metric on-chain backfill; non-destructive venue reconcile.)* |
 
 ---

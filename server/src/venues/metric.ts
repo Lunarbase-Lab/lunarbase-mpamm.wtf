@@ -129,7 +129,9 @@ export function createMetricAdapter(): VenueAdapter {
       pools.forEach((p, i) => {
         const r = ppRes[i];
         if (r.status !== 'success') return;
-        const basePx = ctx.pricer.usdPerToken(p.baseToken); // base asset USD (its CEX)
+        // bps anchor = the pair-terms CEX mid (wrap basis + stable cross applied),
+        // NOT the raw USDT price — venue quotes are in the pair's stable terms.
+        const basePx = ctx.pricer.pairMid(p.market);
         if (basePx <= 0) return;
         const [bid, ask] = r.result as readonly [bigint, bigint];
         const sellZeroForOne = p.baseIsToken0; // token0→token1 sells the base when base is token0

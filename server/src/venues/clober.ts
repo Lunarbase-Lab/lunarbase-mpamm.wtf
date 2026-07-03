@@ -240,7 +240,9 @@ export async function quoteClober(
   type Leg = { market: string; size: number; side: Side; book: CloberBook; inDec: number; outDec: number; reqBase: bigint; basePx: number };
   const legs: Leg[] = [];
   for (const m of markets) {
-    const basePx = pricer.usdPerToken(m.baseToken);
+    // bps anchor = the pair-terms CEX mid (wrap basis + stable cross applied),
+    // NOT the raw USDT price — book quotes are in the pair's stable terms.
+    const basePx = pricer.pairMid(m.market);
     if (basePx <= 0) continue;
     const stable = tokenBySym(m.stable);
     for (const size of sizesUsd) {

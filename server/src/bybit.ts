@@ -29,11 +29,19 @@ export class BybitFeed {
   private bestAsk = 0;
   private last = 0;
   private chgPct = 0;
+  /** BBO mids of extra CROSS symbols (e.g. USDCUSDT) — tickers-only, no book. */
+  private crossMids = new Map<string, { bid: number; ask: number; last: number }>();
   private ws?: WebSocket;
   private backoff = 500;
   private stopped = false;
   ready = false;
   lastMsgTs = 0;
+
+  /** `crossSymbols`: additional spot symbols to track at BBO/mid level (used to
+   *  convert the USDT-quoted reference into a pair's stable terms, spec §5.5). */
+  constructor(private readonly crossSymbols: string[] = []) {
+    for (const s of crossSymbols) this.crossMids.set(s.toUpperCase(), { bid: 0, ask: 0, last: 0 });
+  }
 
   async start(): Promise<void> {
     await this.snapshotRest().catch(() => undefined);
@@ -55,6 +63,13 @@ export class BybitFeed {
   }
   changePct(): number {
     return this.chgPct;
+  }
+  /** BBO mid of a tracked cross symbol (0 until its ticker is warm). */
+  crossMid(symbol: string): number {
+    const c = this.crossMids.get(symbol.toUpperCase());
+    if (!c) return 0;
+    if (c.bid && c.ask) return (c.bid + c.ask) / 2;
+    return c.last || c.bid || c.ask || 0;
   }
 
   /** Walk the maintained book for `baseSize` MON. side='buy' consumes asks
@@ -96,6 +111,15 @@ export class BybitFeed {
         this.chgPct = (Number(row.price24hPcnt) || 0) * 100;
       }
     } catch { /* non-fatal */ }
+    // seed the cross-symbol mids (WS tickers keep them fresh after this)
+    await Promise.all(this.crossSymbols.map(async (s) => {
+      try {
+        const t = await fetch(`${config.bybitRest}/v5/market/tickers?category=spot&symbol=${s.toUpperCase()}`, { signal: AbortSignal.timeout(8000) });
+        const tj: any = await t.json();
+        const row = tj?.result?.list?.[0];
+        if (row) this.crossMids.set(s.toUpperCase(), { bid: Number(row.bid1Price) || 0, ask: Number(row.ask1Price) || 0, last: Number(row.lastPrice) || 0 });
+      } catch { /* non-fatal — stays 0 until WS warms it */ }
+    }));
   }
 
   // ── WS ────────────────────────────────────────────────────────────────────
@@ -105,7 +129,8 @@ export class BybitFeed {
     this.ws = ws;
     ws.on('open', () => {
       this.backoff = 500;
-      ws.send(JSON.stringify({ op: 'subscribe', args: [`orderbook.50.${config.bybitSymbol}`, `tickers.${config.bybitSymbol}`] }));
+      const args = [`orderbook.50.${config.bybitSymbol}`, `tickers.${config.bybitSymbol}`, ...this.crossSymbols.map((s) => `tickers.${s.toUpperCase()}`)];
+      ws.send(JSON.stringify({ op: 'subscribe', args }));
       // 20s heartbeat keeps the public stream alive
       const hb = setInterval(() => { try { ws.send(JSON.stringify({ op: 'ping' })); } catch { /* ignore */ } }, 20_000);
       ws.on('close', () => clearInterval(hb));
@@ -134,6 +159,15 @@ export class BybitFeed {
       this.ready = true;
     } else if (topic.startsWith('tickers')) {
       const d = msg.data ?? {};
+      const sym = topic.slice('tickers.'.length).toUpperCase();
+      if (sym && sym !== config.bybitSymbol.toUpperCase() && this.crossMids.has(sym)) {
+        // a cross symbol (e.g. USDCUSDT) — track its BBO mid only
+        const c = this.crossMids.get(sym)!;
+        if (d.bid1Price) c.bid = Number(d.bid1Price);
+        if (d.ask1Price) c.ask = Number(d.ask1Price);
+        if (d.lastPrice) c.last = Number(d.lastPrice);
+        return;
+      }
       if (d.lastPrice) this.last = Number(d.lastPrice);
       if (d.price24hPcnt !== undefined) this.chgPct = Number(d.price24hPcnt) * 100;
       if (d.bid1Price) this.bestBid = Number(d.bid1Price);

@@ -53,11 +53,12 @@ export function createTemplateAdapter(): VenueAdapter {
     },
 
     // (Pattern C) OPTIONAL live bid/ask for the Execution tab. One QuoteRow per
-    // (market,size) you can quote. bid/ask are bps vs the reference mid; px is
-    // quote-per-base (stable per MON). Set venueId to your venue id.
+    // (market,size) you can quote. bid/ask are bps vs the PAIR's CEX mid
+    // (ctx.pricer.pairMid — already in the pair's own terms: wrap basis + stable
+    // cross applied); px is quote-per-base (stable per base). venueId = your id.
     async quote(ctx: AdapterContext, sizesUsd: readonly number[]): Promise<QuoteRow[]> {
       const rows: QuoteRow[] = [];
-      // const mid = ctx.referenceMid();
+      // const mid = ctx.pricer.pairMid(market); // bps anchor, per market
       // for (const market of markets) for (const sizeUsd of sizesUsd) {
       //   const { bidPx, askPx, filledFull } = await readYourQuoter(ctx.client, market, sizeUsd);
       //   rows.push({ venueId: MY_VENUE.id, market, sizeUsd,

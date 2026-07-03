@@ -131,7 +131,9 @@ export function createPoeAdapter(): VenueAdapter {
       const legs: Leg[] = [];
       const calls: { address: `0x${string}`; abi: typeof poePoolAbi; functionName: 'getQuote'; args: readonly [boolean, bigint] }[] = [];
       for (const p of pools) {
-        const basePx = ctx.pricer.usdPerToken(p.baseToken);
+        // bps anchor = the pair-terms CEX mid (wrap basis + stable cross applied),
+        // NOT the raw USDT price — venue quotes are in the pair's stable terms.
+        const basePx = ctx.pricer.pairMid(p.market);
         if (basePx <= 0) continue;
         for (const size of sizesUsd) {
           // BUY base: spend the stable. swapXtoY sends X→Y, so buying the base is

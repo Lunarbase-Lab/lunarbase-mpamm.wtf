@@ -1,6 +1,6 @@
 import { BaseSource } from './index.js';
 import {
-  MARKETS, SIZES_USD, MARKOUT_HORIZONS, ASSETS, pairOf,
+  MARKETS, SIZES_USD, MARKOUT_HORIZONS, ASSETS, PAIRS, pairOf,
   type DataSourceMode, type MarketState, type QuoteSnapshot, type QuoteRow, type Fill, type DailyVolume,
 } from '@shared';
 import { config } from '../config.js';
@@ -29,7 +29,7 @@ const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 export class LiveDataSource extends BaseSource {
   readonly mode: DataSourceMode = 'live';
 
-  private pricer = new UsdPricer((key) => REFERENCES.assetUsd(key));
+  private pricer = new UsdPricer((key) => REFERENCES.assetUsd(key), (market) => REFERENCES.midForPair(market));
   private store = new VolumeStore(config.dbPath);
   /** shared infra handed to every adapter (they don't import globals). */
   private ctx: AdapterContext = {
@@ -48,7 +48,10 @@ export class LiveDataSource extends BaseSource {
   /** ids already counted into the volume buckets (kept in sync with the fills
    *  window) — makes ingest idempotent so a re-decode never double-counts. */
   private countedIds = new Set<string>();
-  private midHist = new Map<string, { t: number; mid: number }[]>(); // CEX mid history per base asset
+  /** CEX mid history per PAIR (market symbol), in the pair's own terms (wrap
+   *  basis + stable cross applied) — the markout anchors. Keyed per pair, not per
+   *  base, because MON/USDC and MON/USDT0 mark against different mids. */
+  private midHist = new Map<string, { t: number; mid: number }[]>();
   private lastBlock = 0n;
   /** chain head captured at boot — the upper bound for on-chain backfill (the
    *  live tail owns every block after it, so the two never overlap). */
@@ -412,14 +415,14 @@ export class LiveDataSource extends BaseSource {
   private async poll(): Promise<void> {
     const now = Date.now();
     const monUsd = REFERENCES.assetUsd('MON');
-    // record each base asset's CEX mid history (the per-asset markout anchors).
-    for (const key of Object.keys(ASSETS)) {
-      const mid = REFERENCES.midFor(key);
+    // record each PAIR's CEX mid history in its own terms (the markout anchors).
+    for (const pair of PAIRS) {
+      const mid = REFERENCES.midForPair(pair.symbol);
       if (mid <= 0) continue;
-      const h = this.midHist.get(key) ?? [];
+      const h = this.midHist.get(pair.symbol) ?? [];
       h.push({ t: now, mid });
       if (h.length > 400) h.shift();
-      this.midHist.set(key, h);
+      this.midHist.set(pair.symbol, h);
     }
 
     const head = await publicClient.getBlockNumber();
@@ -578,10 +581,9 @@ export class LiveDataSource extends BaseSource {
       // (a BTC fill aged vs a $0.02 mid would fabricate absurd markouts). Leave
       // its markouts null and stop tracking it (defense in depth; adapters gate
       // discovery/decode on the pair registry so this shouldn't be reachable).
-      const base = pairOf(f.market)?.base;
-      if (!base) { this.pending.delete(f); this.noteOnce(`fill market '${f.market}' is not a registered pair — markouts skipped`); continue; }
-      const hist = this.midHist.get(base) ?? [];
-      // A horizon that elapsed before we had any mid for THIS asset can't be
+      if (!pairOf(f.market)) { this.pending.delete(f); this.noteOnce(`fill market '${f.market}' is not a registered pair — markouts skipped`); continue; }
+      const hist = this.midHist.get(f.market) ?? [];
+      // A horizon that elapsed before we had any mid for THIS pair can't be
       // computed faithfully — leave it null rather than fabricate it (M1).
       const earliestMid = hist.length ? hist[0].t : now;
       const ss = f.side === 'buy' ? 1 : -1;
@@ -591,7 +593,7 @@ export class LiveDataSource extends BaseSource {
         const at = f.ts + MARKOUT_HORIZONS[i] * 1000;
         if (now < at) { complete = false; continue; }   // horizon not reached yet
         if (at < earliestMid) continue;                  // elapsed unobserved → leave null
-        const mid = this.midNear(base, at);
+        const mid = this.midNear(f.market, at);
         f.markoutsBps[i] = mid <= 0 || f.execPx <= 0 ? 0 : ss * (mid / f.execPx - 1) * 1e4;
         changed = true;
       }
@@ -599,11 +601,11 @@ export class LiveDataSource extends BaseSource {
       if (complete) this.pending.delete(f);
     }
   }
-  private midNear(base: string, t: number): number {
-    const hist = this.midHist.get(base) ?? [];
+  private midNear(market: string, t: number): number {
+    const hist = this.midHist.get(market) ?? [];
     let best = 0, bestDt = Infinity;
     for (const s of hist) { const dt = Math.abs(s.t - t); if (dt < bestDt) { bestDt = dt; best = s.mid; } }
-    return best || REFERENCES.midFor(base);
+    return best || REFERENCES.midForPair(market);
   }
 
   private cloneDay(d: DailyVolume): DailyVolume { return { ...d, byVenue: { ...d.byVenue } }; }
