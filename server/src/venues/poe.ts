@@ -1,6 +1,6 @@
 import { parseAbi } from 'viem';
-import type { QuoteRow, Fill, Side, VenueMeta, TokenInfo } from '@shared';
-import { TOKENS, ASSETS, assetForToken, baseTokenOf } from '@shared';
+import type { QuoteRow, Fill, Side, VenueMeta } from '@shared';
+import { TOKENS, ASSETS, PAIRS, baseTokenOf } from '@shared';
 import { fromUnits, toUnits, shortHex } from '../util.js';
 import type { VenueAdapter, AdapterContext, LogBundle } from './adapter.js';
 
@@ -70,24 +70,29 @@ export function createPoeAdapter(): VenueAdapter {
     backfillFromUtc: '2026-05-09',
 
     async discover(ctx: AdapterContext) {
-      const stables = Object.values(TOKENS).filter((t) => t.stable);
-      const baseToks = Object.values(ASSETS).map((a) => baseTokenOf(a.key)).filter(Boolean) as TokenInfo[];
-      const combos: { baseTok: TokenInfo; stable: TokenInfo }[] = [];
-      for (const baseTok of baseToks) for (const stable of stables) combos.push({ baseTok, stable });
+      // discover pools for exactly the REGISTERED pairs (@shared PAIRS — the
+      // tracked-market universe), so this adapter can never emit a market with
+      // no reference rows / markout routing.
+      const combos = PAIRS.map((pair) => {
+        const asset = ASSETS[pair.base];
+        const baseTok = baseTokenOf(pair.base);
+        const stable = TOKENS[pair.quote];
+        return asset && baseTok && stable?.stable ? { pair, asset, baseTok, stable } : undefined;
+      }).filter((c): c is NonNullable<typeof c> => !!c);
 
-      // phase 1: resolve the POE pool for each base/stable pair.
+      // phase 1: resolve the POE pool for each registered pair.
       const poolRes = await ctx.client.multicall({
         contracts: combos.map((c) => ({ address: FACTORY, abi: poeFactoryAbi, functionName: 'getPool' as const, args: [c.baseTok.address, c.stable.address] as const })),
         allowFailure: true,
       });
-      const candidates: { pool: `0x${string}`; baseTok: TokenInfo; stable: TokenInfo }[] = [];
+      const candidates: { pool: `0x${string}`; combo: (typeof combos)[number] }[] = [];
       for (let i = 0; i < combos.length; i++) {
         const r = poolRes[i];
         // fail closed: an RPC error on a configured lookup holds the cursor (throws).
-        if (r.status !== 'success') throw new Error(`POE getPool failed for ${combos[i].baseTok.symbol}/${combos[i].stable.symbol}`);
+        if (r.status !== 'success') throw new Error(`POE getPool failed for ${combos[i].pair.symbol}`);
         const addr = String(r.result).toLowerCase() as `0x${string}`;
         if (addr === ZERO) continue; // no POE pool for this pair — normal
-        candidates.push({ pool: addr, baseTok: combos[i].baseTok, stable: combos[i].stable });
+        candidates.push({ pool: addr, combo: combos[i] });
       }
       if (!candidates.length) { discovered = true; ctx.log('POE: 0 base/stable pool(s)'); return; }
 
@@ -100,17 +105,15 @@ export function createPoeAdapter(): VenueAdapter {
         const r = tokRes[i];
         if (r.status !== 'success') throw new Error(`POE getTokens failed for ${candidates[i].pool}`);
         const [tx] = r.result as readonly [string, string];
-        const c = candidates[i];
-        const base = assetForToken(c.baseTok.address);
-        if (!base) continue;
+        const { pool, combo } = candidates[i];
         const p: PoePool = {
-          pool: c.pool,
-          market: `${base.symbol}/${c.stable.symbol}`,
-          baseIsX: String(tx).toLowerCase() === c.baseTok.address.toLowerCase(),
-          baseToken: base.token,
-          baseDec: c.baseTok.decimals,
-          stableSym: c.stable.symbol,
-          stableDec: c.stable.decimals,
+          pool,
+          market: combo.pair.symbol,
+          baseIsX: String(tx).toLowerCase() === combo.baseTok.address.toLowerCase(),
+          baseToken: combo.asset.token,
+          baseDec: combo.baseTok.decimals,
+          stableSym: combo.stable.symbol,
+          stableDec: combo.stable.decimals,
         };
         byMarket.set(p.market, p);
         byAddr.set(p.pool.toLowerCase(), p);

@@ -1,6 +1,6 @@
 import type { PublicClient } from 'viem';
 import type { QuoteRow, Fill, Side, FillCategory, VenueMeta } from '@shared';
-import { ADDR, TOKENS, ASSETS, assetForToken, baseTokenOf } from '@shared';
+import { ADDR, TOKENS, ASSETS, PAIRS, pairFor, assetForToken, baseTokenOf } from '@shared';
 import { bookViewerAbi, bookManagerAbi, liquidityVaultAbi, routerGatewayAbi, CLOBER_MIN_PRICE } from '../chain/abis.js';
 import { fromUnits, toUnits, shortHex } from '../util.js';
 import type { UsdPricer } from '../pricer.js';
@@ -57,24 +57,26 @@ const symByAddr = (addr: string): string | undefined =>
 
 type CloberSubgraphBookRow = { id: string; unitSize: string; base: { id: string }; quote: { id: string }; pool: { id: string } | null };
 
-/** Assemble base/stable markets from a book cache, preferring the vault book per
- *  direction so venue attribution + quoting are consistent across every discovery
- *  path and live merge. */
+/** Assemble markets from a book cache for exactly the REGISTERED pairs (@shared
+ *  PAIRS — the tracked universe), preferring the vault book per direction so
+ *  venue attribution + quoting are consistent across every discovery path and
+ *  live merge. Books for unregistered combos stay in the cache but never form a
+ *  market (and decode drops their Takes). */
 export function assembleCloberMarkets(books: Map<string, CloberBook>): CloberMarket[] {
   const markets: CloberMarket[] = [];
-  for (const asset of Object.values(ASSETS)) {
-    const baseTok = baseTokenOf(asset.key);
-    if (!baseTok) continue;
-    for (const t of Object.values(TOKENS).filter((x) => x.stable)) {
-      const st = t.address.toLowerCase();
-      let baseBook: CloberBook | undefined, stableBook: CloberBook | undefined;
-      for (const b of books.values()) {
-        const bBase = assetForToken(b.base), bQuote = assetForToken(b.quote);
-        if (bBase?.key === asset.key && b.quote === st && (!baseBook || (b.isVault && !baseBook.isVault))) baseBook = b;
-        if (b.base === st && bQuote?.key === asset.key && (!stableBook || (b.isVault && !stableBook.isVault))) stableBook = b;
-      }
-      if (baseBook || stableBook) markets.push({ market: `${asset.symbol}/${t.symbol}`, stable: t.symbol, baseAsset: asset.key, baseToken: asset.token, baseDec: baseTok.decimals, baseBook, stableBook });
+  for (const pair of PAIRS) {
+    const asset = ASSETS[pair.base];
+    const baseTok = baseTokenOf(pair.base);
+    const t = TOKENS[pair.quote];
+    if (!asset || !baseTok || !t?.stable) continue;
+    const st = t.address.toLowerCase();
+    let baseBook: CloberBook | undefined, stableBook: CloberBook | undefined;
+    for (const b of books.values()) {
+      const bBase = assetForToken(b.base), bQuote = assetForToken(b.quote);
+      if (bBase?.key === asset.key && b.quote === st && (!baseBook || (b.isVault && !baseBook.isVault))) baseBook = b;
+      if (b.base === st && bQuote?.key === asset.key && (!stableBook || (b.isVault && !stableBook.isVault))) stableBook = b;
     }
+    if (baseBook || stableBook) markets.push({ market: pair.symbol, stable: t.symbol, baseAsset: asset.key, baseToken: asset.token, baseDec: baseTok.decimals, baseBook, stableBook });
   }
   return markets;
 }
@@ -354,6 +356,10 @@ export function decodeCloberTake(
   const baseDec = baseTok.decimals;
   const stableSym = baseIsBookBase ? book.quoteSym : book.baseSym;
   if (!stableSym || !TOKENS[stableSym]?.stable) return null;
+  // REGISTERED pairs only — an unregistered combo (e.g. a hypothetical BTC/USDT0
+  // vault book) has no reference rows / markout routing and must not emit a fill.
+  const pair = pairFor(asset.key, stableSym);
+  if (!pair) return null;
   const stableDec = TOKENS[stableSym].decimals;
 
   // quote leg is exact (unit × unitSize); quote token = stable iff the base asset
@@ -381,7 +387,7 @@ export function decodeCloberTake(
     venueId: CLOBER_VAULT_VENUE.id,
     // routed → the router's class; else DIRECT — unless attribution was unavailable
     // this cycle, in which case we don't know (UNKNOWN, not a false DIRECT).
-    market: `${asset.symbol}/${stableSym}`, side, category: router?.category ?? (attributionUnavailable ? 'UNKNOWN' : 'DIRECT'),
+    market: pair.symbol, side, category: router?.category ?? (attributionUnavailable ? 'UNKNOWN' : 'DIRECT'),
     usd, baseAmount, execPx,
     txHash: log.transactionHash, to: router?.to ?? shortHex(a.user ?? ZERO),
     pool: `book ${bookId.slice(0, 8)}`,

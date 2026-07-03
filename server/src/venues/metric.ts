@@ -1,6 +1,6 @@
 import { parseAbi } from 'viem';
 import type { QuoteRow, Fill, Side, VenueMeta } from '@shared';
-import { TOKENS, assetForToken, baseTokenOf } from '@shared';
+import { TOKENS, assetForToken, baseTokenOf, pairFor } from '@shared';
 import { fromUnits, toUnits, shortHex } from '../util.js';
 import type { VenueAdapter, AdapterContext, LogBundle } from './adapter.js';
 
@@ -95,10 +95,14 @@ export function createMetricAdapter(): VenueAdapter {
         const stableAddr = baseIsToken0 ? token1 : token0;
         const stable = Object.values(TOKENS).find((t) => t.stable && t.address.toLowerCase() === stableAddr);
         if (!stable) continue;
+        // REGISTERED pairs only (@shared PAIRS) — a pool for an unregistered combo
+        // would emit a market with no reference rows / markout routing.
+        const pair = pairFor(base.key, stable.symbol);
+        if (!pair) { ctx.log(`Metric: pool ${KNOWN_POOLS[i].slice(0, 8)}… (${base.symbol}/${stable.symbol}) is not a registered pair — skipped`); continue; }
         const baseTok = baseTokenOf(base.key);
         if (!baseTok) continue;
         found.push({
-          pool: KNOWN_POOLS[i], priceProvider, market: `${base.symbol}/${stable.symbol}`,
+          pool: KNOWN_POOLS[i], priceProvider, market: pair.symbol,
           baseIsToken0, baseToken: base.token, baseDec: baseTok.decimals,
           stableSym: stable.symbol, stableDec: stable.decimals,
         });

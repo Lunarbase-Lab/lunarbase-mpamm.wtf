@@ -150,12 +150,18 @@ export interface Pair {
   quote: string;
 }
 
-/** The pair registry — the markets the dashboard tracks. Venues quote/land fills
- *  on whichever of these they have a pool for; empty ones are hidden by the UI. */
+/** The pair registry — THE tracked-market universe, the single source of truth.
+ *  Adapters discover pools for exactly these pairs (and must not emit any other
+ *  market), reference rows exist for exactly these, and markouts are routed by
+ *  them. Venues quote/land fills on whichever they have a pool for; pairs no
+ *  propAMM venue quotes are hidden by the UI. */
 export const PAIRS: Pair[] = [
   { symbol: 'MON/USDC', base: 'MON', quote: 'USDC' },
   { symbol: 'BTC/USDC', base: 'BTC', quote: 'USDC' },
   { symbol: 'ETH/USDC', base: 'ETH', quote: 'USDC' },
+  { symbol: 'MON/USDT0', base: 'MON', quote: 'USDT0' },
+  { symbol: 'MON/AUSD', base: 'MON', quote: 'AUSD' },
+  { symbol: 'MON/USD1', base: 'MON', quote: 'USD1' },
 ];
 
 /** Market symbols (derived from the pair registry). */
@@ -169,6 +175,13 @@ export function assetOf(baseKey: string): AssetSpec | undefined {
 /** The pair for a market symbol. */
 export function pairOf(symbol: string): Pair | undefined {
   return PAIRS.find((p) => p.symbol === symbol);
+}
+/** The REGISTERED pair for a (base asset, stable quote) combo — undefined when
+ *  the combo isn't in the tracked universe. Adapters gate discovery/decode on
+ *  this so an unregistered market can never be emitted (it would have no
+ *  reference rows and no markout routing). */
+export function pairFor(baseKey: string, quoteSym: string): Pair | undefined {
+  return PAIRS.find((p) => p.base === baseKey && p.quote === quoteSym);
 }
 /** The ERC-20 wrapper TokenInfo for a base asset (WMON/WBTC/WETH). */
 export function baseTokenOf(baseKey: string): TokenInfo | undefined {

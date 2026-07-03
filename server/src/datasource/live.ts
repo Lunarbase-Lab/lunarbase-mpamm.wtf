@@ -574,7 +574,12 @@ export class LiveDataSource extends BaseSource {
   private ageMarkouts(): void {
     const now = Date.now();
     for (const f of [...this.pending]) {
-      const base = pairOf(f.market)?.base ?? 'MON';
+      // an UNREGISTERED market has no CEX routing — never fall back to MON/Bybit
+      // (a BTC fill aged vs a $0.02 mid would fabricate absurd markouts). Leave
+      // its markouts null and stop tracking it (defense in depth; adapters gate
+      // discovery/decode on the pair registry so this shouldn't be reachable).
+      const base = pairOf(f.market)?.base;
+      if (!base) { this.pending.delete(f); this.noteOnce(`fill market '${f.market}' is not a registered pair — markouts skipped`); continue; }
       const hist = this.midHist.get(base) ?? [];
       // A horizon that elapsed before we had any mid for THIS asset can't be
       // computed faithfully — leave it null rather than fabricate it (M1).
