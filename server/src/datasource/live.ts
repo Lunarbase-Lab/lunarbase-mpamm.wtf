@@ -579,8 +579,12 @@ export class LiveDataSource extends BaseSource {
   }
 
   /** True while a fill still has a null markout horizon whose mark time is in the
-   *  future — i.e. still observable, so it's worth keeping on the pending queue. */
+   *  future — i.e. still observable, so it's worth keeping on the pending queue.
+   *  An approximate-price fill is NEVER queued: mid/execPx against a pxApprox
+   *  execPx would fabricate the very markouts the shared contract keeps out of
+   *  the stats (they must stay null, in memory and in SQLite). */
   private hasFutureMarkoutHorizon(f: Fill, now = Date.now()): boolean {
+    if (f.pxApprox) return false;
     return MARKOUT_HORIZONS.some((h, i) => f.markoutsBps[i] == null && now < f.ts + h * 1000);
   }
 
@@ -588,6 +592,10 @@ export class LiveDataSource extends BaseSource {
   private ageMarkouts(): void {
     const now = Date.now();
     for (const f of [...this.pending]) {
+      // an approximate-price fill must never be aged — mid/execPx against a
+      // pxApprox execPx fabricates markouts the contract excludes. Unreachable
+      // via hasFutureMarkoutHorizon (which refuses to queue them); defensive.
+      if (f.pxApprox) { this.pending.delete(f); continue; }
       // an UNREGISTERED market has no CEX routing — never fall back to MON/Bybit
       // (a BTC fill aged vs a $0.02 mid would fabricate absurd markouts). Leave
       // its markouts null and stop tracking it (defense in depth; adapters gate

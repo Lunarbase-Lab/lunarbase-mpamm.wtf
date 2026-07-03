@@ -153,7 +153,7 @@ export class VolumeStore {
     this.fillStmt = this.db.prepare(`
       INSERT INTO fills (id, ts, block_number, venue_id, market, side, category, usd, base_amount, exec_px, px_approx, tx_hash, to_label, pool, markouts_bps)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      ON CONFLICT(id) DO UPDATE SET markouts_bps = excluded.markouts_bps`);
+      ON CONFLICT(id) DO UPDATE SET markouts_bps = excluded.markouts_bps, px_approx = excluded.px_approx`);
     this.midStmt = this.db.prepare(`
       INSERT INTO mid_history (market, ts, mid) VALUES (?, ?, ?)
       ON CONFLICT(market, ts) DO UPDATE SET mid = excluded.mid`);
