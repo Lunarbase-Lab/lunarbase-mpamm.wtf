@@ -195,11 +195,13 @@ DailyVolume { utcDay; partial; byVenue: Record<venueId,{ usd; swaps }> }
 
 ### 6.2 Persisted (SQLite, long format)
 ```
-meta(key, value)                                   -- schema_version + lastProcessedBlock cursor
+meta(key, value)                                   -- schema_version + markout_model_version + lastProcessedBlock cursor
 daily_volume(utc_day, venue_id, usd, swaps)        -- PK (utc_day, venue_id)
 day_meta(utc_day, partial)
 fills(id, venue_id, …, markouts…)                  -- upsert-by-id; ~35-day retention prune
+mid_history(market, ts, mid)                       -- per-pair reference-mid curve (~5s cadence, fills' retention)
 ```
+`markout_model_version` gates a **markout-model migration**: when the benchmark's meaning changes, retained fills keep their volume/tape data and their markouts are either **replayed** from `mid_history` (when the stored pair-terms curve is still a valid mark — `REMARK_FROM_MID_HISTORY`) or reset to null (when the mid definition itself changed) — old-model and new-model bps never mix.
 Adding/removing a venue never changes the table shape (just different `venue_id` values), so it is **non-destructive**: on boot `reconcileVenues()` prunes only rows whose venue left the registry, keeping every other venue's history. `schema_version` gates a full fresh-start reset **only** on a true STRUCTURAL change (columns / PK).
 
 ### 6.3 API contract (service → frontend)

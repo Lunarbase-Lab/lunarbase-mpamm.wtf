@@ -132,7 +132,10 @@ export class LiveDataSource extends BaseSource {
     // 1. authoritative persisted history
     this.days = this.store.all();
     // load recent fills for live serving; drop rows past the retention window
+    // (the persisted mid curve shares the fills' retention — it only exists to
+    // replay THEM on a markout-model bump).
     this.store.pruneFills(Date.now() - config.fillsRetentionDays * 86_400_000);
+    this.store.pruneMids(Date.now() - config.fillsRetentionDays * 86_400_000);
     this.fills = this.store.recentFills(400);
     // seed the dedup guard with the persisted window so a gap-fill re-decode of
     // already-counted fills won't re-count them.
@@ -209,10 +212,18 @@ export class LiveDataSource extends BaseSource {
     try {
       // one transaction: volume + cursor + fills together, so a crash can never
       // leave the volume ahead of the cursor and let a gap-fill re-count (H1).
+      // Each pass also samples every pair's CURRENT reference mid into
+      // mid_history (~PERSIST_MS cadence) — the curve a future markout-model
+      // bump can replay retained fills against instead of nulling them.
+      const now = Date.now();
+      const mids = PAIRS
+        .map((p) => ({ ts: now, market: p.symbol, mid: REFERENCES.midForPair(p.symbol) }))
+        .filter((m) => m.mid > 0);
       this.store.persistSnapshot(
         this.days,
         { lastProcessedBlock: String(this.lastBlock), lastProcessedDay: utcDay() },
         this.dirty.size ? [...this.dirty] : [],
+        mids,
       );
       this.dirty.clear();
     } catch { /* non-fatal — dirty retained, retried next tick */ }

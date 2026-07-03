@@ -1,7 +1,7 @@
 import { DatabaseSync } from 'node:sqlite';
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
-import type { DailyVolume, Fill } from '@shared';
+import { MARKOUT_HORIZONS, type DailyVolume, type Fill } from '@shared';
 
 type Stmt = ReturnType<DatabaseSync['prepare']>;
 
@@ -25,17 +25,34 @@ const SCHEMA_VERSION = '3';
 /**
  * Version of the MARKOUT MODEL — what a fill's `markouts_bps` were marked
  * against. Bump when the benchmark itself changes meaning (not on schema
- * changes): on mismatch, persisted fills keep their volume/tape data but their
- * markouts are reset to nulls — horizons that elapsed under the old model are
- * excluded (never recomputed against a mid history we don't have, and never
- * mixed with new-model markouts in the leaderboard/markout stats), while fills
- * young enough re-age naturally against the new model.
+ * changes). On mismatch, persisted fills keep their volume/tape data and their
+ * markouts are either REPLAYED from the persisted `mid_history` curve (when the
+ * stored mids remain a valid mark under the new model — set
+ * `REMARK_FROM_MID_HISTORY`) or reset to nulls (when the mid definition itself
+ * changed, so the stored curve is old-model too). Either way old-model bps are
+ * never mixed with new-model bps in the markout/leaderboard stats, and fills
+ * young enough re-age naturally against the live mids.
  *
  *  'pair-mid-1' — markouts vs the PAIR-terms CEX mid (wrap basis + stable
  *                 cross), replacing raw USDT mids (~10bps different on USDC
  *                 pairs — old and new values are not comparable).
  */
 const MARKOUT_MODEL_VERSION = 'pair-mid-1';
+/**
+ * Set true when bumping MARKOUT_MODEL_VERSION IF the persisted `mid_history`
+ * rows (pair-terms mids recorded every ~PERSIST_MS) are still a valid mark
+ * under the NEW model — e.g. the markout formula/horizons changed but the mid
+ * didn't. Retained fills are then RECOMPUTED per horizon from the stored curve
+ * (nearest sample within ±MID_REPLAY_TOL_MS; null when no sample is close
+ * enough) instead of nulled. Leave false when the mid definition itself changes.
+ */
+const REMARK_FROM_MID_HISTORY = false; // 'pair-mid-1' changed the mid definition — no valid history predates it
+/** how far a persisted mid sample may sit from a horizon's mark time and still
+ *  be used in a replay (persist cadence is ~5s → one interval + slack). */
+const MID_REPLAY_TOL_MS = 6_000;
+
+/** one persisted point of a pair's CEX mid curve (pair terms). */
+export interface MidPoint { ts: number; market: string; mid: number }
 
 export class VolumeStore {
   private db: DatabaseSync;
@@ -43,6 +60,7 @@ export class VolumeStore {
   private dayMetaStmt: Stmt;
   private metaStmt: Stmt;
   private fillStmt: Stmt;
+  private midStmt: Stmt;
 
   constructor(path = 'data/mpamm.db') {
     mkdirSync(dirname(path), { recursive: true });
@@ -54,7 +72,7 @@ export class VolumeStore {
     if (ver !== SCHEMA_VERSION) {
       // start fresh on a schema change: drop the data tables and clear the cursor
       // so the indexer cold-starts (the venue registry defines the new shape).
-      this.db.exec(`DROP TABLE IF EXISTS daily_volume; DROP TABLE IF EXISTS fills; DROP TABLE IF EXISTS day_meta; DELETE FROM meta;`);
+      this.db.exec(`DROP TABLE IF EXISTS daily_volume; DROP TABLE IF EXISTS fills; DROP TABLE IF EXISTS day_meta; DROP TABLE IF EXISTS mid_history; DELETE FROM meta;`);
     }
 
     this.db.exec(`
@@ -86,17 +104,32 @@ export class VolumeStore {
         markouts_bps TEXT NOT NULL
       );
       CREATE INDEX IF NOT EXISTS fills_ts ON fills (ts);
+      -- per-pair CEX mid curve (pair terms), sampled every ~PERSIST_MS: lets a
+      -- future markout-model bump REPLAY retained fills' markouts instead of
+      -- nulling them (see REMARK_FROM_MID_HISTORY). Same retention as fills.
+      CREATE TABLE IF NOT EXISTS mid_history (
+        market TEXT    NOT NULL,
+        ts     INTEGER NOT NULL,
+        mid    REAL    NOT NULL,
+        PRIMARY KEY (market, ts)
+      ) WITHOUT ROWID;
     `);
     this.db.prepare(`INSERT INTO meta (key, value) VALUES ('schema_version', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value`).run(SCHEMA_VERSION);
 
     // markout-model migration: retained fills marked under an older model keep
-    // their volume/tape data, but their markouts are nulled — old-model bps must
-    // never mix with new-model bps in the markout/leaderboard stats.
+    // their volume/tape data, but their markouts are REPLAYED from the persisted
+    // mid curve (when the curve is still a valid mark — REMARK_FROM_MID_HISTORY)
+    // or nulled — old-model bps must never mix with new-model bps in the stats.
     const mkVer = (this.db.prepare(`SELECT value FROM meta WHERE key = 'markout_model_version'`).get() as { value: string } | undefined)?.value;
     if (mkVer !== MARKOUT_MODEL_VERSION) {
-      const nulls = JSON.stringify([null, null, null, null, null]);
-      const info = this.db.prepare(`UPDATE fills SET markouts_bps = ? WHERE markouts_bps != ?`).run(nulls, nulls);
-      if (Number(info.changes) > 0) console.log(`[mpamm] markout model → ${MARKOUT_MODEL_VERSION}: reset markouts on ${info.changes} retained fill(s)`);
+      if (REMARK_FROM_MID_HISTORY) {
+        const { remarked, nulled } = this.remarkRetainedFills();
+        console.log(`[mpamm] markout model → ${MARKOUT_MODEL_VERSION}: replayed ${remarked} fill(s) from mid_history, nulled ${nulled}`);
+      } else {
+        const nulls = JSON.stringify([null, null, null, null, null]);
+        const info = this.db.prepare(`UPDATE fills SET markouts_bps = ? WHERE markouts_bps != ?`).run(nulls, nulls);
+        if (Number(info.changes) > 0) console.log(`[mpamm] markout model → ${MARKOUT_MODEL_VERSION}: reset markouts on ${info.changes} retained fill(s)`);
+      }
       this.db.prepare(`INSERT INTO meta (key, value) VALUES ('markout_model_version', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value`).run(MARKOUT_MODEL_VERSION);
     }
 
@@ -111,6 +144,9 @@ export class VolumeStore {
       INSERT INTO fills (id, ts, block_number, venue_id, market, side, category, usd, base_amount, exec_px, tx_hash, to_label, pool, markouts_bps)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET markouts_bps = excluded.markouts_bps`);
+    this.midStmt = this.db.prepare(`
+      INSERT INTO mid_history (market, ts, mid) VALUES (?, ?, ?)
+      ON CONFLICT(market, ts) DO UPDATE SET mid = excluded.mid`);
   }
 
   private runDay(d: DailyVolume): void {
@@ -169,12 +205,13 @@ export class VolumeStore {
    * cursor, which a gap-fill on the next boot would otherwise re-count (fills
    * dedupe by their deterministic txHash:logIndex id).
    */
-  persistSnapshot(days: DailyVolume[], meta: Record<string, string>, fills: Fill[]): void {
+  persistSnapshot(days: DailyVolume[], meta: Record<string, string>, fills: Fill[], mids: MidPoint[] = []): void {
     this.db.exec('BEGIN');
     try {
       for (const d of days) this.runDay(d);
       for (const [k, v] of Object.entries(meta)) this.metaStmt.run(k, v);
       for (const f of fills) this.runFill(f);
+      for (const m of mids) this.midStmt.run(m.market, m.ts, m.mid);
       this.db.exec('COMMIT');
     } catch (e) {
       this.db.exec('ROLLBACK');
@@ -221,6 +258,53 @@ export class VolumeStore {
   pruneFills(beforeMs: number): number {
     const info = this.db.prepare(`DELETE FROM fills WHERE ts < ?`).run(beforeMs);
     return Number(info.changes);
+  }
+
+  /** Drop mid-history samples older than `beforeMs` (same retention as fills —
+   *  the curve only exists to replay retained fills). Returns rows removed. */
+  pruneMids(beforeMs: number): number {
+    const info = this.db.prepare(`DELETE FROM mid_history WHERE ts < ?`).run(beforeMs);
+    return Number(info.changes);
+  }
+
+  /** Nearest persisted mid for (market, t) within ±MID_REPLAY_TOL_MS, or null. */
+  private midNearPersisted(market: string, t: number): number | null {
+    const row = this.db.prepare(`
+      SELECT mid FROM mid_history
+      WHERE market = ? AND ts BETWEEN ? AND ?
+      ORDER BY ABS(ts - ?) LIMIT 1
+    `).get(market, t - MID_REPLAY_TOL_MS, t + MID_REPLAY_TOL_MS, t) as { mid: number } | undefined;
+    return row ? row.mid : null;
+  }
+
+  /**
+   * Recompute every retained fill's markouts from the persisted mid curve —
+   * used by a markout-model bump whose stored mids remain valid
+   * (REMARK_FROM_MID_HISTORY). A horizon with no sample within tolerance stays
+   * null (excluded, never fabricated). Returns how many fills got ≥1 replayed
+   * horizon vs none.
+   */
+  remarkRetainedFills(): { remarked: number; nulled: number } {
+    const rows = this.db.prepare(`SELECT id, ts, market, side, exec_px FROM fills`).all() as Array<Record<string, any>>;
+    const upd = this.db.prepare(`UPDATE fills SET markouts_bps = ? WHERE id = ?`);
+    let remarked = 0, nulled = 0;
+    this.db.exec('BEGIN');
+    try {
+      for (const r of rows) {
+        const ss = r.side === 'buy' ? 1 : -1;
+        const marks: (number | null)[] = MARKOUT_HORIZONS.map((h) => {
+          const mid = this.midNearPersisted(r.market, r.ts + h * 1000);
+          return mid == null || mid <= 0 || r.exec_px <= 0 ? null : ss * (mid / r.exec_px - 1) * 1e4;
+        });
+        upd.run(JSON.stringify(marks), r.id);
+        if (marks.some((m) => m != null)) remarked++; else nulled++;
+      }
+      this.db.exec('COMMIT');
+    } catch (e) {
+      this.db.exec('ROLLBACK');
+      throw e;
+    }
+    return { remarked, nulled };
   }
 
   close(): void { this.db.close(); }
