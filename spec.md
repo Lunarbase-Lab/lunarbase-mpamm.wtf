@@ -2,20 +2,24 @@
 
 | | |
 |---|---|
-| **Status** | Draft v0.2 — open questions closed |
-| **Date** | 2026-06-29 |
-| **Scope** | Real-time dashboard for prop AMMs on Monad mainnet |
-| **Venues (v1)** | LFJ Liquidity Book v2.2 · Clober V2 |
+| **Status** | Draft v0.3 — propAMM-only, composable adapters |
+| **Date** | 2026-07-03 |
+| **Scope** | Real-time dashboard for **propAMMs** on Monad mainnet |
+| **Venues** | LFJ POE · Metric · Clober Vault (composable adapter registry) |
 | **CEX benchmark** | Bybit spot (`MONUSDT`) |
 | **Reference model** | [pamm.wtf](https://pamm.wtf) (information architecture, not implementation) |
 
-**Changelog v0.1 → v0.2** — Deployment fixed as a backend service. LFJ live quote = `LBPair.getSwapOut` only (standalone Quoter dropped). Historical volume derived **purely on-chain** (log replay), no venue REST dependency. CEX benchmark switched **Binance → Bybit** (Binance has no MON spot). Clober vault attribution verified: vault pools can be **non-stable**, tagged live via `LiquidityVault.Open`. Pair universe narrowed to **MON vs USD stables**. Taker fee = configurable constant.
+**Changelog v0.2 → v0.3** — **Venue layer refactored into a composable adapter registry** (`server/src/venues/`): one file per protocol implementing `VenueAdapter { venues(), discover(), backfill?(), quote?(), logSources(), decode() }` plus one line in `registry.ts`; the core (indexer, DB, API, frontend) is venue-agnostic and reads name/color/output from the adapter. **Scope narrowed to propAMM-only** (oracle/MM-priced venues, not passive curve DEXes or raw CLOBs): **LFJ Liquidity Book removed** (a passive bin DEX — price emerges from the curve, not a maker); **LFJ POE** (LFJ's oracle-anchored "Public Prop AMM") and **Metric** (oracle-anchored bin AMM) added. Data model generic, keyed by `venueId`; DB long-format (`daily_volume(utc_day, venue_id, …)`). Bybit reference is itself an adapter (`role: 'reference'`).
+
+**Changelog v0.1 → v0.2** — Deployment fixed as a backend service. Historical volume derived on-chain (log replay) + a one-time Clober subgraph seed, no venue REST dependency. CEX benchmark switched **Binance → Bybit** (Binance has no MON spot). Clober attribution scoped to the **vault** (propAMM) cut. Pair universe narrowed to **MON vs USD stables**. Taker fee = configurable constant.
 
 ---
 
 ## 1. Summary
 
-A read-only, real-time dashboard surfacing three primitives per prop-AMM venue on Monad: **historical filled volume**, **live execution quality** (realized cost vs. Bybit at a chosen notional), and a **live fill tape**. v1 covers LFJ Liquidity Book v2.2 (bin AMM) and Clober V2 (fully on-chain CLOB); the venue layer is an interface so a third venue is additive.
+A read-only, real-time dashboard surfacing three primitives per **propAMM** venue on Monad: **historical filled volume**, **live execution quality** (realized cost vs. Bybit at a chosen notional), and a **live fill tape / markouts**. The venue set is a **plug-in registry** — each protocol ships one self-contained adapter; the rest of the system never hardcodes a venue.
+
+**propAMM = maker/oracle-priced.** The dashboard is dedicated to venues where a market maker (or an oracle the maker anchors to) sets the price — not passive AMMs whose price emerges from a bonding curve, nor raw CLOBs. v0.3 venues: **LFJ POE**, **Metric**, and the **Clober Vault** (§3).
 
 The defining architectural fact: **fills are events, quotes are not**. Landed trades arrive as logs you subscribe to; a live quote ("what would 50k USDC get right now") exists only by simulating against current state via an on-chain read. No subgraph or REST endpoint returns a fresh quote. That split drives the system — a streamed path for volume + tape, a polled path for execution quality.
 
@@ -26,71 +30,61 @@ Built and run as a **backend service** (§7.D1): the service owns the RPC/WS/Byb
 ## 2. Goals / Non-Goals
 
 **Goals**
-- Per-venue daily filled volume in USD, UTC-day buckets, today partial — backfilled and advanced **entirely on-chain**.
+- Per-venue daily filled volume in USD, UTC-day buckets, today partial — advanced **on-chain** (persist-forward indexer), seeded from a subgraph where one exists.
 - Per-pair live execution quality for an **HFT audience**: realized cost in bps vs. executing the same size on Bybit as taker (fee-inclusive on both legs), refreshed at block cadence — 100% like-for-like.
-- A live, normalized fill tape across both venues.
-- One normalized data model (`Quote`, `Fill`) so the frontend is venue-agnostic.
-- Correct propAMM attribution on Clober: distinguish the oracle-vault (propAMM) cut from total venue flow.
+- A live, normalized fill tape + markouts across every venue.
+- One normalized data model (`QuoteRow`, `Fill`) keyed by `venueId` so the frontend is venue-agnostic.
+- A **composable venue layer**: any team adds a protocol via one adapter file + one registry line, zero core edits.
 
-**Non-Goals (v1)**
+**Non-Goals (v0.3)**
 - No trade execution — strictly read-only. No wallet, no order placement.
 - No chains other than Monad mainnet.
-- No venues beyond LFJ LB v2.2 and Clober V2 (but the abstraction must not preclude them).
-- No pairs beyond **MON vs USD stables** in v1 (§5; non-stable pairs need historical pricing, deferred).
-- No deep historical analytics (per-maker league tables, PnL). Daily volume is the only persisted history.
-- No on-chain depth chart in v1 (top-of-book mid + realized cost only; full depth is a fast-follow).
+- **No non-propAMM venues** — passive curve DEXes (e.g. LFJ Liquidity Book, Uniswap-style) and raw CLOBs are out of scope by design.
+- No pairs beyond **MON vs USD stables** (§5; non-stable pairs need historical pricing — the "market-universe-generic" work is deferred).
+- No deep historical analytics (per-maker league tables, PnL). Daily volume is the only persisted aggregate; fills are retained on a rolling window.
 
 ---
 
 ## 3. Background & domain model
 
-**propAMM, maker-priced.** The organizing premise: venues where the **maker** sets price, not the protocol. Both v1 venues qualify, for different structural reasons.
+**propAMM, maker-priced.** The organizing premise: venues where the **maker sets price** (usually anchored to an off-chain oracle), and the pool quotes around that fair value — as opposed to a passive AMM whose price is whatever the bonding curve + arbitrage make it. Each v0.3 venue qualifies for a different structural reason.
 
-- **LFJ Liquidity Book** — bin-based concentrated liquidity. Each bin is a fixed price; LPs choose which bins to fund. Quoting walks bins from the active bin outward; the dynamic fee is folded into `getSwapOut`.
+- **LFJ POE** — LFJ's "Public Prop AMM." An **oracle-anchored** pool: a per-pool ClapOracle feeds a fair price, market makers set price/ranges/fees, and depositors fund a **vault** that provides the liquidity (Concentrated-Liquidity Constant-Product / CLCP). The pool exposes an executable, fee-inclusive `getQuote`, so it prices like a maker desk, not a curve. Docs: `developers.lfj.gg/poe`.
 
-- **Clober V2** — fully on-chain CLOB. Verified, and load-bearing for attribution:
+- **Metric** — an **oracle-anchored bin AMM** (propAMM). Each pool has a per-pool `PriceProvider` feeding an off-chain oracle bid/ask; the router simulates a swap over the pool's binned liquidity around that provided price. Prices come from the oracle, not a passive curve.
 
-  > `BookManager.make` has **zero oracle dependency**. The maker passes `params.tick`, and that tick *is* the price. `onlyByLocker` is the V4-style lock; the only maker gate is a fee-routing whitelist on `provider` (may be zero). Anyone can rest a limit order at any tick.
-  >
-  > `SimpleOracleStrategy` lives in the liquidity-vault package, implements `IStrategy.computeOrders(key)`, and is consumed **only by the LiquidityVault to price its own orders**. It is not a hook and never sits in any book's make/take path.
+- **Clober Vault** — Clober V2 is a fully on-chain CLOB; the **LiquidityVault** is an oracle-driven maker that rests orders on the book priced by `SimpleOracleStrategy`. The dashboard tracks **only the vault's flow** (the propAMM cut), not independent-maker CLOB flow.
 
-  So oracle-priced liquidity is a **subset** (the vault's) of the book, not a venue property. Two makers coexist: the **LiquidityVault** as an oracle-driven maker, and **independent makers** at self-chosen ticks. Both satisfy the maker-priced criterion.
+  > `BookManager.make` has **zero oracle dependency** — the maker passes `params.tick` and that tick *is* the price; anyone can rest a limit order at any tick. `SimpleOracleStrategy` lives in the liquidity-vault package and is consumed **only by the LiquidityVault to price its own orders**; it never sits in any book's make/take path.
 
-**Vault attribution — verified (§9 closed).** `LiquidityVault.open(bookKeyA, bookKeyB, salt, strategy)` validates only that the two books are mirror images (`A.quote==B.base && A.base==B.quote`), that `base != quote`, and that neither has hooks. **There is no stablecoin restriction** — a vault pool can be any pair, including non-stable/non-stable, and the vault even handles native MON. Consequence: vault (propAMM) volume must be USD-priced the same way as venue volume, not assumed to have a stable leg (moot for the v1 MON/stable pairs, but true in general).
+  So oracle-priced liquidity is a **subset** (the vault's) of the book. The dashboard isolates that subset — see attribution below.
 
-The live tagging mechanism is fully on-chain: the vault emits
-```solidity
-event Open(bytes32 indexed key, BookId indexed bookIdA, BookId indexed bookIdB, bytes32 salt, address strategy);
-```
-on pool creation (vault `0xb09684…`). Collect `bookIdA`/`bookIdB` per pool → the set of **vault book IDs**. Any `Take` on a vault book ID is propAMM-cut flow; everything else is independent-maker flow. The dashboard surfaces this as a labeled toggle:
-- **Whole-venue** → all `Take` flow (`BookDayData.volumeUSD` as subgraph cross-check).
-- **Vault (propAMM) cut** → `Take` on vault book IDs (`PoolDayData.volumeUSD` as cross-check).
+> **Why LFJ Liquidity Book is excluded.** LB is a passive, permissionless bin DEX: LPs deposit into fixed-price bins and the pool's price is wherever the market has traded it (constant-sum per bin + arbitrage). No maker quotes it off an oracle — so it's a DEX primitive, not a propAMM. It was removed in v0.3. (LFJ's *propAMM* on Monad is POE, which we do track.)
 
-Vault maker `0xb09684…`, operator `0xcbd3c0…`, strategy `0x54cd…` — all confirmed against the canonical subgraph config and the liquidity-vault deployments table.
+**Clober vault attribution — verified.** `LiquidityVault.open(bookKeyA, bookKeyB, salt, strategy)` validates only that the two books are mirror images (`A.quote==B.base && A.base==B.quote`), that `base != quote`, and that neither has hooks — **no stablecoin restriction**, and native MON is supported. The vault emits `Open(key, bookIdA, bookIdB, salt, strategy)` on pool creation. Collect `bookIdA`/`bookIdB` per pool → the set of **vault book IDs**; any `Take` on a vault book ID is propAMM-cut flow. Vault maker `0xB09684…`, operator `0xCBd3C0…`, strategy `0x54cd…`.
 
 ---
 
-## 4. Product surface — the three views
+## 4. Product surface — the four tabs
 
-Borrow pamm.wtf's information architecture; build the UI custom (own identity, via the `frontend-design` guidance). Each view maps onto one data pipeline.
+Borrow pamm.wtf's information architecture; build the UI custom. Every tab renders purely from the venue registry (`state.venues`) — name, color, and grouping come from `VenueMeta`, nothing hardcoded.
 
-### 4.1 Volume (`/volume`)
-Stacked daily-notional-by-venue. Each landed swap contributes the USD value of its **stable quote leg**, bucketed by UTC day; today's bucket is partial and ticks up live. Because v1 targets **MON vs stables**, the quote leg *is* the stable amount → **exact USD with no price oracle**, for both history and live.
-- **History** + **live tail** both from on-chain log replay (§5.4) — same decoders, `getLogs` vs `eth_subscribe`.
-- Toggle: Clober *whole-venue* vs *vault-only* (§3).
+### 4.1 Execution (`[1]`)
+Rolling window (~60s) of live quotes per pair at a chosen notional, expressed as **realized cost in bps vs. Bybit**. For each pair × side × notional:
+1. **On-chain realized** — simulate the fill via the adapter's `quote()` (§5.1); `realized = quote-per-base`, venue-fee-inclusive.
+2. **Bybit realized** — walk the live Bybit `MONUSDT` book (§5.5) for the **same base size**, then overlay the **taker fee** (config constant). Realized-vs-realized at size — the only honest comparison for size-sensitive flow.
+3. **vs CEX (bps)** = realized on-chain buy vs Bybit-as-taker, sign-normalized so positive = on-chain worse.
 
-### 4.2 Exec (`/exec`) — HFT-grade, 100% like-for-like
-Rolling window (~60s) of live quotes per pair at a chosen notional, expressed as **realized cost in bps vs. Bybit**.
+Mark `filledFull = false` when the pool/book exhausts before the full notional (surfaced as a `PARTIAL` tag). The Bybit reference chip defaults **on** so the benchmark stays visible during propAMM quote gaps.
 
-For each pair × side × notional:
-1. **On-chain realized** — simulate the fill (§5.1); `realized = quote-per-base`, venue-fee-inclusive (LFJ `getSwapOut` and Clober `getExpectedOutput` both already net fees).
-2. **Bybit realized** — walk the live Bybit `MONUSDT` book (§5.5) for the **same base size**, then overlay the **taker fee** (config constant, §7.D7). This is realized-vs-realized at size, not mid-vs-mid — the only honest comparison for size-sensitive HFT flow.
-3. **Spread (bps)** = how much worse/better the on-chain venue executes vs. Bybit-as-taker, sign-normalized so positive = on-chain is worse.
+### 4.2 Volume (`[2]`)
+Stacked daily-notional-by-venue. Each landed swap contributes the USD value of its **stable quote leg**, bucketed by UTC day; today's bucket is partial and ticks up live. Because the universe is **MON vs stables**, the quote leg *is* the stable amount → **exact USD with no price oracle**, for both history and live. A per-venue summary (all-time, share, swaps) sits beside the chart.
 
-A secondary `vs mid` column uses the Bybit BBO mid (`(bestBid+bestAsk)/2`) for a fee-agnostic reference. Mark `filledFull = false` when bins/book exhaust before the full notional.
+### 4.3 Markouts (`[3]`)
+Live normalized fill tape + post-trade markouts: each fill's realized price vs the Bybit mid at T+{0s…}, aging in as it crosses each horizon. Fills whose realized price is approximated (no true execPx) are excluded from markouts rather than fabricating ~0 edge. Rows link to the tx on the explorer.
 
-### 4.3 Trade tape
-Live normalized fills across both venues — venue, pair, side, USD size, tx. The tape and the live volume tail consume the same `Fill` stream two ways.
+### 4.4 Leaderboard (`[4]`)
+Top swaps / participants over a selectable window, filtered to fills that carry a real execPx.
 
 ---
 
@@ -103,156 +97,152 @@ Live normalized fills across both venues — venue, pair, side, USD size, tx. Th
                   poll @ block cadence              live fills │                  log replay │ (history)
                        ┌──────▼───────┐                 ┌──────▼───────┐                ┌──────▼───────┐
                        │ Quote Poller │                 │ Fill Stream  │                │  Backfill    │
-                       │ LFJ getSwapOut│                │ LFJ Swap     │                │ getLogs +    │
-                       │ Clober        │                │ Clober Take  │                │ SAME         │
-                       │ getExpectedOut│                │ Router Swap  │                │ decoders     │
+                       │ adapter.quote│                 │ adapter.     │                │ adapter.     │
+                       │ (POE getQuote,│                │ decode() over│                │ backfill?()  │
+                       │  Metric quote,│                │ logSources() │                │ (Clober      │
+                       │  Clober view) │                │              │                │  subgraph)   │
                        └──────┬────────┘                └──────┬───────┘                └──────┬───────┘
-                        Quote[]│                          Fill[]│               historical Fill[]│
-                               ▼                                ▼                               ▼
-   ┌───────────────────────────────────── Aggregation / State ─────────────────────────────────────┐
-   │  in-mem quote matrix      │  volume bucketer (UTC-day, venue + vault scope) → DailyVolume       │
-   │  + current market state   │  + vault-bookId set (from LiquidityVault.Open)   │  fills ring      │
+                    QuoteRow[]│                          Fill[]│               historical days │
+                              ▼                                ▼                               ▼
+   ┌──────────────── Registry-driven Aggregation / State (venue-agnostic, keyed by venueId) ─────────┐
+   │  in-mem quote matrix      │  volume bucketer (UTC-day × venueId) → DailyVolume.byVenue           │
+   │  + current market state   │  + markout aging vs Bybit mid history      │  fills (SQLite + ring)  │
    └─────────────────┬───────────────────────────────────────────────────┬───────────────────────-─┘
               REST snapshots │                                      WS push │ quotes / fills / volume Δ
                        ┌─────▼────────────────────────────────────────────▼─────┐
-                       │                       Frontend                          │
-                       │            /volume        /exec        tape             │
+                       │                Frontend (reads state.venues)            │
+                       │        [1] Execution  [2] Volume  [3] Markouts  [4] LB  │
                        └─────────────────────────────────────────────────────────┘
 
    Bybit V5 WS (orderbook.50 / tickers, MONUSDT) ──► CEX book + BBO ──► exec realized-vs-realized + USD pricing
 ```
 
-### 5.1 Quote poller (exec view)
-Build a flat request set across pairs × sides × notionals and collapse it into a **single `eth_call` via Multicall3** per tick, at block cadence. Normalize to `Quote[]`.
-- **LFJ**: `LBPair.getSwapOut(amountIn, swapForY)` → `(amountInLeft, amountOut, fee)`, fee-inclusive. **This is the only LFJ quote path** — the standalone Quoter is not used, and `router-api.lfj.dev` is Avalanche-only.
-- **Clober**: `BookViewer.getExpectedOutput(SpendOrderParams{ id, limitPrice = MIN_PRICE, baseAmount, minQuoteAmount = 0, hookData = 0x })` → `(takenQuoteAmount, spentBaseAmount)`. `MIN_PRICE` walks the book with no early stop; `spentBase < amountIn` ⇒ exhausted.
-- A Clober market is a **pair of one-directional books**; quoting targets the book whose `base` == input token.
+### 5.0 The adapter contract
+`server/src/venues/adapter.ts`. Each venue is one adapter:
+```ts
+interface VenueAdapter {
+  venues(): VenueMeta[];                                  // 1+ display venues (id, name, color, kind, role)
+  discover(ctx): Promise<void>;                           // resolve pools/books; adapter holds its own state
+  backfill?(ctx, sinceUtc): Promise<{ days?; fills? }>;   // optional historical seed
+  quote?(ctx, sizesUsd): Promise<QuoteRow[]>;             // optional live bid/ask (Execution)
+  logSources(): LogSource[];                              // { key, address, events, kind: 'fills'|'state'|'attribution' }
+  decode(ctx, logs, tsOf, failed): Fill[];                // adapter decodes ITS logs → fills
+}
+interface ReferenceAdapter { meta(); start(); stop(); mid(); quote(sizesUsd); }   // Bybit, role:'reference'
+```
+`AdapterContext` hands over shared infra: `client` (viem), `getLogs` (chunked), `pricer`, `config`, `log`, `referenceMid()`. The **registry** (`registry.ts`) is the one wiring point: `ADAPTERS = [poe, cloberVault, metric]`, `REFERENCE = bybit`. `validateRegistry()` fails loud on a duplicate/invalid venue id or a non-single reference.
+
+### 5.1 Quote poller (Execution)
+Each adapter's `quote()` builds its request set and collapses it into **Multicall3 `eth_call`s** per tick, at block cadence. Normalized to `QuoteRow[]` (keyed by `venueId`), then annotated with the Bybit realized-vs-taker "vs CEX" columns.
+- **LFJ POE**: `OraclePool.getQuote(swapXtoY, amountIn)` → `(amountOut, actualAmountIn, feeIn, feeOut)` — an executable, fee-inclusive view (no separate oracle read needed). `actualAmountIn < amountIn` ⇒ pool exhausted (`filledFull = false`).
+- **Metric**: `PriceProvider.getBidAndAskPrice()` → `Router.quoteSwap(pool, zeroForOne, amountSpecified, priceLimitX64, bid, ask)` (Uniswap-v3-style signed deltas). Price-limit sentinels walk the full binned liquidity.
+- **Clober Vault**: `BookViewer.getExpectedOutput(SpendOrderParams{ id, limitPrice = MIN_PRICE, baseAmount, … })` → `(takenQuoteAmount, spentBaseAmount)`; `spentBase < amountIn` ⇒ exhausted. Per-side sanity band; one real side ⇒ a one-sided row.
 
 ### 5.2 Fill stream (tape + live volume)
-WebSocket `eth_subscribe(logs)` → one normalized `Fill`:
-- **LFJ `Swap`** — amounts are two `uint128` packed in one `bytes32` (`low128 = X`, `high128 = Y`); mask/shift, **no byte reversal** in JS. Input leg is whichever side is non-zero.
-- **Clober `Take(bookId, tick, unit)`** — **quote leg is exact**: `unit × unitSize`; no tick math for USD volume. (Base leg needs `unitToBase(unitSize, unit, priceFromTick)`, deferred — affects only the base amount in the tape, not volume.) Tag scope = vault if `bookId ∈ vault-bookId set`, else venue.
-- **Clober `RouterGateway.Swap`** — clean netted `(inToken, outToken, amountIn, amountOut, router, method)` for routed flow.
-- **Book cache** (`bookId → base/quote/unitSize`) from BookManager `Open` (backfill via `getLogs` from block `31662843`, kept fresh by subscription).
-- **Vault-bookId set** from `LiquidityVault.Open` (backfill + subscription).
+Each cycle the core `getLogs` the union of every adapter's `logSources()` over the pending range, then hands each adapter its logs to `decode()` → normalized `Fill`s (keyed by `venueId`).
+- **LFJ POE `Swap`** — `Swap(sender, recipient, swapXtoY, actualAmountIn, amountOut, feeIn, feeOut)`. Input is MON iff `swapXtoY == monIsX`; stable leg = USD; realized `execPx = usd/base`.
+- **Metric `Swap`** — `Swap(sender, recipient, exactInput, amount0Delta, amount1Delta, newTick, newPositionInBin)`. Signed deltas resolve side + amounts; realized `execPx`.
+- **Clober `Take(bookId, tick, unit)`** — quote leg exact = `unit × unitSize`; realized base leg from the Take tick (`execPx = 1.0001^(±tick)·10^(18−stableDec)`). Counted only if `bookId ∈ vault-bookId set`.
+- **Clober `RouterGateway.Swap`** — classifies Takes (category/`to`) by txHash; never a separate fill (no double-count).
+- **Book cache** (`bookId → base/quote/unitSize`) from `BookManager.Open`; **vault-bookId set** from `LiquidityVault.Open` — both scanned each tail and merged (`mergeNewBooks`).
 
 ### 5.3 Aggregation / state
-- **Quote matrix** — latest `Quote[]` in memory, replaced each poll, pushed to clients.
-- **Volume bucketer** — folds `Fill`s into `Map<venue, Map<scope, Map<utcDay, usd>>>` (`scope ∈ {venue, vault}`); today broadcast as deltas, closed days persisted.
-- **Fills ring buffer** — last N fills for tape cold-start.
-- **Market state** — per-pair reserves/active-bin (LFJ), best bid/ask (Clober); slower cadence than the quote poll.
+- **Quote matrix** — latest `QuoteRow[]` in memory, replaced each poll, pushed to clients.
+- **Volume bucketer** — folds `Fill`s into `DailyVolume.byVenue[venueId] = { usd, swaps }` per UTC day; today broadcast as deltas, closed days persisted. Swap counts come from an exact SQL aggregate (no proration).
+- **Markout aging** — join fills to the Bybit `mid()` history at each horizon; an `earliestMid` guard prevents fabricating elapsed-unobserved horizons.
+- **Fills** — persisted to SQLite (upsert-by-id so aging markouts update in place) + an in-memory ring for cold-start.
 
-### 5.4 Historical backfill — persist-forward indexer + subgraph seed
-The public RPC caps `getLogs` to short ranges, so deep on-chain replay from the Clober deploy block is impractical. Live mode is therefore a **persist-forward indexer**: the SQLite DB is the source of truth for daily-volume history — loaded on boot, advanced forward from decoded fills (LFJ `Swap`, Clober `Take`, priced via the stable quote leg, exact for MON/stable pairs), and resumed from `lastProcessedBlock` with a same-day `getLogs` gap-fill (a cross-midnight or cold start begins forward at the tip).
-- **Clober closed days** are seeded once from the **Goldsky subgraph** (`Σ bookDayDatas.volumeUSD` = whole-venue, scoped to the discovered MON/stable books; `Σ poolDayDatas.volumeUSD` = the vault/propAMM cut) — authoritative for days before the indexer ran, since the RPC can't reach them. LFJ has no keyless historical source, so it accumulates forward from first run.
-- Fills carry a **deterministic `txHash:logIndex` id** and are counted idempotently, and daily volume + the `lastProcessedBlock` cursor + fills are persisted in **one transaction**, so a re-tail / gap-fill / restart can never double-count (H1).
-- Chunk `getLogs` block ranges (the provider caps them).
-- Historical USD for non-stable pairs would need a historical price feed → out of v1 scope (consistent with the MON/stable focus).
+### 5.4 Historical backfill — persist-forward indexer + optional seed
+The public RPC caps `getLogs` to short ranges, so deep replay at the tip is impractical there. Live mode is a **persist-forward indexer**: SQLite is the source of truth for daily-volume history — loaded on boot, advanced forward from decoded fills (priced via the stable quote leg, exact for MON/stable), resumed from `lastProcessedBlock` with a same-day `getLogs` gap-fill.
+- **Fail-closed ingest**: any error in a tail cycle — a `fills`/`state` log source, the block-timestamp lookup, or an adapter `decode()` — **holds the global cursor** and retries the exact range; nothing advances/ingests/emits partially. Fills carry a deterministic `venue-txHash-logIndex` id; daily volume + cursor + fills persist in **one transaction** (idempotent re-tail).
+- **Clober** closed days are seeded once via `backfill()` from the **Goldsky subgraph** (`Σ BookDayData.volumeUSD` = venue, scoped to discovered MON/stable books; `Σ PoolDayData.volumeUSD` = the vault cut).
+- **POE and Metric** currently have **no `backfill()`** — no keyless deep-history source is wired, so they **accrue forward from first run**. Backfilling them is a known follow-up (§7.D8): either a protocol subgraph (if one exists) or an on-chain `Swap` log replay over an archive RPC, aggregated into `DailyVolume[]` (§ "Backfill design").
 
 ### 5.5 Bybit benchmark + pricing
-A single `UsdPricer` shared by the poller (USD→token notional sizing) and the stream (token→USD volume).
-- Stables (USDC, USDT0, AUSD, USD1) pegged to $1.
-- MON USD price from the **Bybit `MONUSDT`** feed (also the exec benchmark); self-bootstraps from each venue's stable-quoted mid as a fallback.
-- **Bybit V5 market data** (servers in Singapore; public WS not rate-limited):
-  - WS `wss://stream.bybit.com/v5/public/spot`; subscribe `{"op":"subscribe","args":["orderbook.50.MONUSDT","tickers.MONUSDT"]}`. `orderbook.{1,50,200,1000}` (depth-50 pushes ~20ms) maintained snapshot+delta (reset local book on each new snapshot); `tickers.MONUSDT` (~50ms) for BBO.
-  - REST `GET /v5/market/orderbook?category=spot&symbol=MONUSDT&limit=50` for cold-start snapshot; `GET /v5/market/instruments-info?category=spot&symbol=MONUSDT` for tick/lot size.
-  - Exec walks the maintained book for the requested base size → Bybit realized price; overlay the taker fee constant.
+A single `UsdPricer` shared by the poller (USD→token sizing) and the stream (token→USD volume).
+- Stables (USDC, USDT0, AUSD, USD1) pegged to $1; MON USD price from the **Bybit `MONUSDT`** feed (also the exec benchmark).
+- **Bybit V5** WS `wss://stream.bybit.com/v5/public/spot` — `orderbook.50.MONUSDT` (snapshot+delta) + `tickers.MONUSDT` (BBO); REST for cold-start snapshot + tick/lot size. Exec walks the maintained book for the requested base size, overlays the taker-fee constant.
 
 ---
 
 ## 6. Data model & API
 
-### 6.1 Core types (scaffolded)
+### 6.1 Core types (generic, keyed by `venueId`)
 ```ts
-Quote {
-  protocol; market; side;          // 'buy'|'sell' of base
-  notionalUsd; inToken; outToken; amountIn; amountOut;
-  feeRaw?;                          // LFJ only
-  realizedPrice; midPrice; spreadBps; filledFull; ts;
-  // exec adds: cexRealizedPrice; cexSpreadBps (Bybit, fee-inclusive)
-}
+VenueMeta { id; name; color{light,dark}; kind:'amm'|'clob'|'vault'|'cex'; role:'venue'|'reference'; taker? }
+QuoteRow  { venueId; market; sizeUsd; bidBps; askBps; bidPx; askPx; spreadBps;
+            filledFull; oneSided?; feeBps; cexAskBps?; cexBidBps?; ts }
+Fill      { id; venueId; market; side; category; usd; baseAmount; execPx; pxApprox?;
+            txHash; to; pool; blockNumber; ts; markoutsBps[] }
+DailyVolume { utcDay; partial; byVenue: Record<venueId,{ usd; swaps }> }
+```
+`FillCategory = 'DIRECT'|'ROUTER'|'AGG'|'CEX/DEX'|'UNKNOWN'`. (The old `protocol`/`source`/`scope` unions and per-venue `DailyVolume` columns are **removed** — everything is keyed by `venueId`.)
 
-Fill {
-  protocol; source;                 // 'lfj-swap'|'clober-take'|'clober-router'
-  market?; txHash; logIndex; blockNumber; trader;
-  inToken; inAmount; outToken; outAmount; feeRaw?;
-  notionalUsd?; ts?;
-  // clober adds: scope ∈ {venue, vault}
-}
+### 6.2 Persisted (SQLite, long format)
 ```
-
-### 6.2 Persisted
+meta(key, value)                                   -- schema_version + lastProcessedBlock cursor
+daily_volume(utc_day, venue_id, usd, swaps)        -- PK (utc_day, venue_id)
+day_meta(utc_day, partial)
+fills(id, venue_id, …, markouts…)                  -- upsert-by-id; ~35-day retention prune
 ```
-DailyVolume(protocol, utcDay, scope, volumeUsd)   scope ∈ {venue, vault}
-```
-v1 storage = SQLite (single-writer service, low cardinality). Promote to Postgres/Timescale only if per-pair or intraday series land. Live state stays in memory.
+Adding/removing a venue never changes the table shape (it's just different `venue_id` values). `schema_version` gates a **fresh-start reset** on structural change — see "Avoiding the reset" for the plan to make venue changes non-destructive.
 
 ### 6.3 API contract (service → frontend)
 ```
-GET  /api/markets                       tracked markets + current state snapshot
-GET  /api/quotes                        latest quote matrix snapshot (incl. Bybit cols)
-GET  /api/volume?from=&to=&scope=        daily series per venue/scope
-WS   /stream                            channels: quotes (full matrix/poll),
-                                         fills (per fill), volume (today delta/venue/scope)
+GET  /api/venues                        the venue registry (VenueMeta[]) — UI renders from this
+GET  /api/markets                       tracked markets + current state snapshot (incl. venues)
+GET  /api/quotes                        latest quote matrix (incl. Bybit "vs CEX" cols)
+GET  /api/volume?from=&to=              daily series (DailyVolume.byVenue)
+GET  /api/fills?days=&limit=            historical fill window (markouts)
+WS   /stream                            channels: state, quotes, fill, volume
 ```
 Frontend renders purely off these — never touches the RPC, subgraph, or Bybit directly.
 
 ---
 
-## 7. Key decisions (open questions closed)
+## 7. Key decisions
 
 | # | Decision | Rationale / trade-off |
 |---|---|---|
-| **D1** | **Backend service**, thin frontend | One shared set of RPC/WS/Bybit connections vs. every browser hammering an RPC each block; tip-accurate quoting needs a trusted node not exposed client-side; on-chain history needs a persistent writer. Cost: a service to run. |
-| **D2** | LFJ live quote = **`LBPair.getSwapOut`** only | Standalone Quoter dropped (the published one is tagged "LFJ v1"; routing unverified and unnecessary). Per-pair `getSwapOut` is canonical and fee-inclusive. |
-| **D3** | History = **on-chain log replay** | No `api.lfj.dev`/subgraph dependency. Same decoders as the live stream; exact USD via the stable quote leg for MON/stable pairs. Cost: non-stable history needs a price feed (out of v1 scope). |
-| **D4** | Clober attribution = **vault-bookId tagging** via `LiquidityVault.Open` | Vault pools verified non-stable-capable, so USD-price like venue flow; toggle vault vs whole-venue. Contracts are primary source, subgraph is cross-check. |
-| **D5** | Pair universe = **MON vs USD stables** | v1 target. Track WMON (and native MON where a venue uses it) vs USDC/USDT0, whichever each venue lists. Discovery filters Open logs / factory pairs to `{WMON, MON-native, USDC, USDT0}`. |
-| **D6** | CEX benchmark = **Bybit spot `MONUSDT`** | Binance has no MON spot; Bybit carries the largest MON spot volume. V5 WS book + BBO (§5.5). |
-| **D7** | Taker fee = **config constant (bps)** | HFT accuracy ⇒ set to *your* Bybit tier, not a universal. Default = non-VIP taker 0.10% (10 bps); VIP/PRO tiers and the MNT fee-discount lower it (Appendix D). Realized-vs-realized at size, fee on the CEX leg. |
+| **D1** | **Backend service**, thin frontend | One shared set of RPC/WS/Bybit connections; tip-accurate quoting needs a trusted node not exposed client-side; on-chain history needs a persistent writer. |
+| **D2** | Venues = **composable adapter registry** | One file + one registry line per protocol; core is venue-agnostic. Enables community PRs and keeps the model generic (`venueId`). |
+| **D3** | Scope = **propAMM-only** | Oracle/MM-priced venues only (POE, Metric, Clober Vault). Passive curve DEXes (incl. LFJ Liquidity Book) and raw CLOBs are excluded by design. |
+| **D4** | History = **persist-forward indexer** + optional per-adapter `backfill()` | SQLite is the source of truth; Clober seeds from its subgraph; POE/Metric accrue forward until a backfill source is wired (D8). |
+| **D5** | Clober attribution = **vault-bookId tagging** via `LiquidityVault.Open` | Only the oracle-vault (propAMM) cut counts; independent-maker CLOB flow is excluded. |
+| **D6** | Pair universe = **MON vs USD stables** | Quote leg = stable amount ⇒ exact USD with no oracle. Non-stable/multi-asset pools (e.g. POE/Metric WBTC, WETH) need the market-universe-generic work (D8). |
+| **D7** | CEX benchmark = **Bybit spot `MONUSDT`**, taker fee = config constant | Binance has no MON spot. Realized-vs-realized at size; taker fee defaults to non-VIP 10 bps, set to the operator's actual rate. |
+| **D8** | **Deferred** | (a) POE/Metric backfill; (b) non-stable / multi-asset market universe; (c) making venue changes non-reset (below). |
 
 ---
 
 ## 8. Reliability & operations
 
-- **RPC requirements**: node must support `eth_call` (state/block context for tip accuracy), `getLogs`, `eth_subscribe`. Public endpoints generally won't — assume a trusted node.
-- **`getLogs` range caps**: chunk the `Open`/history backfill (from block `31662843`) if the provider caps ranges.
-- **WS resilience (both Monad + Bybit)**: auto-reconnect with backoff; on Monad reconnect, replay missed fills via `getLogs` from the last seen block so volume buckets don't gain a gap; on Bybit reconnect, re-snapshot the book.
-- **Quote poll failures**: `allowFailure` per multicall entry so one bad market doesn't blank the matrix; surface stale-quote age in the UI.
-- **Sanity checks**: chain id (`143`), Multicall3 at the canonical address, native-MON-vs-WMON usage per venue/book (LFJ pairs are ERC20 ⇒ WMON; Clober supports native MON via `isNative()`).
-- **Backpressure**: tape/volume are append-only; the quote matrix is replace-on-poll, so a slow client drops to the latest snapshot.
-
----
-
-## 9. Remaining verifications
-
-Down to runtime/operational checks — no design forks left.
-1. **Exact Bybit VIP/PRO per-tier numbers** — confirm against the logged-in fee page; only sets the default (each trader overrides D7 with their own rate).
-2. **Multicall3 deployment** at the canonical address on Monad mainnet.
-3. **Specific MON-pair addresses / book IDs** — resolved by discovery at startup (not hardcoded): LFJ via factory pairs filtered to the token set; Clober via `Open` logs filtered to the token set.
-4. **Native MON vs WMON** per venue/book — confirm at discovery (affects symbol mapping for the Bybit leg and decimals).
-
----
-
-## 10. Milestones
-
-- **M0 — Data layer (done).** Multicall quote poller + WS fill stream + normalized types + discovery + live volume bucketer. Runnable scaffold delivered; pending local `npm install && typecheck` and a trusted RPC.
-- **M1 — Service.** Aggregation/state + REST/WS API + SQLite history + on-chain backfill + vault-bookId tagging + Bybit feed + reconnect/replay resilience.
-- **M2 — Frontend.** The three views against the API (pull `frontend-design`): stacked volume chart (venue/vault toggle), exec table with the Bybit realized-vs-realized column, live tape.
-- **M3 — Polish.** Depth chart, Clober tick→price base leg, non-stable pair pricing, third-venue interface validation.
+- **RPC requirements**: `eth_call`, `getLogs`, `eth_subscribe`/polling. Public endpoints cap `getLogs` (~100 blocks) ⇒ persist-forward, chunked ranges. A deep backfill needs an archive/high-limit RPC.
+- **Fail-closed indexing**: a failed required/state log source, block-timestamp lookup, or `decode()` holds the cursor and retries; `tick()` is re-entrancy-guarded; discovery is merge-safe (a factory read never shrinks the tailed set) and `logSources()` throws until discovered.
+- **Boot**: live boot fail-fasts on a chain sanity check (chain id `143`, Multicall3 present) so a supervisor restarts it. `DATA_SOURCE=sim` is the explicit offline simulator (registry-driven, same generic contract).
+- **Schema**: `schema_version` mismatch currently drops + rebuilds the data tables (Clober re-seeds, others accrue forward). See "Avoiding the reset" for the non-destructive plan.
+- **Deploy**: Render native GitHub auto-deploy from `main` (health-gated, zero-downtime); persistent disk holds the SQLite DB.
 
 ---
 
 ## Appendix A — Verified contracts (Monad mainnet)
 
-**LFJ Liquidity Book v2.2**
+**LFJ POE** (Public Prop AMM — `developers.lfj.gg/poe`)
 | Contract | Address |
 |---|---|
-| LBFactory | `0xb43120c4745967fa9b93E79C149E66B0f2D6Fe0c` |
-| LBRouter | `0x18556DA13313f3532c54711497A8FedAC273220E` |
-| LBPair | deployed per-pair by the factory |
+| OraclePoolFactory | `0x78120F2C0EBF0cc8B7E7749e62D36e6523dD711D` |
+| Router | `0x5a2D87017465C7e91AdB87bc2181394C612Fa1bd` |
+| ClapOracle | `0x33176bE288E54c440941d407dF33456A23eDE078` |
+| OraclePool (impl) | `0xc83a1F88b4a9a71806C52fa00669f2735a9d359b` |
+| WMON/USDC pool (tracked) | `0x02A8A16613a421EabaD6861fF6d8159f6D5EDB8f` |
+| AUSD/USDC pool (out of scope — stable/stable) | `0x06C526964bFB06c6BAAC17fF91a36EC671382171` |
 
-(Standalone Quoter intentionally unused — D2.)
+**Metric** (oracle-anchored bin AMM)
+| Contract | Address |
+|---|---|
+| Router (`MetricOmmSwapRouter`) | `0xaF9ADa6b6eC7993CE146f6c0bF98f7211CDfD3e5` |
+| WMON/USDC pool (tracked) | `0xFA32f9ec28787d1F9C5BA5c39e54e59984FEF3f0` |
+| PriceProvider | per-pool (resolved via `getImmutables`) |
 
 **Clober V2**
 | Contract | Address |
@@ -261,10 +251,9 @@ Down to runtime/operational checks — no design forks left.
 | BookViewer | `0xe424c211e2Ed8a5B6d1C57FA493C41715568D238` |
 | Controller | `0x19b68a2b909D96c05B623050C276FBD457De8e83` |
 | RouterGateway | `0x7B58A24C5628881a141D630f101Db433D419B372` |
-| LiquidityVault (Rebalancer, propAMM maker) | `0xB09684f5486d1af80699BbC27f14dd5A905da873` |
+| LiquidityVault (propAMM maker) | `0xB09684f5486d1af80699BbC27f14dd5A905da873` |
 | SimpleOracleStrategy | `0x54cd5332b1689b6506Ce089DA5651B1A814e9E7D` |
 | Operator | `0xCBd3C0B81A9a36356a3669A7f60A0d2F0846195B` |
-| Wrapped6909Factory | `0x9050b0A12D92b8ba7369ecc87BcD04643Fa0CfDB` |
 
 **Tokens / infra**
 | Token | Address |
@@ -274,80 +263,55 @@ Down to runtime/operational checks — no design forks left.
 | AUSD | `0x00000000efe302beaa2b3e6e1b18d08d69a9012a` |
 | USD1 | `0x111111d2bf19e43c34263401e0cad979ed1cdb61` |
 | WMON | `0x3bd359c1119da7da1d913d1c4d2b7c461115433a` |
-| Multicall3 (verify deployed) | `0xcA11bde05977b3631167028862bE2a173976CA11` |
+| Multicall3 | `0xcA11bde05977b3631167028862bE2a173976CA11` |
 
 ## Appendix B — Data sources
 
-**Primary: on-chain** (RPC `eth_call` / `eth_subscribe` / `getLogs`). Live quotes, live fills, and historical volume all derive from chain state + logs (D3).
+**Primary: on-chain** (RPC `eth_call` / logs). Live quotes, live fills, and forward volume all derive from chain state + logs.
 
-**Optional cross-checks (not dependencies):**
-- LFJ analytics: `GET https://api.lfj.dev/v1/dex/analytics/monad?version=v2.2` (header `x-lfj-api-key`).
-- Clober subgraph (Goldsky, public): `https://api.goldsky.com/api/public/project_clsljw95chutg01w45cio46j0/subgraphs/v2-subgraph-monad/latest/gn` (fallback Ormi: `…/27ad58eb-…/subgraphs/v2-subgraph-monad/latest/gn`). Entities incl. `BookDayData`, `PoolDayData`, `Take`, `Pool`, `Book`.
+**Seed / cross-check:**
+- **Clober subgraph** (Goldsky, public): `https://api.goldsky.com/api/public/project_clsljw95chutg01w45cio46j0/subgraphs/v2-subgraph-monad/latest/gn`. Entities incl. `BookDayData`, `PoolDayData`, `Take`, `Pool`, `Book`. Used by `backfill()` for closed-day volume.
+- POE/Metric: no keyless historical source wired yet (§5.4, D8).
 
-## Appendix C — Event signatures & quote interfaces (verified against source)
+## Appendix C — Event signatures & quote interfaces (verified on-chain)
 
-**LFJ** — `BookId/Tick` n/a
+**LFJ POE** (OraclePool)
 ```solidity
-function getSwapOut(uint128 amountIn, bool swapForY)
-  view returns (uint128 amountInLeft, uint128 amountOut, uint128 fee);
-// also: getSwapIn, getActiveId, getReserves, getTokenX/Y, getBinStep, getPriceFromId
-
-event Swap(address indexed sender, address indexed to, uint24 id,
-  bytes32 amountsIn, bytes32 amountsOut, uint24 volatilityAccumulator,
-  bytes32 totalFees, bytes32 protocolFees);
-// amounts/fees: two uint128 packed in one bytes32 — low128 = X, high128 = Y; no reversal in JS
-
-// LBFactory: getNumberOfLBPairs(), getLBPairAtIndex(uint256),
-//   event LBPairCreated(address indexed tokenX, address indexed tokenY, uint256 indexed binStep, address LBPair, uint256 pid)
+function getPool(address tokenX, address tokenY) view returns (address);           // OraclePoolFactory
+function getTokens() view returns (address tokenX, address tokenY);
+function getQuote(bool swapXtoY, uint256 amountIn)
+  view returns (uint256 amountOut, uint256 actualAmountIn, uint256 feeIn, uint256 feeOut);
+event Swap(address indexed sender, address indexed recipient, bool indexed swapXtoY,
+  uint256 actualAmountIn, uint256 amountOut, uint256 feeIn, uint256 feeOut);
+// price read (unused by the adapter — getQuote is executable): getCurrentPrice(bytes32,uint,uint) → (bidE24, askE24)
 ```
 
-**Clober** — `BookId = uint192`, `Tick = int24`, `MAX_TICK = 524287`
+**Metric** (oracle-anchored bin AMM)
 ```solidity
-// BookViewer
-function getExpectedOutput(SpendOrderParams params)   // spend base -> take quote
-  view returns (uint256 takenQuoteAmount, uint256 spentBaseAmount);
+function getImmutables() view returns (address factory, address priceProvider, address token0, address token1, …);
+function getBidAndAskPrice() view returns (uint128 bidX64, uint128 askX64);         // PriceProvider
+function quoteSwap(address pool, bool zeroForOne, int128 amountSpecified,
+  uint128 priceLimitX64, uint128 bidPriceX64, uint128 askPriceX64)
+  returns (int128 amount0Delta, int128 amount1Delta);                              // Router
+event Swap(address sender, address recipient, bool exactInput,
+  int128 amount0Delta, int128 amount1Delta, int16 newTick, uint104 newPositionInBin);
+```
+
+**Clober** — `BookId = uint192`, `Tick = int24`
+```solidity
+function getExpectedOutput(SpendOrderParams params) view returns (uint256 takenQuoteAmount, uint256 spentBaseAmount);
 //   SpendOrderParams = (uint192 id, uint256 limitPrice, uint256 baseAmount, uint256 minQuoteAmount, bytes hookData)
-function getExpectedInput(TakeOrderParams params)
-  view returns (uint256 takenQuoteAmount, uint256 spentBaseAmount);
-//   TakeOrderParams  = (uint192 id, uint256 limitPrice, uint256 quoteAmount, uint256 maxBaseAmount, bytes hookData)
-function getLiquidity(BookId id, Tick from, uint256 n)
-  view returns (Liquidity[] /* { Tick tick; uint64 depth } */);
-// walk-whole-book sentinels: MIN_PRICE = 1350587,
-//   MAX_PRICE = 4647684107270898330752324302845848816923571339324334
-
-// BookManager
-event Take(uint192 indexed bookId, address indexed user, int24 tick, uint64 unit);
-//   quote leg is EXACT = unit * unitSize (no tick math for USD volume)
+event Take(uint192 indexed bookId, address indexed user, int24 tick, uint64 unit);      // quote leg exact = unit*unitSize
 event Open(uint192 indexed id, address indexed base, address indexed quote,
-  uint64 unitSize, uint24 makerPolicy, uint24 takerPolicy, address hooks);
-event Make(uint192 indexed bookId, address indexed user, int24 tick,
-  uint256 orderIndex, uint64 unit, address provider);
-
-// RouterGateway
+  uint64 unitSize, uint24 makerPolicy, uint24 takerPolicy, address hooks);              // BookManager
 event Swap(address indexed user, address indexed inToken, address indexed outToken,
-  uint256 amountIn, uint256 amountOut, address router, bytes4 method);
-
-// LiquidityVault — propAMM-cut tagging: collect bookIdA/bookIdB per pool
-event Open(bytes32 indexed key, BookId indexed bookIdA, BookId indexed bookIdB,
-  bytes32 salt, address strategy);
-//   open(bookKeyA, bookKeyB, salt, strategy) validates: A.quote==B.base && A.base==B.quote,
-//   base != quote, no hooks. NO stablecoin restriction; native MON supported.
+  uint256 amountIn, uint256 amountOut, address router, bytes4 method);                  // RouterGateway
+event Open(bytes32 indexed key, uint192 indexed bookIdA, uint192 indexed bookIdB,
+  bytes32 salt, address strategy);                                                      // LiquidityVault (vault-cut tagging)
 ```
 
 ## Appendix D — Bybit V5 (CEX benchmark)
 
-**Symbol** `MONUSDT` (spot, Main Trading Zone, listed 2025-11-24).
+**Symbol** `MONUSDT` (spot). WS `wss://stream.bybit.com/v5/public/spot` — `orderbook.50.MONUSDT` (snapshot+delta) + `tickers.MONUSDT` (BBO); REST `GET /v5/market/orderbook` + `/v5/market/instruments-info`. Mid = `(bestBid + bestAsk)/2`.
 
-**Market data**
-- WS `wss://stream.bybit.com/v5/public/spot` — `orderbook.{1,50,200,1000}.MONUSDT` (snapshot+delta; depth-50 ~20ms), `tickers.MONUSDT` (~50ms, BBO). Public WS is not rate-limited.
-- REST `GET /v5/market/orderbook?category=spot&symbol=MONUSDT&limit=[1..200]`; `GET /v5/market/instruments-info?category=spot&symbol=MONUSDT` (tick/lot size). Mid = `(bestBid + bestAsk)/2`.
-
-**Spot fee schedule** (crypto-crypto; confirm exact tiers when logged in — D7/§9.1)
-| Tier | Taker | Maker |
-|---|---|---|
-| Non-VIP (default) | 0.100% | 0.100% |
-| VIP 1 (representative) | ~0.080% | ~0.060% |
-| Top retail VIP (representative) | ~0.030% | ~0.010% |
-| PRO / market-maker | lower; maker rebates possible | — |
-
-Paying fees with MNT applies an additional discount. The exec view's taker constant defaults to non-VIP 10 bps and should be set to the operator's actual taker rate.
+**Spot taker fee** defaults to non-VIP **10 bps**; set the exec view's taker constant to the operator's actual rate (VIP/PRO tiers and the MNT discount lower it).
