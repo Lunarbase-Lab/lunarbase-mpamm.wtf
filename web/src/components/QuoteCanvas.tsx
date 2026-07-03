@@ -65,11 +65,15 @@ export function QuoteCanvas() {
 
     ctx.font = '9px "JetBrains Mono", monospace';
     ctx.lineWidth = 1;
+    // adaptive precision so a label always FITS the axis gutter — toFixed(5) on a
+    // 5-digit price (BTC ~62,000) is 11 chars, wider than padL, and the leading
+    // digit clips off-canvas ("62210.02" rendered as "2210.02").
+    const fmtPx = (p: number) => (p >= 1000 ? p.toFixed(1) : p >= 1 ? p.toFixed(3) : p.toFixed(5));
     for (let g = 0; g <= 4; g++) {
       const p = mn + (mx - mn) * g / 4, y = Y(p);
       ctx.strokeStyle = ch.grid;
       ctx.beginPath(); ctx.moveTo(padL, y); ctx.lineTo(w - padR, y); ctx.stroke();
-      ctx.fillStyle = ch.label; ctx.textAlign = 'right'; ctx.fillText(p.toFixed(5), padL - 6, y + 3);
+      ctx.fillStyle = ch.label; ctx.textAlign = 'right'; ctx.fillText(fmtPx(p), padL - 6, y + 3);
     }
     ctx.textAlign = 'center';
     // time axis spans (N-1) samples at the service's real quote cadence (audit I6).

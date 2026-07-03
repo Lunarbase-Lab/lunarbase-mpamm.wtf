@@ -1,7 +1,7 @@
 import { createContext, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import type { MarketState, QuoteSnapshot, QuoteRow, Fill, DailyVolume, VenueMeta } from '@shared';
 import { pairOf, cexForBase } from '@shared';
-import { fetchMarkets, fetchFills, connectStream } from './lib/api';
+import { fetchMarkets, fetchFills, fetchQuoteHistory, connectStream } from './lib/api';
 import type { Theme } from './theme';
 
 /** Read the persisted theme, matching the pre-paint script in index.html.
@@ -63,17 +63,6 @@ export const useDashboard = (): Dashboard => {
 /** venue ids carried by the current registry — drives the per-venue buffers. */
 const venueIds = (state: MarketState | null): string[] => (state?.venues ?? []).map((v) => v.id);
 
-const emptySeries = (ids: string[]): Record<string, Series> => {
-  const o: Record<string, Series> = {};
-  for (const id of ids) o[id] = { bid: [], ask: [] };
-  return o;
-};
-const emptySamples = (ids: string[]): Record<string, number[]> => {
-  const o: Record<string, number[]> = {};
-  for (const id of ids) o[id] = [];
-  return o;
-};
-
 function rowFor(q: QuoteSnapshot | null, venueId: string, market: string, size: number): QuoteRow | undefined {
   return q?.rows.find((r) => r.venueId === venueId && r.market === market && r.sizeUsd === size);
 }
@@ -100,9 +89,17 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
   const idsRef = useRef<string[]>([]);
   const selRef = useRef({ pair: ui.pair, size: ui.size });
   selRef.current = { pair: ui.pair, size: ui.size };
+  // what the buffers currently CONTAIN ("pair|size"). pushSnapshot re-keys
+  // synchronously on mismatch, so a WS tick arriving between a pair switch and
+  // the reseed effect can never append new-pair prices onto old-pair samples
+  // (the mixed-buffer scale flicker).
+  const seedKeyRef = useRef('');
+  const seedFetchRef = useRef(''); // key with a history fetch in flight (dedupe)
+  const keyOf = () => `${selRef.current.pair}|${selRef.current.size}`;
 
   const pushSnapshot = (q: QuoteSnapshot) => {
     quotesRef.current = q;
+    if (seedKeyRef.current !== keyOf()) reseed(); // sync re-key — mixed buffers impossible
     const { pair, size } = selRef.current;
     for (const id of idsRef.current) {
       const r = rowFor(q, id, pair, size);
@@ -124,11 +121,14 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
     }
   };
 
-  // reseed the canvas buffers from the current matrix so a freshly-selected
-  // pair/size renders a full chart immediately (DCLogic.reseedQuotes).
+  // reseed the canvas buffers for the current pair/size: clear + a flat pre-fill
+  // from the current matrix as an instant fallback, then replace it with the
+  // server's REAL last-60s quote history as soon as it arrives (so the chart
+  // never fabricates a flat minute — user feedback).
   const reseed = () => {
     const q = quotesRef.current;
     const ids = idsRef.current;
+    seedKeyRef.current = keyOf();
     // Mutate the buffers IN PLACE (keep the seriesRef/samplesRef object references
     // stable) so `d.series` — captured in the api memo — can never point at a stale
     // pre-reseed object. Clear every buffer, drop de-registered venues, then refill.
@@ -142,13 +142,53 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
         const r = rowFor(q, id, pair, size);
         if (!r) continue;
         for (let i = 0; i < N; i++) {
-          // flat pre-fill (no jitter) — the chart is a discrete STEP chart, so the
-          // pre-fill holds flat and real streaming quotes step it (no smoothing).
+          // flat pre-fill fallback (no jitter) — holds the scale correct until the
+          // real history lands; real streaming quotes step it (no smoothing).
           if (r.bidPx > 0) S[id].bid.push(r.bidPx);
           if (r.askPx > 0) S[id].ask.push(r.askPx);
         }
       }
     }
+    void seedFromHistory(seedKeyRef.current);
+  };
+
+  // replace the flat pre-fill with the server's retained real quote ticks for
+  // this (pair, size). Stale-guarded: a slow response for a pair the user has
+  // already left is discarded (seedKey moved on).
+  const seedFromHistory = async (key: string) => {
+    if (seedFetchRef.current === key) return; // already fetching this key
+    seedFetchRef.current = key;
+    try {
+      const [pair, sizeS] = key.split('|');
+      const hist = await fetchQuoteHistory(pair, Number(sizeS));
+      if (seedKeyRef.current !== key || !hist.length) return;
+      const ids = new Set(idsRef.current);
+      const S = seriesRef.current, SM = samplesRef.current;
+      for (const id of idsRef.current) { const s = (S[id] ??= { bid: [], ask: [] }); s.bid.length = 0; s.ask.length = 0; (SM[id] ??= []).length = 0; }
+      for (const q of hist) {
+        for (const r of q.rows) {
+          if (!ids.has(r.venueId)) continue;
+          const s = (S[r.venueId] ??= { bid: [], ask: [] });
+          if (r.bidPx > 0) { s.bid.push(r.bidPx); if (s.bid.length > N) s.bid.shift(); }
+          if (r.askPx > 0) { s.ask.push(r.askPx); if (s.ask.length > N) s.ask.shift(); }
+          if (!r.oneSided && r.filledFull && r.bidPx > 0 && r.askPx > 0) {
+            const smp = (SM[r.venueId] ??= []);
+            smp.push(r.spreadBps);
+            if (smp.length > 600) smp.shift();
+          }
+        }
+      }
+      // The canvas indexes left→right with "now" at the right edge, so a short
+      // ring (young server) must be LEFT-padded to the window: hold the earliest
+      // observed value flat into the unobserved past, real data ends at now.
+      for (const id of idsRef.current) {
+        const s = S[id];
+        if (s.bid.length && s.bid.length < N) s.bid.unshift(...Array(N - s.bid.length).fill(s.bid[0]));
+        if (s.ask.length && s.ask.length < N) s.ask.unshift(...Array(N - s.ask.length).fill(s.ask[0]));
+      }
+      setFrame((f) => f + 1);
+    } catch { /* flat pre-fill stays — the stream still steps it live */ }
+    finally { if (seedFetchRef.current === key) seedFetchRef.current = ''; }
   };
 
   // adopt a fresh registry: re-key the per-venue buffers and default a toggle for

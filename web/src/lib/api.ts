@@ -1,8 +1,16 @@
-import type { MarketsResponse, StreamMessage, Fill } from '@shared';
+import type { MarketsResponse, StreamMessage, Fill, QuoteSnapshot } from '@shared';
 
 export async function fetchMarkets(): Promise<MarketsResponse> {
   const r = await fetch('/api/markets');
   if (!r.ok) throw new Error(`/api/markets ${r.status}`);
+  return r.json();
+}
+
+/** The last ~60s of real quote ticks for one (market, size) — seeds the
+ *  Execution chart so it shows real history instead of a flat pre-fill. */
+export async function fetchQuoteHistory(market: string, size: number): Promise<QuoteSnapshot[]> {
+  const r = await fetch(`/api/quotes/history?market=${encodeURIComponent(market)}&size=${size}`);
+  if (!r.ok) throw new Error(`/api/quotes/history ${r.status}`);
   return r.json();
 }
 
