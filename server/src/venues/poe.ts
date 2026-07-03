@@ -67,6 +67,10 @@ export function createPoeAdapter(): VenueAdapter {
 
   return {
     venues: () => [POE_VENUE],
+    // seed daily volume by replaying Pool.Swap on-chain from the WMON/USDC pool's
+    // deployment (block 73455416 · 2026-05-09) — POE has no keyless subgraph. The
+    // core runs this in the background, chunked + paced + resumable (live.ts).
+    backfillFromUtc: '2026-05-09',
 
     async discover(ctx: AdapterContext) {
       const stables = Object.values(TOKENS).filter((t) => t.stable);

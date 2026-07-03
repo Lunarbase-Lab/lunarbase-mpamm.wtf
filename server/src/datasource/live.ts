@@ -4,12 +4,14 @@ import {
   type DataSourceMode, type MarketState, type QuoteSnapshot, type QuoteRow, type Fill, type DailyVolume,
 } from '@shared';
 import { config } from '../config.js';
-import { publicClient, getLogsChunked, probeChain } from '../chain/rpc.js';
+import { publicClient, getLogsChunked, probeChain, blockAtOrAfter } from '../chain/rpc.js';
 import { UsdPricer } from '../pricer.js';
 import { VolumeStore } from '../db.js';
 import { utcDay, annotateCex } from '../util.js';
 import { ADAPTERS, REFERENCE, venueMeta, venueIds, validateRegistry } from '../venues/registry.js';
-import type { AdapterContext, LogBundle, VenueAdapter } from '../venues/adapter.js';
+import type { AdapterContext, LogBundle, LogSource, VenueAdapter } from '../venues/adapter.js';
+
+const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
 /**
  * LiveDataSource — real Monad RPC + CEX reference, run as a persist-forward
@@ -49,6 +51,9 @@ export class LiveDataSource extends BaseSource {
   private countedIds = new Set<string>();
   private midHist: { t: number; mid: number }[] = [];
   private lastBlock = 0n;
+  /** chain head captured at boot — the upper bound for on-chain backfill (the
+   *  live tail owns every block after it, so the two never overlap). */
+  private bootHead = 0n;
   private timer?: ReturnType<typeof setInterval>;
   private persistTimer?: ReturnType<typeof setInterval>;
   private rediscoverTimer?: ReturnType<typeof setInterval>;
@@ -81,6 +86,8 @@ export class LiveDataSource extends BaseSource {
     this.timer = setInterval(() => { void this.tick(); }, config.quoteIntervalMs);
     this.persistTimer = setInterval(() => this.persist(), config.persistMs);
     this.rediscoverTimer = setInterval(() => { void this.rediscover(); }, config.rediscoverMs);
+    // seed deep history in the BACKGROUND — never blocks boot or the live tail.
+    if (config.backfillEnabled) void this.backfillOnchain();
   }
 
   stop(): void {
@@ -184,6 +191,7 @@ export class LiveDataSource extends BaseSource {
     // 3. resume point — same-day gap-fill, else start at tip
     const head = await publicClient.getBlockNumber();
     this.block = Number(head);
+    this.bootHead = head; // upper bound for the background backfill (tail owns > head)
     const lpb = this.store.getMeta('lastProcessedBlock');
     const lpd = this.store.getMeta('lastProcessedDay');
     if (lpb && lpd === today && head - BigInt(lpb) <= BigInt(config.gapFillMaxBlocks)) {
@@ -246,6 +254,139 @@ export class LiveDataSource extends BaseSource {
         (d.byVenue[venueId] ??= { usd: 0, swaps: 0 }).swaps = swaps;
       }
     }
+  }
+
+  // ── background on-chain backfill ─────────────────────────────────────────────
+  /**
+   * Seed deep daily-volume history for adapters that declared `backfillFromUtc`
+   * but have no keyless subgraph — by replaying their Swap logs on-chain. Runs
+   * OFF the boot path (never blocks the dashboard or the live tail): chunked +
+   * paced under the RPC's limits, resumable across restarts, and self-healing
+   * (retried each boot until `backfill_done_<venue>` is set).
+   */
+  private async backfillOnchain(): Promise<void> {
+    for (const a of ADAPTERS) {
+      const sinceUtc = a.backfillFromUtc;
+      const vid = a.venues()[0]?.id ?? '';
+      const name = a.venues()[0]?.name ?? vid;
+      if (!sinceUtc || !vid || this.store.getMeta(`backfill_done_${vid}`) === '1') continue;
+      let sources: LogSource[];
+      try { sources = a.logSources().filter((s) => (s.kind ?? 'fills') === 'fills'); }
+      catch { this.noteOnce(`${name} backfill deferred — pools not discovered yet`); continue; }
+      if (!sources.length) { this.store.setMeta(`backfill_done_${vid}`, '1'); continue; }
+      try { await this.backfillAdapter(a, vid, name, sinceUtc, sources); }
+      catch (e) { this.noteOnce(`${name} backfill paused (${(e as Error).message}); resumes next boot`); }
+    }
+  }
+
+  private async backfillAdapter(a: VenueAdapter, vid: string, name: string, sinceUtc: string, sources: LogSource[]): Promise<void> {
+    const end = this.bootHead;
+    if (end <= 0n) return;
+    const startSec = Math.floor(Date.parse(`${sinceUtc}T00:00:00Z`) / 1000);
+    if (!Number.isFinite(startSec)) { this.noteOnce(`${name} backfill: invalid backfillFromUtc '${sinceUtc}'`); return; }
+
+    // Resume from a DAY-ALIGNED block: re-scan the in-progress day from its start
+    // so mergeBackfill's SET-per-day stays idempotent (earlier days already done).
+    let from = await blockAtOrAfter(startSec, end);
+    const cur = this.store.getMeta(`backfill_cursor_${vid}`);
+    if (cur) {
+      const cb = BigInt(cur);
+      if (cb > from && cb <= end + 1n) {
+        try {
+          const b = await publicClient.getBlock({ blockNumber: cb > end ? end : cb });
+          const daySec = Math.floor(Date.parse(`${utcDay(Number(b.timestamp) * 1000)}T00:00:00Z`) / 1000);
+          from = await blockAtOrAfter(daySec, end);
+        } catch { /* fall back to the full-range start */ }
+      }
+    }
+    if (from > end) { this.store.setMeta(`backfill_done_${vid}`, '1'); return; }
+
+    const today = utcDay();
+    const acc = new Map<string, { usd: number; swaps: number }>(); // closed utcDay -> totals
+    let chunk = BigInt(config.backfillChunk);
+    const floor = BigInt(config.getLogsChunk);
+    let cursor = from;
+    let sinceMerge = 0;
+    this.noteOnce(`${name}: on-chain backfill ${sinceUtc} — blocks ${from}→${end}`);
+
+    while (cursor <= end) {
+      const to = cursor + chunk - 1n > end ? end : cursor + chunk - 1n;
+      // fetch every fill source over [cursor,to]; shrink the span on a range error,
+      // back off on a transient error, so we stay under the RPC's caps.
+      let batches: any[][] | null = null;
+      let tries = 0;
+      while (batches === null) {
+        try {
+          batches = await Promise.all(sources.map((s) =>
+            publicClient.getLogs({ address: s.address as any, fromBlock: cursor, toBlock: to, events: s.events as any } as any) as Promise<any[]>));
+        } catch (e) {
+          if (chunk > floor) { chunk = chunk / 2n > floor ? chunk / 2n : floor; break; } // too wide → shrink, retry cursor
+          if (++tries <= 5) { await sleep(config.backfillPaceMs * 10 * tries); continue; } // transient → back off
+          throw e; // give up this adapter (retried next boot)
+        }
+      }
+      if (batches === null) continue; // shrank — retry the same cursor with a smaller span
+
+      const all = batches.flat();
+      if (all.length) {
+        // ONE timestamp per chunk is enough for DAILY bucketing (a chunk spans
+        // ≤ chunk blocks ≈ a few minutes) and keeps a high-volume venue's full
+        // backfill to ~1 getBlock/chunk instead of one per fill. Anchor on any log
+        // block that resolves (retry + try siblings) so a flaky/missing getBlock —
+        // a range-cap RPC can return a log for a block it momentarily 404s — never
+        // aborts a multi-million-block backfill.
+        let anchorMs = NaN;
+        for (const bn of new Set<bigint>(all.map((l) => l.blockNumber as bigint))) {
+          for (let i = 0; i < 3 && !Number.isFinite(anchorMs); i++) {
+            try { anchorMs = Number((await publicClient.getBlock({ blockNumber: bn })).timestamp) * 1000; }
+            catch { await sleep(config.backfillPaceMs * 5 * (i + 1)); }
+          }
+          if (Number.isFinite(anchorMs)) break;
+        }
+        if (Number.isFinite(anchorMs)) {
+          const tsOf = () => anchorMs; // chunk-level ts — daily bucketing only
+          const bundle: LogBundle = {};
+          sources.forEach((s, i) => { bundle[s.key] = batches![i]; });
+          const fills = this.ownVenues(a, await a.decode(this.ctx, bundle, tsOf, new Set()), 'backfill fill');
+          for (const f of fills) {
+            const day = utcDay(f.ts);
+            if (day >= today) continue; // today is owned by the live tail — no overlap
+            const e = acc.get(day) ?? { usd: 0, swaps: 0 };
+            e.usd += f.usd; e.swaps += 1; acc.set(day, e);
+          }
+        } else {
+          this.noteOnce(`${name} backfill: block timestamps unresolved near ${cursor} — chunk skipped`);
+        }
+      }
+
+      cursor = to + 1n;
+      if (++sinceMerge >= config.backfillMergeEvery || cursor > end) {
+        this.mergeBackfill(vid, acc);
+        this.store.setMeta(`backfill_cursor_${vid}`, String(cursor));
+        this.store.upsertMany(this.days);
+        sinceMerge = 0;
+      }
+      await sleep(config.backfillPaceMs);
+    }
+
+    this.mergeBackfill(vid, acc);
+    this.store.setMeta(`backfill_cursor_${vid}`, String(end + 1n));
+    this.store.setMeta(`backfill_done_${vid}`, '1');
+    this.store.upsertMany(this.days);
+    this.notes.push(`${name}: backfill complete — ${acc.size} day(s) seeded`);
+    this.emitMsg({ ch: 'volume', data: this.cloneDay(this.today()) }); // nudge connected clients
+  }
+
+  /** Merge accumulated backfill totals into this.days, SET per (day, venue):
+   *  backfill is authoritative for a CLOSED day it fully scanned, and the live
+   *  tail only ever writes today+, so a SET can never double-count. */
+  private mergeBackfill(vid: string, acc: Map<string, { usd: number; swaps: number }>): void {
+    for (const [day, tot] of acc) {
+      let d = this.days.find((x) => x.utcDay === day);
+      if (!d) { d = this.emptyDay(day, false); this.days.push(d); }
+      d.byVenue[vid] = { usd: tot.usd, swaps: tot.swaps };
+    }
+    this.days.sort((a, b) => (a.utcDay < b.utcDay ? -1 : 1));
   }
 
   /** Historical fills from the DB (the leaderboard/markouts query real windows). */

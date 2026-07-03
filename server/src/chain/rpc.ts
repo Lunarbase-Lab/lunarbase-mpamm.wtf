@@ -39,6 +39,21 @@ export async function probeChain(): Promise<{ ok: boolean; block: number; reason
   }
 }
 
+/** Earliest block whose timestamp >= `targetSec`, by binary search over [0, hi]
+ *  (~log2(hi) getBlock calls). Maps a backfill start date → a start block. A
+ *  pruned/missing block just pushes the search higher. */
+export async function blockAtOrAfter(targetSec: number, hi: bigint): Promise<bigint> {
+  let lo = 0n, h = hi, ans = hi;
+  while (lo <= h) {
+    const mid = lo + (h - lo) / 2n;
+    let ts: number | undefined;
+    try { ts = Number((await publicClient.getBlock({ blockNumber: mid })).timestamp); }
+    catch { lo = mid + 1n; continue; }
+    if (ts >= targetSec) { ans = mid; h = mid - 1n; } else { lo = mid + 1n; }
+  }
+  return ans;
+}
+
 /** getLogs with automatic range-chunking — the public RPC 413s past ~100
  *  blocks (spec §8 "chunk getLogs ranges"). Returns logs across [from,to]. */
 export async function getLogsChunked(

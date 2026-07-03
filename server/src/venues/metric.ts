@@ -71,6 +71,10 @@ export function createMetricAdapter(): VenueAdapter {
 
   return {
     venues: () => [METRIC_VENUE],
+    // seed daily volume by replaying Pool.Swap on-chain from the WMON/USDC pool's
+    // deployment (block 65042020 · 2026-03-31) — no keyless subgraph. Runs in the
+    // background — see live.ts.
+    backfillFromUtc: '2026-03-31',
 
     async discover(ctx: AdapterContext) {
       const res = await ctx.client.multicall({

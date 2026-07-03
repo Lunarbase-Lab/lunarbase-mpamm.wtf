@@ -54,6 +54,20 @@ export const config = {
   /** Decoded fills are persisted; rows older than this are pruned. The
    *  leaderboard's widest window is 30d, so keep a little more. */
   fillsRetentionDays: num('FILLS_RETENTION_DAYS', 35),
+
+  // ── on-chain backfill (background) ──────────────────────────────────────────
+  /** Replay each opted-in adapter's Swap logs from its `backfillFromUtc` to seed
+   *  deep daily-volume history without a subgraph. Runs in the background (never
+   *  blocks boot or the live tail), resumes across restarts, self-heals per boot
+   *  until complete. Set BACKFILL=off to disable (e.g. a range-limited RPC). */
+  backfillEnabled: (env.BACKFILL ?? 'on').toLowerCase() !== 'off',
+  /** Starting getLogs span for backfill — auto-shrinks on an RPC range error and
+   *  floors at getLogsChunk, so it runs as wide as the node allows without 413s. */
+  backfillChunk: num('BACKFILL_CHUNK', 800),
+  /** Delay between backfill chunks (ms) — paces requests under the RPC rate cap. */
+  backfillPaceMs: num('BACKFILL_PACE_MS', 40),
+  /** Merge + persist backfilled volume (and advance the resume cursor) every N chunks. */
+  backfillMergeEvery: num('BACKFILL_MERGE_EVERY', 50),
 } as const;
 
 export type Config = typeof config;

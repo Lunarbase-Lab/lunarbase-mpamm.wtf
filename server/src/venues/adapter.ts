@@ -67,8 +67,14 @@ export interface VenueAdapter {
   /** find the markets/pools this venue trades. The adapter holds its own state
    *  (markets, book cache, …). Called once at boot; may also be called to refresh. */
   discover(ctx: AdapterContext): Promise<void>;
-  /** optional one-time historical seed (subgraph or on-chain backfill). */
+  /** optional one-time historical seed (subgraph or REST). Fast + synchronous —
+   *  runs during boot. For a slow on-chain replay use `backfillFromUtc` instead. */
   backfill?(ctx: AdapterContext, sinceUtc: string): Promise<AdapterBackfill>;
+  /** opt into the core's background on-chain backfill: replay this adapter's
+   *  `logSources('fills')` from this UTC day (e.g. '2026-05-13') → decode() → daily
+   *  volume. The core owns the chunking/pacing/resume so the adapter stays thin.
+   *  Use for venues with no keyless subgraph; leave unset to accrue forward only. */
+  backfillFromUtc?: string;
   /** optional live bid/ask per market×size for the Execution tab. */
   quote?(ctx: AdapterContext, sizesUsd: readonly number[]): Promise<QuoteRow[]>;
   /** the contract logs the core should fetch each cycle (read after `discover`).
