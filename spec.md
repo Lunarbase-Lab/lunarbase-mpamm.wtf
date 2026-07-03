@@ -17,7 +17,7 @@
 
 ## 1. Summary
 
-A read-only, real-time dashboard surfacing three primitives per **propAMM** venue on Monad: **historical filled volume**, **live execution quality** (realized cost vs. Bybit at a chosen notional), and a **live fill tape / markouts**. The venue set is a **plug-in registry** — each protocol ships one self-contained adapter; the rest of the system never hardcodes a venue.
+A read-only, real-time dashboard surfacing three primitives per **propAMM** venue on Monad: **historical filled volume**, **live execution quality** (realized cost vs the pair's CEX reference at a chosen notional), and a **live fill tape / markouts**. The venue set is a **plug-in registry** — each protocol ships one self-contained adapter; the rest of the system never hardcodes a venue.
 
 **propAMM = maker/oracle-priced.** The dashboard is dedicated to venues where a market maker (or an oracle the maker anchors to) sets the price — not passive AMMs whose price emerges from a bonding curve, nor raw CLOBs. v0.3 venues: **LFJ POE**, **Metric**, and the **Clober Vault** (§3).
 
@@ -70,10 +70,10 @@ Built and run as a **backend service** (§7.D1): the service owns the RPC/WS/Byb
 Borrow pamm.wtf's information architecture; build the UI custom. Every tab renders purely from the venue registry (`state.venues`) — name, color, and grouping come from `VenueMeta`, nothing hardcoded.
 
 ### 4.1 Execution (`[1]`)
-Rolling window (~60s) of live quotes per pair at a chosen notional, expressed as **realized cost in bps vs. Bybit**. For each pair × side × notional:
+Rolling window (~60s) of live quotes per pair at a chosen notional, expressed as **realized cost in bps vs the pair's CEX reference** (Bybit for MON, Binance for BTC/ETH — converted into pair terms, §5.5). For each pair × side × notional:
 1. **On-chain realized** — simulate the fill via the adapter's `quote()` (§5.1); `realized = quote-per-base`, venue-fee-inclusive.
 2. **CEX realized** — walk the pair's CEX book (Bybit `MONUSDT` / Binance `BTCUSDT`/`ETHUSDT`, §5.5) for the **same base size**, convert into the pair's terms (wrap basis + stable cross), then overlay the **taker fee** (config constant). Realized-vs-realized at size — the only honest comparison for size-sensitive flow.
-3. **vs CEX (bps)** = realized on-chain buy vs Bybit-as-taker, sign-normalized so positive = on-chain worse.
+3. **vs CEX (bps)** = realized on-chain buy vs the pair's CEX-as-taker, sign-normalized so positive = on-chain worse.
 
 Mark `filledFull = false` when the pool/book exhausts before the full notional (surfaced as a `PARTIAL` tag). The Bybit reference chip defaults **on** so the benchmark stays visible during propAMM quote gaps.
 
@@ -106,7 +106,7 @@ Top swaps / participants over a selectable window, filtered to fills that carry 
                               ▼                                ▼                               ▼
    ┌──────────────── Registry-driven Aggregation / State (venue-agnostic, keyed by venueId) ─────────┐
    │  in-mem quote matrix      │  volume bucketer (UTC-day × venueId) → DailyVolume.byVenue           │
-   │  + current market state   │  + markout aging vs Bybit mid history      │  fills (SQLite + ring)  │
+   │  + current market state   │  + markout aging vs per-PAIR CEX mid history │ fills (SQLite + ring) │
    └─────────────────┬───────────────────────────────────────────────────┬───────────────────────-─┘
               REST snapshots │                                      WS push │ quotes / fills / volume Δ
                        ┌─────▼────────────────────────────────────────────▼─────┐
@@ -128,9 +128,15 @@ interface VenueAdapter {
   logSources(): LogSource[];                              // { key, address, events, kind: 'fills'|'state'|'attribution' }
   decode(ctx, logs, tsOf, failed): Fill[];                // adapter decodes ITS logs → fills
 }
-interface ReferenceAdapter { meta(); start(); stop(); mid(); quote(sizesUsd); }   // Bybit, role:'reference'
+interface ReferenceRegistry {                             // the CEX benchmarks (role:'reference')
+  metas(); start(); stop();
+  refVenueIdForBase(base);                                // 'bybit' (MON) | 'binance' (BTC/ETH)
+  assetUsd(base);                                         // USDT≈USD — sizing/header only
+  midForPair(market);                                     // pair-terms mid (wrap ÷ cross) — bps anchor + markout mark
+  changePctFor(base); quote(sizesUsd);                    // taker-walk rows per pair, in pair terms
+}
 ```
-`AdapterContext` hands over shared infra: `client` (viem), `getLogs` (chunked), `pricer`, `config`, `log`, `referenceMid()`. The **registry** (`registry.ts`) is the one wiring point: `ADAPTERS = [poe, cloberVault, metric]`, `REFERENCE = bybit`. `validateRegistry()` fails loud on a duplicate/invalid venue id or a non-single reference.
+`AdapterContext` hands over shared infra: `client` (viem), `getLogs` (chunked), `pricer` (incl. `pairMid(market)` — the bps anchor), `config`, `log`. The **registry** (`registry.ts`) is the one wiring point: `ADAPTERS = [poe, cloberVault, metric]`, `REFERENCES = createReferenceRegistry()` (Bybit + Binance). `validateRegistry()` fails loud on a duplicate/invalid venue id or a missing reference set.
 
 ### 5.1 Quote poller (Execution)
 Each adapter's `quote()` builds its request set and collapses it into **Multicall3 `eth_call`s** per tick, at block cadence. Normalized to `QuoteRow[]` (keyed by `venueId`), then annotated with the Bybit realized-vs-taker "vs CEX" columns.

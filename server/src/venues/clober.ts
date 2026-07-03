@@ -1,5 +1,5 @@
 import type { PublicClient } from 'viem';
-import type { QuoteRow, Fill, Side, FillCategory, VenueMeta } from '@shared';
+import type { QuoteRow, Fill, Side, FillCategory, VenueMeta, Pair } from '@shared';
 import { ADDR, TOKENS, ASSETS, PAIRS, pairFor, assetForToken, baseTokenOf } from '@shared';
 import { bookViewerAbi, bookManagerAbi, liquidityVaultAbi, routerGatewayAbi, CLOBER_MIN_PRICE } from '../chain/abis.js';
 import { fromUnits, toUnits, shortHex } from '../util.js';
@@ -333,6 +333,28 @@ export function cloberTickToPrice(tick: number, baseIsBookBase: boolean, stableD
 }
 
 /**
+ * The REGISTERED pair a book trades, or null: exactly one side a tracked base
+ * asset, the other a real stable, and the (base, stable) combo in @shared PAIRS
+ * (audit C1 + review "unregistered markets"). This is THE gate for what Clober
+ * volume counts — shared by live decode AND the subgraph backfill seed, so a
+ * book that live decode would drop can never leak into closed-day volume.
+ */
+function registeredBookPair(book: CloberBook): { pair: Pair; baseIsBookBase: boolean; baseDec: number; stableSym: string; stableDec: number } | null {
+  const baseSideAsset = assetForToken(book.base);
+  const quoteSideAsset = assetForToken(book.quote);
+  if (!!baseSideAsset === !!quoteSideAsset) return null;
+  const baseIsBookBase = !!baseSideAsset;
+  const asset = (baseIsBookBase ? baseSideAsset : quoteSideAsset)!;
+  const baseTok = baseTokenOf(asset.key);
+  if (!baseTok) return null;
+  const stableSym = baseIsBookBase ? book.quoteSym : book.baseSym;
+  if (!stableSym || !TOKENS[stableSym]?.stable) return null;
+  const pair = pairFor(asset.key, stableSym);
+  if (!pair) return null;
+  return { pair, baseIsBookBase, baseDec: baseTok.decimals, stableSym, stableDec: TOKENS[stableSym].decimals };
+}
+
+/**
  * Decode a Clober Take into a Fill (spec §5.2). The quote leg is exact
  * (unit × unitSize); the realized price + base leg come from the resting tick, so
  * the fill carries a true execution price and real markouts (audit B1-real).
@@ -346,23 +368,10 @@ export function decodeCloberTake(
   const book = books.get(bookId);
   if (!book) return null;
 
-  // require exactly base/stable (one tracked base-asset side, a real stable on the
-  // other) so a mis-scoped book never gets booked as this venue's volume (audit C1).
-  const baseSideAsset = assetForToken(book.base);
-  const quoteSideAsset = assetForToken(book.quote);
-  if (!!baseSideAsset === !!quoteSideAsset) return null;
-  const baseIsBookBase = !!baseSideAsset;
-  const asset = (baseIsBookBase ? baseSideAsset : quoteSideAsset)!;
-  const baseTok = baseTokenOf(asset.key);
-  if (!baseTok) return null;
-  const baseDec = baseTok.decimals;
-  const stableSym = baseIsBookBase ? book.quoteSym : book.baseSym;
-  if (!stableSym || !TOKENS[stableSym]?.stable) return null;
-  // REGISTERED pairs only — an unregistered combo (e.g. a hypothetical BTC/USDT0
-  // vault book) has no reference rows / markout routing and must not emit a fill.
-  const pair = pairFor(asset.key, stableSym);
-  if (!pair) return null;
-  const stableDec = TOKENS[stableSym].decimals;
+  // registered base/stable books only (shared gate — see registeredBookPair).
+  const reg = registeredBookPair(book);
+  if (!reg) return null;
+  const { pair, baseIsBookBase, baseDec, stableDec } = reg;
 
   // quote leg is exact (unit × unitSize); quote token = stable iff the base asset
   // is the book's base, else it's the base asset (so use baseDec for that side).
@@ -465,7 +474,9 @@ export function createCloberVaultAdapter(): VenueAdapter {
     },
     async backfill(ctx: AdapterContext, sinceUtc: string) {
       if (!authoritativeDiscovery) throw new Error('authoritative vault-book discovery unavailable');
-      const vaultBookIds = [...books.values()].filter((b) => b.isVault).map((b) => String(b.bookId));
+      // REGISTERED vault books only (same gate as live decode — registeredBookPair):
+      // a vault book live decode would drop must not leak into closed-day volume.
+      const vaultBookIds = [...books.values()].filter((b) => b.isVault && registeredBookPair(b)).map((b) => String(b.bookId));
       if (!vaultBookIds.length) return {};
       const seed = await seedCloberDaily(ctx.config.subgraphUrl, sinceUtc, [], vaultBookIds);
       return { days: [...seed].map(([utcDay, cd]) => ({ utcDay, byVenue: { [CLOBER_VAULT_VENUE.id]: { usd: cd.vault } } })) };

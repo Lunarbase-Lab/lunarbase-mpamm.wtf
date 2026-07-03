@@ -60,7 +60,11 @@ Everything you need is on `ctx` (`AdapterContext`) — **use it instead of impor
 - **backfill().fills** are persisted to the DB, so they show up in the DB-backed leaderboard/tape (`queryFills`). Contract: their **volume** must come from `backfill().days` (fills are not re-aggregated). **Markouts:** only fills whose horizons are still in the future get aged against the live mid; a historical closed-day fill with `null` markouts is tape-visible but **excluded** from markout/leaderboard stats (never fabricated from a much-later mid). If you can supply final historical markouts, include them in the fill.
 - **Stateful discovery:** `discover()` and `decode()` may mutate closure state (e.g. fold newly-`Open`ed pools from a log source into your cache) — see `clober.ts`'s `mergeVaultBooks`.
 - **Degrade intentionally:** quote-only failures can return empty rows. Fill/state discovery, required log fetches, timestamp lookup, and unsafe decode states must throw/hold the cursor so volume and fills are never silently undercounted.
-- **The CEX reference** (Bybit) is a separate `ReferenceAdapter` (`role: 'reference'`), not a venue adapter. There's exactly one.
+- **The CEX references** live in the `ReferenceRegistry` (`reference.ts`, `role: 'reference'`), not in venue adapters: one per base asset (Bybit `MONUSDT` for MON, Binance for BTC/ETH), each converted into the pair's own terms (stable `USDCUSDT` cross + `WBTCBTC` wrap basis — spec §5.5).
 
 ## Scope & limits
-This makes **venues** pluggable on the **tracked pair/asset universe** (`MARKETS` + `SIZES_USD` in `@shared`, benchmarked against the one CEX reference). A new MON/stable venue is "one adapter + one registry line". A new **pair or asset** (a different base/quote, or a venue with no CEX reference) is a larger change — `MARKETS` is still global, the live state serves that set, and the reference walks it — so it's **not** yet a one-line add. If you need that, open an issue: it means making the market universe registry-driven too (per-adapter markets + a reference per asset).
+Both **venues** and the **pair/asset universe** are registry-driven (`@shared`):
+- A new **venue** on existing pairs = one adapter file + one `registry.ts` line.
+- A new **pair** on an existing base/quote = one `PAIRS` entry (adapters pick up pools for it on the next discovery).
+- A new **base asset** = an `ASSETS` entry (CEX routing + `cexSymbol`, optional `wrapBasisSymbol`) + its wrapper in `TOKENS` + `PAIRS` entries + a pool in some adapter. A new **quote stable** = a `TOKENS` entry (+ `usdtCross` where the CEX lists it).
+Only quote/emit **registered** pairs (`pairFor`) — an unregistered market has no reference rows or markout routing and the core drops it.

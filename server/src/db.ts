@@ -22,6 +22,21 @@ type Stmt = ReturnType<DatabaseSync['prepare']>;
  */
 const SCHEMA_VERSION = '3';
 
+/**
+ * Version of the MARKOUT MODEL — what a fill's `markouts_bps` were marked
+ * against. Bump when the benchmark itself changes meaning (not on schema
+ * changes): on mismatch, persisted fills keep their volume/tape data but their
+ * markouts are reset to nulls — horizons that elapsed under the old model are
+ * excluded (never recomputed against a mid history we don't have, and never
+ * mixed with new-model markouts in the leaderboard/markout stats), while fills
+ * young enough re-age naturally against the new model.
+ *
+ *  'pair-mid-1' — markouts vs the PAIR-terms CEX mid (wrap basis + stable
+ *                 cross), replacing raw USDT mids (~10bps different on USDC
+ *                 pairs — old and new values are not comparable).
+ */
+const MARKOUT_MODEL_VERSION = 'pair-mid-1';
+
 export class VolumeStore {
   private db: DatabaseSync;
   private dayStmt: Stmt;
@@ -73,6 +88,17 @@ export class VolumeStore {
       CREATE INDEX IF NOT EXISTS fills_ts ON fills (ts);
     `);
     this.db.prepare(`INSERT INTO meta (key, value) VALUES ('schema_version', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value`).run(SCHEMA_VERSION);
+
+    // markout-model migration: retained fills marked under an older model keep
+    // their volume/tape data, but their markouts are nulled — old-model bps must
+    // never mix with new-model bps in the markout/leaderboard stats.
+    const mkVer = (this.db.prepare(`SELECT value FROM meta WHERE key = 'markout_model_version'`).get() as { value: string } | undefined)?.value;
+    if (mkVer !== MARKOUT_MODEL_VERSION) {
+      const nulls = JSON.stringify([null, null, null, null, null]);
+      const info = this.db.prepare(`UPDATE fills SET markouts_bps = ? WHERE markouts_bps != ?`).run(nulls, nulls);
+      if (Number(info.changes) > 0) console.log(`[mpamm] markout model → ${MARKOUT_MODEL_VERSION}: reset markouts on ${info.changes} retained fill(s)`);
+      this.db.prepare(`INSERT INTO meta (key, value) VALUES ('markout_model_version', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value`).run(MARKOUT_MODEL_VERSION);
+    }
 
     this.dayStmt = this.db.prepare(`
       INSERT INTO daily_volume (utc_day, venue_id, usd, swaps) VALUES (?, ?, ?, ?)
