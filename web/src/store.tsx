@@ -5,9 +5,9 @@ import { fetchMarkets, fetchFills, fetchQuoteHistory, connectStream } from './li
 import type { Theme } from './theme';
 
 /** Read the persisted theme, matching the pre-paint script in index.html.
- *  Default is dark; only an explicit 'light' choice opts out. */
+ *  Default is bright (light); only an explicit 'dark' choice opts in. */
 const initialTheme = (): Theme => {
-  try { return localStorage.getItem('pamm-theme') === 'light' ? 'light' : 'dark'; } catch { return 'dark'; }
+  try { return localStorage.getItem('pamm-theme') === 'dark' ? 'dark' : 'light'; } catch { return 'light'; }
 };
 export type Tab = 'exec' | 'volume' | 'markouts' | 'leaderboard';
 const N = 120; // canvas rolling window (≈60s @ 500ms)

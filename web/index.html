@@ -34,10 +34,10 @@
       rel="stylesheet"
     />
     <!-- Apply the stored theme before first paint so there's no wrong-theme flash.
-         Default is dark; only an explicit 'light' choice opts out. -->
+         Default is bright (light); only an explicit 'dark' choice opts in. -->
     <script>
-      try { document.documentElement.dataset.theme = localStorage.getItem('pamm-theme') === 'light' ? 'light' : 'dark'; }
-      catch (e) { document.documentElement.dataset.theme = 'dark'; }
+      try { document.documentElement.dataset.theme = localStorage.getItem('pamm-theme') === 'dark' ? 'dark' : 'light'; }
+      catch (e) { document.documentElement.dataset.theme = 'light'; }
     </script>
   </head>
   <body>
