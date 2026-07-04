@@ -39,8 +39,10 @@ export const config = {
   binanceRest: env.BINANCE_REST_URL ?? 'https://data-api.binance.vision',
   binanceWs: env.BINANCE_WS_URL ?? 'wss://data-stream.binance.vision',
 
-  /** Bybit taker fee (bps) for the MON benchmark — default non-VIP 10 bps. */
-  takerBps: num('TAKER_BPS', 10),
+  /** Bybit taker fee (bps) for the MON benchmark — default Supreme VIP (4.5 bps),
+   *  Bybit's top PUBLISHED spot tier: the advanced-trader benchmark, matching the
+   *  Binance-VIP9 philosophy below (PRO/MM tiers go lower but aren't published). */
+  takerBps: num('TAKER_BPS', 4.5),
   /** Binance taker fee (bps) for the BTC/ETH benchmark — default VIP9 (2.25 bps). */
   binanceTakerBps: num('BINANCE_TAKER_BPS', 2.25),
   quoteIntervalMs: num('QUOTE_INTERVAL_MS', 500),

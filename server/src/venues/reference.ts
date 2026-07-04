@@ -6,10 +6,11 @@ import { BinanceFeed } from '../binance.js';
 import type { ReferenceRegistry } from './adapter.js';
 
 /** The CEX benchmark venues (role: 'reference'). Their per-theme color is the
- *  single source of truth the frontend reads. The Binance name carries its fee
- *  tier — the 2.25bps taker is Binance VIP9, not retail, and the display name
- *  should say so everywhere (chips, legend, captions) rather than imply retail. */
-const BYBIT_VENUE: VenueMeta = { id: 'bybit', name: 'Bybit', color: { light: '#8A8375', dark: '#B9BCC6' }, kind: 'cex', role: 'reference', taker: true };
+ *  single source of truth the frontend reads. Each name carries its FEE TIER —
+ *  both benchmarks are advanced-trader tiers (each exchange's top published
+ *  spot tier), not retail, and the display name should say so everywhere
+ *  (chips, legend, captions) rather than imply retail fees. */
+const BYBIT_VENUE: VenueMeta = { id: 'bybit', name: 'Bybit (Supreme VIP)', color: { light: '#8A8375', dark: '#B9BCC6' }, kind: 'cex', role: 'reference', taker: true };
 const BINANCE_VENUE: VenueMeta = { id: 'binance', name: 'Binance (VIP9)', color: { light: '#B58A1B', dark: '#F0B90B' }, kind: 'cex', role: 'reference', taker: true };
 
 /**

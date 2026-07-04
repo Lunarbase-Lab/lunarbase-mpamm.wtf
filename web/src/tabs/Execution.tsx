@@ -49,7 +49,7 @@ export function ExecutionTab() {
   const refName = ref?.name ?? 'the CEX reference';
   const refLabel = ref ? ref.name : 'The reference';
   // taker fee shown = the selected pair's CEX row fee (Bybit ~10bps, Binance VIP9 ~2.25bps).
-  const taker = (d.quotes?.rows.find((r) => r.venueId === ref?.id && r.market === pair)?.feeBps ?? d.state?.takerBps ?? 10).toFixed(1);
+  const taker = (d.quotes?.rows.find((r) => r.venueId === ref?.id && r.market === pair)?.feeBps ?? d.state?.takerBps ?? 4.5).toFixed(1);
 
   const row = (v: VenueMeta, s: number): QuoteRow | undefined =>
     d.quotes?.rows.find((r) => r.venueId === v.id && r.market === pair && r.sizeUsd === s);
@@ -203,7 +203,7 @@ export function ExecutionTab() {
           </div>
           {/* width/vs-CEX column is our approved divergence; venue names come
               straight from the registry. Layout matches the design. */}
-          <div style={{ flex: 'none', width: 334, margin: '6px 8px 0 14px', background: C.overlay, border: `1px solid ${C.line}`, padding: '8px 10px' }}>
+          <div style={{ flex: 'none', width: 382, margin: '6px 8px 0 14px', background: C.overlay, border: `1px solid ${C.line}`, padding: '8px 10px' }}>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 42px 42px 42px 50px', gap: '2px 6px', fontSize: 8.5, color: C.faint2, letterSpacing: '.05em', paddingBottom: 5, borderBottom: `1px solid ${C.line}` }}>
               <div>VENUE</div><div style={{ textAlign: 'right' }}>SPREAD</div><div style={{ textAlign: 'right' }}>BID</div><div style={{ textAlign: 'right' }}>ASK</div><div style={{ textAlign: 'right' }}>vs CEX</div>
             </div>

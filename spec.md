@@ -229,7 +229,7 @@ Frontend renders purely off these — never touches the RPC, subgraph, or CEX fe
 | **D4** | History = **persist-forward indexer** + optional per-adapter `backfill()` | SQLite is the source of truth; Clober seeds from its subgraph; POE/Metric accrue forward until a backfill source is wired (D8). |
 | **D5** | Clober attribution = **vault-bookId tagging** via `LiquidityVault.Open` | Only the oracle-vault (propAMM) cut counts; independent-maker CLOB flow is excluded. |
 | **D6** | Universe = **base/stable pairs via a registry** | `@shared` ASSETS + PAIRS (MON/USDC, BTC/USDC, ETH/USDC) — add an asset + a pool and it lists. Quote leg = stable ⇒ exact USD. Adapters are generic over base/quote (WBTC's 8 decimals handled; `assetForToken` replaces MON-specific checks). |
-| **D7** | CEX benchmark = **per-asset registry, converted into the pair's terms** | Routed by asset (`ASSETS.cex`): Bybit for MON (no Binance MON spot), Binance VIP9 for BTC/ETH. The USDT-quoted reference is converted by the live stable cross (`USDCUSDT`, ~±10bps) and the wrapped/native basis (`WBTCBTC`, ~−5bps) — never a $1 peg or a wrap≡native assumption (§5.5). Realized-vs-realized at size; taker fees are config constants (Bybit 10 bps, Binance 2.25 bps). |
+| **D7** | CEX benchmark = **per-asset registry, converted into the pair's terms** | Routed by asset (`ASSETS.cex`): Bybit for MON (no Binance MON spot), Binance for BTC/ETH. The USDT-quoted reference is converted by the live stable cross (`USDCUSDT`, ~±10bps) and the wrapped/native basis (`WBTCBTC`, ~−5bps) — never a $1 peg or a wrap≡native assumption (§5.5). Realized-vs-realized at size; taker fees are config constants at each exchange's top published tier (Bybit Supreme VIP 4.5 bps, Binance VIP9 2.25 bps — App. D). |
 | **D8** | **Deferred** | Non-stable / multi-asset market universe (e.g. POE/Metric WBTC, WETH pools) — needs historical pricing. *(Done since v0.3: POE/Metric on-chain backfill; non-destructive venue reconcile.)* |
 
 ---
@@ -329,8 +329,17 @@ event Open(bytes32 indexed key, uint192 indexed bookIdA, uint192 indexed bookIdB
   bytes32 salt, address strategy);                                                      // LiquidityVault (vault-cut tagging)
 ```
 
-## Appendix D — Bybit V5 (CEX benchmark)
+## Appendix D — CEX feeds & fee tiers
 
-**Symbol** `MONUSDT` (spot). WS `wss://stream.bybit.com/v5/public/spot` — `orderbook.50.MONUSDT` (snapshot+delta) + `tickers.MONUSDT` (BBO); REST `GET /v5/market/orderbook` + `/v5/market/instruments-info`. Mid = `(bestBid + bestAsk)/2`.
+**Bybit V5** (MON benchmark): symbol `MONUSDT` (spot). WS `wss://stream.bybit.com/v5/public/spot` — `orderbook.50.MONUSDT` (snapshot+delta) + `tickers.MONUSDT` + cross-symbol tickers (`USDCUSDT`); REST `GET /v5/market/orderbook` + `/v5/market/tickers`. Mid = `(bestBid + bestAsk)/2`.
 
-**Spot taker fee** defaults to non-VIP **10 bps**; set the exec view's taker constant to the operator's actual rate (VIP/PRO tiers and the MNT discount lower it).
+**Binance** (BTC/ETH benchmark): `BTCUSDT`/`ETHUSDT` + `USDCUSDT` + `WBTCBTC` via the geo-unrestricted data mirror (`data-api.binance.vision` / `wss://data-stream.binance.vision`, §5.5) — combined `@depth20@100ms` + `@bookTicker` streams, REST snapshots.
+
+**Fee tiers — both benchmarks use each exchange's top PUBLISHED spot tier** (the advanced-trader benchmark; institutional PRO/MM tiers go lower but aren't published as a schedule). Config constants `TAKER_BPS` / `BINANCE_TAKER_BPS`; the venue display names carry the tier.
+
+| Benchmark | Tier (default) | Taker |
+|---|---|---|
+| Bybit (Supreme VIP) | Supreme VIP — top published spot tier | **4.5 bps** |
+| Binance (VIP9) | VIP9 | **2.25 bps** |
+
+Bybit spot schedule for reference: non-VIP 10 bps taker · VIP3 7.5 · VIP5 5.0 · **Supreme VIP 4.5** (maker 3.0). Set the constants to the operator's actual tier if different.
