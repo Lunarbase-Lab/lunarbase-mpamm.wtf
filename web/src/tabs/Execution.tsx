@@ -31,8 +31,19 @@ export function ExecutionTab() {
   // the CEX benchmark for the SELECTED pair — routed by base asset (Bybit for MON,
   // Binance for BTC/ETH). The prose explains it's walked as a taker (book + fee).
   const ref = d.referenceFor(pair);
-  // toggle chips: every propAMM venue + the selected pair's CEX reference.
-  const chips: VenueMeta[] = ref ? [...d.displayVenues, ref] : d.displayVenues;
+  // venues that actually quote the SELECTED pair — sticky per session (like
+  // seenMarkets above) so a transient quote gap can't pop chips in/out.
+  const seenVenuePairs = useRef(new Set<string>());
+  useMemo(() => {
+    if (!d.quotes) return;
+    for (const r of d.quotes.rows) if (r.bidPx > 0 || r.askPx > 0) seenVenuePairs.current.add(`${r.venueId}|${r.market}`);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [d.quotes]);
+  const pairVenues = d.displayVenues.filter((v) => seenVenuePairs.current.has(`${v.id}|${pair}`));
+  // toggle chips: the propAMM venues that support this pair + its CEX reference
+  // (before the first quote tick, fall back to all venues so the row isn't empty).
+  const shown = pairVenues.length ? pairVenues : d.displayVenues;
+  const chips: VenueMeta[] = ref ? [...shown, ref] : shown;
   // active = chips the user has enabled (all registry venues default on).
   const active = chips.filter((v) => d.venueToggles[v.id]);
   const refName = ref?.name ?? 'the CEX reference';
@@ -109,9 +120,11 @@ export function ExecutionTab() {
     const notes = active.filter((v) => v.role === 'venue').map((v) => {
       if (q.rows.some((r) => r.venueId === v.id && r.market === pair && r.sizeUsd === size)) return null;
       const at = SIZES_USD.filter((s) => q.rows.some((r) => r.venueId === v.id && r.market === pair && r.sizeUsd === s));
+      // a venue with NO quotes for the pair has no chip at all now (pair-filtered),
+      // so the only note worth showing is the per-size gap on a supporting venue.
       return at.length
         ? `${v.name} quotes ${pair} at ${at.map(sizeLabel).join(' / ')}, not ${sizeLabel(size)}`
-        : `${v.name} has no live ${pair} quote`;
+        : null;
     }).filter(Boolean);
     return notes.length ? notes.join(' · ') : null;
     // eslint-disable-next-line react-hooks/exhaustive-deps
