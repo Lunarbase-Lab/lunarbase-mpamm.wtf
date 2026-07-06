@@ -24,6 +24,9 @@ interface UiState {
   venueToggles: Record<string, boolean>;
   // markouts
   mkProto: string; mkSide: string; mkSize: string; mkPaused: boolean;
+  // volume window: RANGE preset ('7D'|'14D'|'30D'|'ALL') or 'CUSTOM' when the
+  // brush has a hand-drawn window (volStart/volEnd = day indexes into d.volume).
+  volRange: string; volStart: number | null; volEnd: number | null;
   // leaderboard
   lbWin: string; lbGroup: string; lbHz: string; lbMk: string; lbWinners: boolean; lbTop: number;
 }
@@ -72,6 +75,7 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
     tab: 'exec', theme: initialTheme(), pair: 'MON/USDC', size: 100,
     venueToggles: {},
     mkProto: 'ALL', mkSide: 'ALL', mkSize: 'ANY', mkPaused: false,
+    volRange: 'ALL', volStart: null, volEnd: null,
     lbWin: '24H', lbGroup: 'PROTOCOL', lbHz: 'T+0S', lbMk: 'TAKER', lbWinners: true, lbTop: 25,
   });
   const [conn, setConn] = useState<'connecting' | 'live' | 'reconnecting'>('connecting');
