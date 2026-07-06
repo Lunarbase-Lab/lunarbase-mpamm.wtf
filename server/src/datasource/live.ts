@@ -337,25 +337,71 @@ export class LiveDataSource extends BaseSource {
     const floor = BigInt(config.getLogsChunk);
     let cursor = from;
     let sinceMerge = 0;
+    // RPC archive holes: some providers permanently fail getLogs for specific
+    // historical ranges ("error getting block header from triedb and archive").
+    // Retrying across boots can never fix those — the backfill would stall at the
+    // same block forever (observed live on Metric ~block 73.05M). After retries
+    // exhaust at the floor chunk size we SKIP the range and say so loudly. Holes
+    // can span MILLIONS of blocks, so while consecutive chunks keep failing the
+    // skip stride DOUBLES (floor → ~a day per hop, retries drop to 1): the hole's
+    // far edge is found in O(log) hops instead of hours of 90-block skips. Cost:
+    // the last hop can overshoot past the hole's end by up to one stride — those
+    // blocks are counted in `skipped` (loud), never silently.
+    let skipped = 0n;
+    let holeRun = 0;
+    let skipStride = floor;
+    const MAX_STRIDE = 216_000n; // ≈ one UTC day of Monad blocks (~0.4s/block)
+    const maxChunk = BigInt(config.backfillChunk);
     this.noteOnce(`${name}: on-chain backfill ${sinceUtc} — blocks ${from}→${end}`);
 
+    /** one getLogs across every fill source over [cursor, t]; throws on failure. */
+    const fetchRange = (t: bigint) => Promise.all(sources.map((s) =>
+      publicClient.getLogs({ address: s.address as any, fromBlock: cursor, toBlock: t, events: s.events as any } as any) as Promise<any[]>));
+
     while (cursor <= end) {
-      const to = cursor + chunk - 1n > end ? end : cursor + chunk - 1n;
-      // fetch every fill source over [cursor,to]; shrink the span on a range error,
-      // back off on a transient error, so we stay under the RPC's caps.
+      // ── in-hole mode: probe a floor-sized slice at the cursor. Readable → the
+      // hole is over (fall through and INGEST that probe normally). Unreadable →
+      // skip a stride and double it (capped), so a multi-million-block hole is
+      // crossed in O(log) hops.
+      let to = cursor + chunk - 1n > end ? end : cursor + chunk - 1n;
       let batches: any[][] | null = null;
-      let tries = 0;
-      while (batches === null) {
+      if (holeRun > 0) {
+        const probeTo = cursor + floor - 1n > end ? end : cursor + floor - 1n;
         try {
-          batches = await Promise.all(sources.map((s) =>
-            publicClient.getLogs({ address: s.address as any, fromBlock: cursor, toBlock: to, events: s.events as any } as any) as Promise<any[]>));
-        } catch (e) {
-          if (chunk > floor) { chunk = chunk / 2n > floor ? chunk / 2n : floor; break; } // too wide → shrink, retry cursor
-          if (++tries <= 5) { await sleep(config.backfillPaceMs * 10 * tries); continue; } // transient → back off
-          throw e; // give up this adapter (retried next boot)
+          batches = await fetchRange(probeTo);
+          to = probeTo;                      // ingest exactly the probe slice
+          holeRun = 0; skipStride = floor;   // hole ended — back to normal scanning
+        } catch {
+          const strideTo = cursor + skipStride - 1n > end ? end : cursor + skipStride - 1n;
+          skipped += strideTo - cursor + 1n;
+          holeRun++;
+          skipStride = skipStride * 2n > MAX_STRIDE ? MAX_STRIDE : skipStride * 2n;
+          cursor = strideTo + 1n;
+          await sleep(config.backfillPaceMs);
+          continue;
         }
+      } else {
+        // ── normal mode: shrink the span on a range error, back off on a
+        // transient error, and enter hole mode when the floor chunk still fails.
+        let tries = 0;
+        while (batches === null) {
+          try {
+            batches = await fetchRange(to);
+            if (chunk < maxChunk) { chunk = chunk * 2n > maxChunk ? maxChunk : chunk * 2n; } // recover after shrinks
+          } catch {
+            if (chunk > floor) { chunk = chunk / 2n > floor ? chunk / 2n : floor; break; } // too wide → shrink, retry cursor
+            if (++tries <= 5) { await sleep(config.backfillPaceMs * 25 * tries); continue; } // transient → back off
+            // permanently unreadable at floor granularity → enter hole mode.
+            skipped += to - cursor + 1n;
+            holeRun = 1;
+            skipStride = floor * 2n;
+            this.noteOnce(`${name} backfill: RPC archive could not serve blocks near ${cursor} — skipping unreadable range(s); affected day(s) may undercount`);
+            cursor = to + 1n;
+            break;
+          }
+        }
+        if (batches === null) continue; // shrank or entered hole mode — loop from the adjusted cursor
       }
-      if (batches === null) continue; // shrank — retry the same cursor with a smaller span
 
       const all = batches.flat();
       if (all.length) {
@@ -401,9 +447,14 @@ export class LiveDataSource extends BaseSource {
 
     this.mergeBackfill(vid, acc);
     this.store.setMeta(`backfill_cursor_${vid}`, String(end + 1n));
+    // done even when ranges were skipped — re-running every boot can't fix an RPC
+    // archive hole. To re-attempt after the provider repairs it: delete the
+    // 'backfill_done_<venue>' + 'backfill_cursor_<venue>' meta rows (the SET-per-day
+    // merge makes a full re-run idempotent).
     this.store.setMeta(`backfill_done_${vid}`, '1');
     this.store.upsertMany(this.days);
-    this.note(`${name}: backfill complete — ${acc.size} day(s) seeded`);
+    this.note(`${name}: backfill complete — ${acc.size} day(s) seeded` +
+      (skipped > 0n ? ` (${skipped} block(s) unreadable on the RPC archive and skipped — those windows may undercount)` : ''));
     this.emitMsg({ ch: 'volume', data: this.cloneDay(this.today()) }); // nudge connected clients
   }
 
