@@ -83,6 +83,13 @@ export const config = {
   backfillPaceMs: num('BACKFILL_PACE_MS', 40),
   /** Merge + persist backfilled volume (and advance the resume cursor) every N chunks. */
   backfillMergeEvery: num('BACKFILL_MERGE_EVERY', 50),
+  /** ONE-SHOT full re-scan trigger: comma-separated venue ids (e.g. "metric").
+   *  On boot, clears those venues' backfill done-flag + cursor so their history
+   *  re-scans from backfillFromUtc — use after switching to a better archive RPC
+   *  to recover skipped holes. Applied once per VALUE (a marker meta remembers
+   *  it), so redeploys don't re-trigger; to re-run again later, change the value
+   *  (e.g. "metric@2"). The SET-per-day merge keeps re-scans idempotent. */
+  backfillReset: env.BACKFILL_RESET ?? '',
 } as const;
 
 export type Config = typeof config;

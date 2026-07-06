@@ -37,7 +37,9 @@ export class LiveDataSource extends BaseSource {
     getLogs: getLogsChunked,
     pricer: this.pricer,
     config,
-    log: (m: string) => this.note(m),
+    // deduped: discovery logs repeat verbatim on every 10-min rediscover and
+    // were accumulating unbounded ("Metric: 3 pool(s)" × N) in public notes.
+    log: (m: string) => this.noteOnce(m),
   };
 
   private quotes: QuoteSnapshot = { block: 0, monUsd: 0, ts: 0, rows: [] };
@@ -247,7 +249,12 @@ export class LiveDataSource extends BaseSource {
     return s.length > 300 ? s.slice(0, 297) + '…' : s;
   }
   /** append a (sanitized) note. ALL notes must go through this or noteOnce. */
-  private note(msg: string): void { this.notes.push(this.scrubNote(msg)); }
+  private note(msg: string): void {
+    this.notes.push(this.scrubNote(msg));
+    // capped: notes live for the process lifetime and are served publicly —
+    // keep a recent window, never an unbounded log.
+    while (this.notes.length > 60) this.notes.shift();
+  }
   /** push a note at most once — per-tick drop reasons must not spam state.notes. */
   private noteOnce(msg: string): void {
     const s = this.scrubNote(msg);
@@ -286,6 +293,25 @@ export class LiveDataSource extends BaseSource {
     }
   }
 
+  /**
+   * ONE-SHOT backfill reset (BACKFILL_RESET="metric[,poe]"): clear the listed
+   * venues' done-flag + cursor so their full history re-scans — used after
+   * switching to a better archive RPC to recover previously skipped holes.
+   * A marker meta remembers the applied VALUE, so redeploys/restarts don't
+   * re-trigger a multi-hour scan; change the value (e.g. "metric@2") to re-run.
+   */
+  private applyBackfillReset(): void {
+    const want = config.backfillReset.trim();
+    if (!want || this.store.getMeta('backfill_reset_applied') === want) return;
+    const vids = want.split(',').map((s) => s.trim().split('@')[0]).filter(Boolean);
+    for (const vid of vids) {
+      this.store.setMeta(`backfill_done_${vid}`, '');
+      this.store.setMeta(`backfill_cursor_${vid}`, '');
+    }
+    this.store.setMeta('backfill_reset_applied', want);
+    this.note(`backfill reset applied (${want}) — re-scanning: ${vids.join(', ')}`);
+  }
+
   // ── background on-chain backfill ─────────────────────────────────────────────
   /**
    * Seed deep daily-volume history for adapters that declared `backfillFromUtc`
@@ -295,6 +321,7 @@ export class LiveDataSource extends BaseSource {
    * (retried each boot until `backfill_done_<venue>` is set).
    */
   private async backfillOnchain(): Promise<void> {
+    this.applyBackfillReset();
     for (const a of ADAPTERS) {
       const sinceUtc = a.backfillFromUtc;
       const vid = a.venues()[0]?.id ?? '';
