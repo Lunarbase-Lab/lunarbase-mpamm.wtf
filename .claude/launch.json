@@ -4,15 +4,37 @@
     {
       "name": "dev",
       "runtimeExecutable": "npm",
-      "runtimeArgs": ["run", "dev"],
+      "runtimeArgs": [
+        "run",
+        "dev"
+      ],
       "port": 5173
+    },
+    {
+      "name": "dev-sim",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": [
+        "run",
+        "dev"
+      ],
+      "port": 5173,
+      "env": {
+        "DATA_SOURCE": "sim"
+      }
     },
     {
       "name": "web-prod-proxy",
       "runtimeExecutable": "npm",
-      "runtimeArgs": ["-w", "web", "run", "dev"],
+      "runtimeArgs": [
+        "-w",
+        "web",
+        "run",
+        "dev"
+      ],
       "port": 5173,
-      "env": { "BACKEND_URL": "https://mpamm.wtf" }
+      "env": {
+        "BACKEND_URL": "https://mpamm.wtf"
+      }
     }
   ]
 }

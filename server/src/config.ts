@@ -83,6 +83,16 @@ export const config = {
   backfillPaceMs: num('BACKFILL_PACE_MS', 40),
   /** Merge + persist backfilled volume (and advance the resume cursor) every N chunks. */
   backfillMergeEvery: num('BACKFILL_MERGE_EVERY', 50),
+  /** ONBOARDING markout backfill: once per venue, scan its last N days of fills
+   *  on-chain (real block timestamps) and mark them against the exchanges'
+   *  ARCHIVED prices (Bybit trade dumps at 1s / Binance 1s klines — see
+   *  server/src/history/cex.ts), so a newly added venue starts with its
+   *  leaderboard window populated instead of empty. Bounded to the UI's widest
+   *  window (30d) on purpose — the display never goes deeper (pamm.wtf-aligned),
+   *  so venue-lifetime marking would be cost without product. Resumable across
+   *  boots; MARKOUT_BACKFILL=off disables. */
+  markoutBackfill: (env.MARKOUT_BACKFILL ?? 'on').toLowerCase() !== 'off',
+  markoutBackfillDays: num('MARKOUT_BACKFILL_DAYS', 30),
   /** ONE-SHOT full re-scan trigger: comma-separated venue ids (e.g. "metric").
    *  On boot, clears those venues' backfill done-flag + cursor so their history
    *  re-scans from backfillFromUtc — use after switching to a better archive RPC

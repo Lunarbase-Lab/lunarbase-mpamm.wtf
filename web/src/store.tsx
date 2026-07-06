@@ -1,7 +1,7 @@
 import { createContext, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import type { MarketState, QuoteSnapshot, QuoteRow, Fill, DailyVolume, VenueMeta } from '@shared';
+import type { MarketState, QuoteSnapshot, QuoteRow, Fill, DailyVolume, VenueMeta, LeaderboardResponse } from '@shared';
 import { pairOf, cexForBase } from '@shared';
-import { fetchMarkets, fetchFills, fetchQuoteHistory, connectStream } from './lib/api';
+import { fetchMarkets, fetchFills, fetchLeaderboard, fetchQuoteHistory, connectStream } from './lib/api';
 import type { Theme } from './theme';
 
 /** Read the persisted theme, matching the pre-paint script in index.html.
@@ -31,12 +31,19 @@ interface UiState {
   lbWin: string; lbGroup: string; lbHz: string; lbMk: string; lbWinners: boolean; lbTop: number;
 }
 
+/** the leaderboard window pills → /api/leaderboard days. */
+export const LB_WIN_DAYS: Record<string, number> = { '24H': 1, '7D': 7, '30D': 30 };
+
 interface Dashboard extends UiState {
   conn: 'connecting' | 'live' | 'reconnecting';
   state: MarketState | null;
   quotes: QuoteSnapshot | null;
   volume: DailyVolume[];
   fills: Fill[];
+  /** server-side aggregates for the CURRENT leaderboard window (lbWin). */
+  lb: LeaderboardResponse | null;
+  /** the 24h aggregate (outlier feed) — polled while the Markouts tab is open. */
+  lbDay: LeaderboardResponse | null;
   frame: number;
   // venue registry (from state.venues) + derived views. Everything venue-related
   // in the UI reads these; nothing about a venue is hardcoded client-side.
@@ -83,6 +90,8 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
   const [quotes, setQuotes] = useState<QuoteSnapshot | null>(null);
   const [volume, setVolume] = useState<DailyVolume[]>([]);
   const [fills, setFills] = useState<Fill[]>([]);
+  const [lb, setLb] = useState<LeaderboardResponse | null>(null);
+  const [lbDay, setLbDay] = useState<LeaderboardResponse | null>(null);
   const [frame, setFrame] = useState(0);
 
   const seriesRef = useRef<Record<string, Series>>({});
@@ -226,9 +235,12 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
       try {
         // markets snapshot + the persisted historical fills window (the tape /
         // markouts / leaderboard operate on real history, not a live buffer).
+        // The tape only needs a recent window — leaderboard/outlier stats come
+        // pre-aggregated from /api/leaderboard over the FULL window instead
+        // (fetching 30d of raw fills silently truncated at the 20k cap).
         const [m, hist] = await Promise.all([
           fetchMarkets(),
-          fetchFills(30, 20000).catch(() => null),
+          fetchFills(1, 5000).catch(() => null),
         ]);
         if (!mounted.v) return;
         setState(m.state); setQuotes(m.quotes); setVolume(m.volume);
@@ -255,6 +267,27 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // server-side leaderboard aggregates: fetch on tab entry + window change, then
+  // poll every 30s while the tab is open (fills stream live, aggregates don't).
+  const lbDays = LB_WIN_DAYS[ui.lbWin] ?? 1;
+  useEffect(() => {
+    if (ui.tab !== 'leaderboard') return;
+    let on = true;
+    const load = () => { fetchLeaderboard(lbDays).then((d) => { if (on) setLb(d); }).catch(() => { /* retried on the next poll */ }); };
+    load();
+    const id = setInterval(load, 30_000);
+    return () => { on = false; clearInterval(id); };
+  }, [ui.tab, lbDays]);
+  // the Markouts tab's OUTLIER_FEED reads the 24h aggregate.
+  useEffect(() => {
+    if (ui.tab !== 'markouts') return;
+    let on = true;
+    const load = () => { fetchLeaderboard(1).then((d) => { if (on) setLbDay(d); }).catch(() => { /* retried on the next poll */ }); };
+    load();
+    const id = setInterval(load, 30_000);
+    return () => { on = false; clearInterval(id); };
+  }, [ui.tab]);
+
   // reseed when the selected pair/size changes
   useEffect(() => { reseed(); setFrame((f) => f + 1); /* eslint-disable-next-line */ }, [ui.pair, ui.size]);
   // reseed when the venue registry changes (ids added/removed) so the buffers are
@@ -280,7 +313,7 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
   }, [venuesById, reference]);
 
   const api = useMemo<Dashboard>(() => ({
-    ...ui, conn, state, quotes, volume, fills, frame,
+    ...ui, conn, state, quotes, volume, fills, lb, lbDay, frame,
     venues, displayVenues, reference, references, referenceFor, venuesById,
     series: seriesRef.current, samples: samplesRef.current,
     set: (k, v) => setUi((s) => ({ ...s, [k]: v })),
@@ -297,7 +330,7 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
       setFrame((f) => f + 1);
     },
     resetLb: () => setUi((s) => ({ ...s, lbWin: '24H', lbGroup: 'PROTOCOL', lbHz: 'T+0S', lbMk: 'TAKER', lbWinners: true, lbTop: 25 })),
-  }), [ui, conn, state, quotes, volume, fills, frame, venues, displayVenues, reference, references, referenceFor, venuesById]);
+  }), [ui, conn, state, quotes, volume, fills, lb, lbDay, frame, venues, displayVenues, reference, references, referenceFor, venuesById]);
 
   return <Ctx.Provider value={api}>{children}</Ctx.Provider>;
 }
@@ -317,7 +350,9 @@ function upsertFill(fills: Fill[], f: Fill): Fill[] {
     next[i] = f;
     return next;
   }
+  // the in-memory buffer only feeds the tape/outlier-merge — a recent window,
+  // not the aggregation base (that's server-side now), so keep it bounded.
   const next = [...fills, f];
-  if (next.length > 50000) next.shift();
+  if (next.length > 8000) next.shift();
   return next;
 }

@@ -1,4 +1,4 @@
-import type { MarketsResponse, StreamMessage, Fill, QuoteSnapshot } from '@shared';
+import type { MarketsResponse, StreamMessage, Fill, QuoteSnapshot, LeaderboardResponse } from '@shared';
 
 export async function fetchMarkets(): Promise<MarketsResponse> {
   const r = await fetch('/api/markets');
@@ -14,10 +14,19 @@ export async function fetchQuoteHistory(market: string, size: number): Promise<Q
   return r.json();
 }
 
-/** Historical fills window (persisted) for the tape / markouts / leaderboard. */
-export async function fetchFills(days = 30, limit = 20000): Promise<Fill[]> {
+/** Recent fills window (persisted) — feeds the live SWAP_TAPE. The leaderboard
+ *  and outlier stats come pre-aggregated from /api/leaderboard instead (raw
+ *  fills silently truncated the wide windows at any sane fetch cap). */
+export async function fetchFills(days = 1, limit = 5000): Promise<Fill[]> {
   const r = await fetch(`/api/fills?days=${days}&limit=${limit}`);
   if (!r.ok) throw new Error(`/api/fills ${r.status}`);
+  return r.json();
+}
+
+/** Server-side aggregated leaderboard/markout stats over the FULL window. */
+export async function fetchLeaderboard(days: number): Promise<LeaderboardResponse> {
+  const r = await fetch(`/api/leaderboard?days=${days}`);
+  if (!r.ok) throw new Error(`/api/leaderboard ${r.status}`);
   return r.json();
 }
 

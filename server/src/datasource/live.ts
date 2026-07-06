@@ -2,7 +2,10 @@ import { BaseSource } from './index.js';
 import {
   MARKETS, SIZES_USD, MARKOUT_HORIZONS, ASSETS, PAIRS, pairOf,
   type DataSourceMode, type MarketState, type QuoteSnapshot, type QuoteRow, type Fill, type DailyVolume,
+  type LeaderboardResponse,
 } from '@shared';
+import { computeLeaderboard } from '../analytics.js';
+import { pairMidSeries } from '../history/cex.js';
 import { config } from '../config.js';
 import { publicClient, getLogsChunked, probeChain, blockAtOrAfter } from '../chain/rpc.js';
 import { UsdPricer } from '../pricer.js';
@@ -93,7 +96,18 @@ export class LiveDataSource extends BaseSource {
     this.persistTimer = setInterval(() => this.persist(), config.persistMs);
     this.rediscoverTimer = setInterval(() => { void this.rediscover(); }, config.rediscoverMs);
     // seed deep history in the BACKGROUND — never blocks boot or the live tail.
-    if (config.backfillEnabled) void this.backfillOnchain();
+    if (config.backfillEnabled || config.markoutBackfill) void this.backgroundHistory();
+  }
+
+  /** Background history stages, in product-value order: onboarding markouts
+   *  first (bounded ~30d — populates the leaderboard window a viewer actually
+   *  sees), THEN the deep venue-lifetime volume backfill (can run for hours). */
+  private async backgroundHistory(): Promise<void> {
+    if (config.markoutBackfill) {
+      try { await this.markoutOnboarding(); }
+      catch (e) { this.noteOnce(`markout onboarding stopped: ${(e as Error).message}; resumes next boot`); }
+    }
+    if (config.backfillEnabled) await this.backfillOnchain();
   }
 
   stop(): void {
@@ -495,6 +509,220 @@ export class LiveDataSource extends BaseSource {
       d.byVenue[vid] = { usd: tot.usd, swaps: tot.swaps };
     }
     this.days.sort((a, b) => (a.utcDay < b.utcDay ? -1 : 1));
+  }
+
+  // ── onboarding markout backfill (last ~30d per venue) ────────────────────────
+  /**
+   * When a venue is onboarded (no `mkfill_done_<vid>` marker), give it the
+   * leaderboard window it's missing: scan its last MARKOUT_BACKFILL_DAYS of
+   * fills on-chain with REAL block timestamps, persist them (insert-if-absent —
+   * never clobbering a live-marked fill), then mark every still-unmarked fill
+   * against the exchanges' ARCHIVED prices (server/src/history/cex.ts). Bounded
+   * to the UI's widest window on purpose — the display never goes deeper.
+   * Every stage is resumable (cursor metas); the remark also re-runs cheaply on
+   * later boots so days deferred on an unpublished archive (the current month's
+   * Bybit dump) self-heal once it publishes.
+   */
+  private async markoutOnboarding(): Promise<void> {
+    for (const a of ADAPTERS) {
+      const vid = a.venues()[0]?.id ?? '';
+      const name = a.venues()[0]?.name ?? vid;
+      if (!vid) continue;
+      // ALL sources (fills + state + attribution), unlike the volume backfill:
+      // these rows are user-visible in the tape/leaderboard, so decode needs its
+      // state (e.g. Clober book Opens) and router attribution to label them.
+      let sources: LogSource[];
+      try { sources = a.logSources(); }
+      catch { this.noteOnce(`${name} markout onboarding deferred — pools not discovered yet`); continue; }
+      if (!sources.some((s) => (s.kind ?? 'fills') === 'fills')) { this.store.setMeta(`mkfill_done_${vid}`, '1'); continue; }
+      try {
+        if (this.store.getMeta(`mkfill_done_${vid}`) !== '1') await this.backfillRecentFills(a, vid, name, sources);
+        await this.remarkVenue(vid, name);
+      } catch (e) {
+        this.noteOnce(`${name} markout onboarding paused (${(e as Error).message}); resumes next boot`);
+      }
+    }
+  }
+
+  /** Scan the venue's recent fills on-chain (day-aligned window, real block
+   *  timestamps) and persist them. Volume buckets are NOT touched — closed-day
+   *  volume is owned by the venue's volume backfill / subgraph seed, and the
+   *  deterministic fill ids make this idempotent against both. */
+  private async backfillRecentFills(a: VenueAdapter, vid: string, name: string, sources: LogSource[]): Promise<void> {
+    const end = this.bootHead;
+    if (end <= 0n) return;
+    // Day-ALIGNED window start so every scanned day is complete — a partial
+    // oldest day would later reconcile an undercounted swap count onto a day the
+    // volume backfill counted fully.
+    let sinceDay = utcDay(Date.now() - config.markoutBackfillDays * 86_400_000);
+    if (a.backfillFromUtc && a.backfillFromUtc > sinceDay) sinceDay = a.backfillFromUtc; // venue younger than the window
+    const startSec = Math.floor(Date.parse(`${sinceDay}T00:00:00Z`) / 1000);
+    let from = await blockAtOrAfter(startSec, end);
+    const cur = this.store.getMeta(`mkfill_cursor_${vid}`);
+    if (cur) {
+      const cb = BigInt(cur);
+      if (cb > from && cb <= end + 1n) from = cb; // resume (fills are id-deduped, no day alignment needed)
+    }
+    if (from > end) { this.store.setMeta(`mkfill_done_${vid}`, '1'); return; }
+
+    const today = utcDay();
+    let chunk = BigInt(config.backfillChunk);
+    const floor = BigInt(config.getLogsChunk);
+    const maxChunk = BigInt(config.backfillChunk);
+    let cursor = from;
+    let sinceFlush = 0;
+    let persisted = 0;
+    let tsFails = 0; // consecutive timestamp-resolution failures at the SAME cursor
+    const batch: Fill[] = [];
+    this.noteOnce(`${name}: onboarding fill scan ${sinceDay} — blocks ${from}→${end}`);
+
+    const fetchAll = (t: bigint) => Promise.all(sources.map((s) =>
+      publicClient.getLogs({ address: s.address as any, fromBlock: cursor, toBlock: t, events: s.events as any } as any) as Promise<any[]>));
+
+    while (cursor <= end) {
+      const to = cursor + chunk - 1n > end ? end : cursor + chunk - 1n;
+      let batches: any[][] | null = null;
+      let tries = 0;
+      while (batches === null) {
+        try {
+          batches = await fetchAll(to);
+          if (chunk < maxChunk) chunk = chunk * 2n > maxChunk ? maxChunk : chunk * 2n; // recover after shrinks
+        } catch {
+          if (chunk > floor) { chunk = chunk / 2n > floor ? chunk / 2n : floor; break; } // too wide → shrink, retry cursor
+          if (++tries <= 5) { await sleep(config.backfillPaceMs * 25 * tries); continue; } // transient → back off
+          // A recent range should never be an archive hole; if the RPC still
+          // can't serve it, skip ONE floor chunk loudly rather than stalling.
+          this.noteOnce(`${name} onboarding: RPC could not serve blocks near ${cursor} — a small range was skipped`);
+          cursor = to + 1n;
+          break;
+        }
+      }
+      if (batches === null) continue; // shrank or skipped — loop from the adjusted cursor
+
+      const all = batches.flat();
+      if (all.length) {
+        // REAL per-block timestamps (batched + paced): markouts are a seconds-
+        // scale join, so the chunk-anchor shortcut the volume backfill uses
+        // would smear fills by minutes.
+        const blockTs = new Map<string, number>();
+        const blocks = [...new Set<bigint>(all.map((l) => l.blockNumber as bigint))];
+        const POOL = 15;
+        let tsFailed = false;
+        for (let i = 0; i < blocks.length && !tsFailed; i += POOL) {
+          await Promise.all(blocks.slice(i, i + POOL).map(async (bn) => {
+            for (let r = 0; r < 3; r++) {
+              try {
+                blockTs.set(String(bn), Number((await publicClient.getBlock({ blockNumber: bn })).timestamp) * 1000);
+                return;
+              } catch { await sleep(config.backfillPaceMs * 5 * (r + 1)); }
+            }
+            tsFailed = true;
+          }));
+          await sleep(config.backfillPaceMs);
+        }
+        // bounded retry: a permanently unresolvable block must not loop forever —
+        // after 3 attempts skip the chunk (its fills stay un-backfilled, loudly).
+        if (tsFailed) {
+          if (++tsFails < 3) { await sleep(config.backfillPaceMs * 25 * tsFails); continue; }
+          this.noteOnce(`${name} onboarding: block timestamps unresolved near ${cursor} — chunk skipped`);
+          tsFails = 0;
+          cursor = to + 1n;
+          continue;
+        }
+        tsFails = 0;
+        const tsOf = (bn: bigint) => {
+          const ts = blockTs.get(String(bn));
+          if (ts == null) throw new Error(`missing block timestamp for ${bn}`);
+          return ts;
+        };
+        const bundle: LogBundle = {};
+        sources.forEach((s, i) => { bundle[s.key] = batches![i]; });
+        const fills = this.ownVenues(a, await a.decode(this.ctx, bundle, tsOf, new Set()), 'onboarding fill');
+        // today is owned by the live tail (its volume/markouts accrue there).
+        for (const f of fills) if (utcDay(f.ts) < today) batch.push(f);
+      }
+
+      cursor = to + 1n;
+      if (++sinceFlush >= config.backfillMergeEvery || cursor > end) {
+        persisted += this.store.insertFillsIfAbsent(batch);
+        batch.length = 0;
+        this.store.setMeta(`mkfill_cursor_${vid}`, String(cursor));
+        sinceFlush = 0;
+      }
+      await sleep(config.backfillPaceMs);
+    }
+
+    this.store.setMeta(`mkfill_done_${vid}`, '1');
+    this.note(`${name}: onboarding fill scan complete — ${persisted} historical fill(s) persisted`);
+  }
+
+  /** Mark this venue's still-unmarked persisted fills against archived CEX
+   *  prices, per market, walking closed days forward (resumable cursor). */
+  private async remarkVenue(vid: string, name: string): Promise<void> {
+    const cutoff = this.bootMs - 2 * 3_600_000; // the live aging path owns the recent window
+    for (const market of this.store.remarkCandidateMarkets(vid, cutoff)) {
+      await this.remarkVenueMarket(vid, name, market, cutoff);
+    }
+  }
+
+  private async remarkVenueMarket(vid: string, name: string, market: string, cutoff: number): Promise<void> {
+    if (!pairOf(market)) return; // unregistered market — never marked (defense in depth)
+    const metaKey = `mkhist_cursor_${vid}_${market}`;
+    const first = this.store.earliestRemarkCandidate(vid, market, cutoff);
+    if (first == null) return;
+    let day = utcDay(first);
+    const cur = this.store.getMeta(metaKey);
+    // resume from the cursor: candidates BEFORE it were walked already and stayed
+    // null (permanent mid gaps) — re-fetching their archives every boot would
+    // loop forever for nothing.
+    if (cur && cur > day) day = cur;
+    const lastDay = utcDay(cutoff - 86_400_000); // only fully-closed days
+    let marked = 0;
+    while (day <= lastDay) {
+      const dayStart = Date.parse(`${day}T00:00:00Z`);
+      const dayEnd = dayStart + 86_400_000;
+      const fills = this.store.fillsForRemark(vid, market, dayStart, dayEnd);
+      if (fills.length) {
+        // pair-terms mid series covering the day + the horizons past midnight.
+        const series = await pairMidSeries(market, dayStart, dayEnd + 120_000);
+        if (!series) { this.noteOnce(`${name} ${market}: CEX price archive for ${day} not published yet — markouts resume later`); return; }
+        const updates = fills.map((f) => {
+          const ss = f.side === 'buy' ? 1 : -1;
+          const marks = MARKOUT_HORIZONS.map((h) => {
+            const mid = series.at(f.ts + h * 1000);
+            return mid == null || mid <= 0 || f.execPx <= 0 ? null : ss * (mid / f.execPx - 1) * 1e4;
+          });
+          return { id: f.id, markoutsBps: marks };
+        });
+        this.store.applyRemarks(updates);
+        // count only fills that got ≥1 markout — an all-null result (mid gaps)
+        // is honest but isn't "computed".
+        marked += updates.filter((u) => u.markoutsBps.some((m) => m != null)).length;
+      }
+      this.store.setMeta(metaKey, day);
+      day = utcDay(dayStart + 86_400_000 + 1);
+      await sleep(config.backfillPaceMs);
+    }
+    if (marked) {
+      this.note(`${name} ${market}: markouts backfilled for ${marked} fill(s)`);
+      this.lbCache.clear(); // fresh aggregates on the next /api/leaderboard hit
+    }
+  }
+
+  /** Aggregated leaderboard over the FULL window, from SQLite (no fetch cap).
+   *  TTL-cached per window: the scan is a synchronous full pass over the
+   *  window's rows (~1s at 30d × Metric's fill rate), so polling clients share
+   *  one computation and the event loop pays at most once per TTL. */
+  private lbCache = new Map<number, { at: number; res: LeaderboardResponse }>();
+  leaderboard(days: number): LeaderboardResponse {
+    const ttl = days <= 1 ? 15_000 : days <= 7 ? 60_000 : 300_000;
+    const now = Date.now();
+    const hit = this.lbCache.get(days);
+    if (hit && now - hit.at < ttl) return hit.res;
+    const rows = this.store.lbFillsSince(now - days * 86_400_000);
+    const res = computeLeaderboard(rows, days, now, (ids) => this.store.fillsByIds(ids));
+    this.lbCache.set(days, { at: now, res });
+    return res;
   }
 
   /** Historical fills from the DB (the leaderboard/markouts query real windows). */

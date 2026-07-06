@@ -86,7 +86,7 @@ Stacked daily-notional-by-venue. Each landed swap contributes the USD value of i
 Live normalized fill tape + post-trade markouts: each fill's realized price vs its pair's CEX mid at T+{0s…}, aging in as it crosses each horizon. Fills whose realized price is approximated (no true execPx) are excluded from markouts rather than fabricating ~0 edge. Rows link to the tx on the explorer.
 
 ### 4.4 Leaderboard (`[4]`)
-Top swaps / participants over a selectable window, filtered to fills that carry a real execPx.
+Top swaps / participants over a selectable window (24H/7D/30D — aligned with pamm.wtf; markouts are a recent-execution-quality signal, not an all-time archive), filtered to fills that carry a real execPx. Stats are **aggregated server-side** (`/api/leaderboard`): the browser gets small TAKER-signed group rows (volume, swaps, markout percentiles, pool PnL, a downsampled cumulative-PnL sparkline) plus the top winner/loser fills per horizon, and derives the MAKER view as a pure sign flip. Shipping raw fills silently truncated the wide windows at any sane fetch cap (~20k fills ≈ <2 days at Metric's fill rate).
 
 ---
 
@@ -165,6 +165,7 @@ The public RPC caps `getLogs` to short ranges, so deep replay at the tip is impr
 - **Fail-closed ingest**: any error in a tail cycle — a `fills`/`state` log source, the block-timestamp lookup, or an adapter `decode()` — **holds the global cursor** and retries the exact range; nothing advances/ingests/emits partially. Fills carry a deterministic `venue-txHash-logIndex` id; daily volume + cursor + fills persist in **one transaction** (idempotent re-tail).
 - **Clober** closed days are seeded once via `backfill()` from the **Goldsky subgraph** (`Σ BookDayData.volumeUSD` over registered vault books, using the same pair gate as live decode).
 - **POE and Metric** (no keyless subgraph) are seeded by a **background on-chain backfill**: the core replays each adapter's `Swap` logs from its `backfillFromUtc` (set to the pool's on-chain deploy day — POE `2026-05-09`, Metric `2026-03-31`) up to the boot head, decodes via the adapter's own `decode()`, and folds into daily volume. It runs OFF the boot path (never blocks the dashboard or the tail): adaptive `getLogs` chunks (start wide, auto-shrink on a range 413) paced under the RPC cap, one `getBlock` per chunk for UTC-day bucketing (a chunk spans ~minutes), closed days only (`< today`, so no overlap with the tail), SET-per-day (idempotent). A day-aligned resume cursor + a `backfill_done_<venue>` flag make it resumable across restarts. Knobs: `BACKFILL` / `BACKFILL_CHUNK` / `BACKFILL_PACE_MS` / `BACKFILL_MERGE_EVERY`.
+- **Onboarding markout backfill** (runs FIRST, before the deep volume scan): once per venue (`mkfill_done_<venue>`), the core scans the venue's last `MARKOUT_BACKFILL_DAYS` (default 30 — the UI's widest window; the display never goes deeper, so venue-lifetime marking would be cost without product) of fills on-chain with **real per-block timestamps** (markouts are a seconds-scale join — the volume path's chunk-anchor shortcut would smear them by minutes), persists them insert-if-absent (never clobbering a live-marked fill), then marks every still-unmarked fill against the exchanges' **archived prices** (`server/src/history/cex.ts`): Bybit monthly public trade dumps reduced to a 1s last-trade series (MON legs), Binance 1s klines (BTC/ETH legs), 1m klines for the slow cross/wrap legs — the same pair-terms construction as the live reference (§5.5). Carry-forward lookups with a staleness cap: a print gap yields a **null** markout, never a fabricated one. Per-(venue, market) day cursors make it resumable; a day whose archive isn't published yet (the current month's Bybit dump) defers and self-heals on a later boot. `MARKOUT_BACKFILL=off` disables.
 
 ### 5.5 CEX references + pricing — the reference is in the PAIR'S OWN TERMS
 The deep CEX books are USDT-quoted and native-asset; the on-chain pairs trade **wrapped assets in USDC**. Both mismatches are real, live-priced markets — not $1 pegs — so the reference for a pair is constructed as:
@@ -212,7 +213,8 @@ GET  /api/venues                        the venue registry (VenueMeta[]) — UI 
 GET  /api/markets                       tracked markets + current state snapshot (incl. venues)
 GET  /api/quotes                        latest quote matrix (incl. per-pair "vs CEX" cols)
 GET  /api/volume?from=&to=              daily series (DailyVolume.byVenue)
-GET  /api/fills?days=&limit=            historical fill window (markouts)
+GET  /api/fills?days=&limit=            recent fill window (the live tape)
+GET  /api/leaderboard?days=1|7|30       full-window aggregated leaderboard/markout stats (§4.4)
 WS   /stream                            channels: state, quotes, fill, volume
 ```
 Frontend renders purely off these — never touches the RPC, subgraph, or CEX feeds directly.

@@ -29,13 +29,9 @@ export function pnlFmt(x: number): string {
   return (x >= 0 ? '+' : '−') + fmtUsd(Math.abs(x));
 }
 
-export function percentile(arr: number[], p: number): number {
-  if (!arr.length) return 0;
-  const s = [...arr].sort((a, b) => a - b);
-  const i = (s.length - 1) * p;
-  const lo = Math.floor(i), hi = Math.ceil(i);
-  return s[lo] + (s[hi] - s[lo]) * (i - lo);
-}
+// percentile moved to @shared — the server-side leaderboard aggregation uses
+// the SAME implementation, so client and server numbers can never drift.
+export { percentile } from '@shared';
 
 export function stdev(arr: number[]): number {
   if (arr.length < 2) return 0;

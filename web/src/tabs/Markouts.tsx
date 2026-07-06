@@ -63,14 +63,20 @@ export function MarkoutsTab() {
 
   // outlier feed — last 24h by |mk-0s P&L| desc, top 18. Only fills with a
   // realized markout (excludes pxApprox + not-yet-aged) — audit B1/C2.
+  // Base = the SERVER's 24h aggregate (the full window; the in-memory buffer
+  // only holds a recent slice), merged with the live-streamed fills so a fresh
+  // outlier appears between polls. Live rows win on id (newer markouts).
   const outliers = useMemo(() => {
     const since = Date.now() - 86_400_000;
-    return d.fills
+    const byId = new Map<string, Fill>();
+    for (const f of d.lbDay?.outliers ?? []) byId.set(f.id, f);
+    for (const f of d.fills) if (byId.has(f.id) || f.ts >= since) byId.set(f.id, f);
+    return [...byId.values()]
       .filter((f) => f.ts >= since && !f.pxApprox && f.markoutsBps[0] != null)
       .map((f) => ({ f, pnl: ((f.markoutsBps[0] as number) / 1e4) * f.usd }))
       .sort((a, b) => Math.abs(b.pnl) - Math.abs(a.pnl))
       .slice(0, 18);
-  }, [d.fills]);
+  }, [d.fills, d.lbDay]);
 
   return (
     <div>

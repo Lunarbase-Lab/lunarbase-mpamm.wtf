@@ -4,7 +4,7 @@ import { createServer, type Server } from 'node:http';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { WebSocketServer, WebSocket } from 'ws';
-import { STREAM_PATH, type MarketsResponse, type StreamMessage } from '@shared';
+import { STREAM_PATH, LEADERBOARD_WINDOW_DAYS, type MarketsResponse, type StreamMessage } from '@shared';
 import type { DataSource } from './datasource/index.js';
 import { config } from './config.js';
 import { venueMeta } from './venues/registry.js';
@@ -65,6 +65,16 @@ export function startServer(source: DataSource): Server {
     const requestedLimit = positiveNumberParam(req.query.limit);
     const limit = Math.min(Math.floor(requestedLimit ?? 1000), 50_000);
     res.json(source.queryFills({ sinceMs, limit }));
+  });
+  // aggregated leaderboard/markout stats over the FULL window (?days=1|7|30) —
+  // computed server-side next to the rows; shipping raw fills silently truncated
+  // the wide windows at the fetch cap. TAKER-signed; clients derive MAKER.
+  app.get('/api/leaderboard', (req, res) => {
+    const days = positiveNumberParam(req.query.days) ?? 1;
+    if (!(LEADERBOARD_WINDOW_DAYS as readonly number[]).includes(days)) {
+      return res.status(400).json({ error: `days must be one of ${LEADERBOARD_WINDOW_DAYS.join(', ')}` });
+    }
+    res.json(source.leaderboard(days));
   });
   app.get('/api/volume', (req, res) => {
     // honor ?from=&to= (YYYY-MM-DD, lexicographic). Both scope columns

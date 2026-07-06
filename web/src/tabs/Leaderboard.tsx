@@ -1,13 +1,14 @@
 import { useMemo } from 'react';
-import type { Fill } from '@shared';
-import { useDashboard } from '../store';
+import type { LeaderboardGrouping } from '@shared';
+import { useDashboard, LB_WIN_DAYS } from '../store';
 import { C, SEM, venueColor } from '../theme';
 import { Pills, SideTag } from '../components/ui';
-import { fmtUsd, fmtAmt, fmtInt, pnlFmt, percentile, sparkPath, humanAge, shortHex } from '../lib/format';
+import { fmtUsd, fmtAmt, fmtInt, pnlFmt, sparkPath, humanAge, shortHex } from '../lib/format';
 
 const HZ_IDX: Record<string, number> = { 'T+0S': 0, 'T+10S': 2, 'T+30S': 3, 'T+60S': 4 };
-const DAY = 86_400_000;
-const WIN_MS: Record<string, number> = { '24H': DAY, '7D': 7 * DAY, '30D': 30 * DAY };
+const GROUP_ID: Record<string, LeaderboardGrouping> = {
+  PROTOCOL: 'protocol', POOL: 'pool', 'TO ADDRESS': 'to', CATEGORY: 'category',
+};
 
 // CATEGORY colour (DCLogic.catCol) from stable semantic/theme tokens (never a
 // venue color). UNKNOWN is highlighted because attribution was unavailable.
@@ -25,81 +26,52 @@ const TOP_GRID = '30px 76px 64px 82px 1.3fr 64px 88px 46px 1fr 1fr 76px 56px 80p
 
 export function LeaderboardTab() {
   const d = useDashboard();
-  const fills = d.fills;
-  const { lbWin, lbGroup, lbHz, lbMk, lbWinners, lbTop, venuesById } = d;
+  const { lb, lbWin, lbGroup, lbHz, lbMk, lbWinners, lbTop, venuesById } = d;
 
   const hzIdx = HZ_IDX[lbHz] ?? 0;
   const sign = lbMk === 'MAKER' ? -1 : 1;
 
-  // real time-window slice over the persisted fills (no extrapolation). Fills now
-  // carry only display venue ids, so no venue-specific filtering is needed here.
-  const windowed = useMemo(() => {
-    const since = Date.now() - (WIN_MS[lbWin] ?? WIN_MS['24H']);
-    return fills.filter((f) => f.ts >= since);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [fills, lbWin, d.frame]);
+  // Aggregates come from /api/leaderboard, computed server-side over the FULL
+  // window (the old in-browser aggregation silently truncated 7D/30D at the
+  // fills fetch cap). The response is TAKER-signed; MAKER is a pure sign flip:
+  // pX' = −p(100−X), pnl' = −pnl, spark' = −spark. Only render a response that
+  // matches the selected window (a stale one would mislabel the table).
+  const current = lb && lb.days === (LB_WIN_DAYS[lbWin] ?? 1) ? lb : null;
 
-  // Only fills that have a realized markout at the selected horizon feed the
-  // percentile / PnL / sparkline math — never coerce null→0 (audit C2). Exclude
-  // pxApprox fills EXPLICITLY (not just via the null-markout proxy): the shared
-  // contract says their execPx/markouts are not real execution edge (spec §5.2).
-  const windowedHz = useMemo(
-    () => windowed.filter((f) => !f.pxApprox && f.markoutsBps[hzIdx] != null),
-    [windowed, hzIdx],
-  );
-
-  // PROTOCOL_LEADERBOARD rows — grouped + percentiled per DCLogic.lbVals().
+  // PROTOCOL_LEADERBOARD rows — top groups by volume at the selected horizon.
   // PROTOCOL groups by the stable Fill.venueId; the row label + color resolve
   // from the registry (venuesById), so nothing about a venue is hardcoded.
   const lbRows = useMemo(() => {
-    const keyFn = (f: Fill): string =>
-      lbGroup === 'PROTOCOL' ? f.venueId
-        : lbGroup === 'CATEGORY' ? (f.category === 'DIRECT' ? 'direct' : f.category)
-          : lbGroup === 'POOL' ? f.pool
-            : f.to;
+    const rows = current?.groups[GROUP_ID[lbGroup] ?? 'protocol']?.[String(hzIdx)] ?? [];
     const labelFor = (k: string): string =>
       lbGroup === 'PROTOCOL' ? (venuesById[k]?.name ?? k) : k;
     const colorFor = (k: string): string =>
       lbGroup === 'PROTOCOL' ? venueColor(venuesById[k], d.theme)
         : lbGroup === 'CATEGORY' ? catCol(k === 'direct' ? '—' : k)
           : C.accent;
-
-    const groups: Record<string, Fill[]> = {};
-    for (const f of windowedHz) {
-      const k = keyFn(f);
-      (groups[k] = groups[k] ?? []).push(f);
-    }
-    let arr = Object.entries(groups).map(([k, fs]) => {
-      const vol = fs.reduce((a, f) => a + f.usd, 0);
-      const mks = fs.map((f) => sign * (f.markoutsBps[hzIdx] ?? 0));
-      const pnl = fs.reduce((a, f) => a + (sign * (f.markoutsBps[hzIdx] ?? 0)) / 1e4 * f.usd, 0);
-      const ord = [...fs].sort((a, b) => a.ts - b.ts);
-      let c = 0;
-      const sp = ord.map((f) => { c += (sign * (f.markoutsBps[hzIdx] ?? 0)) / 1e4 * f.usd; return c; });
-      return {
-        name: labelFor(k), color: colorFor(k), vol, swaps: fs.length,
-        p5: percentile(mks, .05), p25: percentile(mks, .25), p50: percentile(mks, .5),
-        p75: percentile(mks, .75), p95: percentile(mks, .95), pnl, sp,
-      };
-    });
-    arr.sort((a, b) => b.vol - a.vol);
-    arr = arr.slice(0, 12);
-    return arr;
+    return rows.map((r) => ({
+      name: labelFor(r.key), color: colorFor(r.key), vol: r.vol, swaps: r.swaps,
+      ...(sign === 1
+        ? { p5: r.p5, p25: r.p25, p50: r.p50, p75: r.p75, p95: r.p95, pnl: r.pnl, sp: r.spark }
+        : { p5: -r.p95, p25: -r.p75, p50: -r.p50, p75: -r.p25, p95: -r.p5, pnl: -r.pnl, sp: r.spark.map((v) => -v) }),
+    }));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [windowedHz, lbGroup, lbMk, d.frame, d.theme, venuesById]);
+  }, [current, lbGroup, hzIdx, sign, d.theme, venuesById]);
 
-  // TOP_SWAPS rows — biggest single-swap winners/losers per DCLogic.lbVals().
+  // TOP_SWAPS rows — biggest single-swap winners/losers. Under the MAKER sign
+  // flip the server's loser list IS the maker-winner list (and vice versa), in
+  // the right order already.
   const topRows = useMemo(() => {
-    let tsw = windowedHz.map((f) => {
-      const mk = sign * (f.markoutsBps[hzIdx] as number);
-      return { f, mk, pnl: mk / 1e4 * f.usd };
-    });
-    tsw = lbWinners
-      ? tsw.filter((x) => x.pnl > 0).sort((a, b) => b.pnl - a.pnl)
-      : tsw.filter((x) => x.pnl < 0).sort((a, b) => a.pnl - b.pnl);
-    return tsw.slice(0, lbTop);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [windowedHz, lbMk, lbWinners, lbTop, d.frame]);
+    const lists = current?.topSwaps[String(hzIdx)];
+    const list = (lbWinners === (sign === 1) ? lists?.winners : lists?.losers) ?? [];
+    return list
+      .filter((f) => f.markoutsBps[hzIdx] != null)
+      .map((f) => {
+        const mk = sign * (f.markoutsBps[hzIdx] as number);
+        return { f, mk, pnl: mk / 1e4 * f.usd };
+      })
+      .slice(0, lbTop);
+  }, [current, hzIdx, sign, lbWinners, lbTop]);
 
   // percentile cell — '+'/'' + toFixed(2), green > 0.02 / red < -0.02 / dim.
   const pcell = (v: number) => ({

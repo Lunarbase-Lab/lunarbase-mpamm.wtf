@@ -316,6 +316,67 @@ export interface DailyVolume {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
+// Leaderboard aggregates (spec §4.4) — computed SERVER-side over the FULL
+// window. Shipping raw fills to the browser silently truncated the 7D/30D
+// windows at the fetch cap (~20k fills ≈ <2 days at Metric's rate); the
+// aggregation now runs where all the rows are. Windows align with pamm.wtf
+// (1d/7d/30d) — markouts are a recent-execution-quality signal, not an
+// all-time archive.
+// ──────────────────────────────────────────────────────────────────────────
+
+/** Aggregation windows (days) served by /api/leaderboard. */
+export const LEADERBOARD_WINDOW_DAYS = [1, 7, 30] as const;
+
+/** Horizon INDEXES (into MARKOUT_HORIZONS) the leaderboard aggregates over
+ *  (T+0/10/30/60s — the UI's horizon pills). */
+export const LEADERBOARD_HORIZON_IDX = [0, 2, 3, 4] as const;
+
+/** Server-side group-by dimensions (the UI's GROUP BY pills). */
+export const LEADERBOARD_GROUPINGS = ['protocol', 'pool', 'to', 'category'] as const;
+export type LeaderboardGrouping = (typeof LEADERBOARD_GROUPINGS)[number];
+
+/** One aggregated leaderboard row. All values are TAKER-signed; the MAKER view
+ *  is a pure sign flip the client derives (pX' = −p(100−X), pnl' = −pnl,
+ *  spark' = −spark), so the server never computes it twice. */
+export interface LeaderboardGroupRow {
+  /** group key: venueId (protocol) / pool / to-label / category ('direct' for DIRECT). */
+  key: string;
+  vol: number;
+  swaps: number;
+  /** markout-bps percentiles over the group's fills at the row's horizon. */
+  p5: number; p25: number; p50: number; p75: number; p95: number;
+  /** Σ(markout_bps × usd / 10⁴) — pool PnL at the row's horizon. */
+  pnl: number;
+  /** downsampled cumulative-PnL series (ts order) for the sparkline. */
+  spark: number[];
+}
+
+export interface LeaderboardResponse {
+  days: number;
+  generatedAt: number;
+  /** fills scanned in the window (pxApprox excluded) — the stats' true base. */
+  totalFills: number;
+  /** grouping → horizon index (string key) → top rows by volume. Only fills with
+   *  a realized markout at that horizon feed a cell (nulls never coerced to 0). */
+  groups: Record<LeaderboardGrouping, Record<string, LeaderboardGroupRow[]>>;
+  /** horizon index → biggest single-swap winners/losers by TAKER PnL. Full fills
+   *  so the client renders + re-signs them (MAKER winners = TAKER losers). */
+  topSwaps: Record<string, { winners: Fill[]; losers: Fill[] }>;
+  /** last-24h fills by |T+0 PnL| desc (the Markouts tab's OUTLIER_FEED). */
+  outliers: Fill[];
+}
+
+/** Linear-interpolated percentile (p in [0,1]) — the ONE implementation shared
+ *  by the server aggregation and any client-side math, so numbers never drift. */
+export function percentile(arr: number[], p: number): number {
+  if (!arr.length) return 0;
+  const s = [...arr].sort((a, b) => a - b);
+  const i = (s.length - 1) * p;
+  const lo = Math.floor(i), hi = Math.ceil(i);
+  return s[lo] + (s[hi] - s[lo]) * (i - lo);
+}
+
+// ──────────────────────────────────────────────────────────────────────────
 // Market state / service status
 // ──────────────────────────────────────────────────────────────────────────
 

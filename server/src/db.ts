@@ -260,6 +260,34 @@ export class VolumeStore {
     return rows.map(rowToFill);
   }
 
+  /** Light rows for the SERVER-SIDE leaderboard aggregation — the FULL window,
+   *  no cap (capping is what silently truncated the 7D/30D views client-side).
+   *  pxApprox rows are excluded here: the shared contract keeps them out of
+   *  every markout/leaderboard stat, volume included. ts-ascending so the
+   *  aggregation's cumulative-PnL sparklines accumulate in fill order. */
+  lbFillsSince(sinceMs: number): Array<{ id: string; ts: number; venueId: string; category: string; pool: string; to: string; usd: number; markoutsBps: (number | null)[] }> {
+    const rows = this.db.prepare(`
+      SELECT id, ts, venue_id, category, pool, to_label, usd, markouts_bps
+      FROM fills WHERE ts >= ? AND px_approx = 0 ORDER BY ts ASC
+    `).all(sinceMs) as Array<Record<string, any>>;
+    return rows.map((r) => ({
+      id: r.id, ts: r.ts, venueId: r.venue_id, category: r.category,
+      pool: r.pool, to: r.to_label, usd: r.usd, markoutsBps: JSON.parse(r.markouts_bps),
+    }));
+  }
+
+  /** Full fills by id (order not preserved) — resolves the aggregation's
+   *  top-swap/outlier selections. Chunked under SQLite's bound-param limit. */
+  fillsByIds(ids: string[]): Fill[] {
+    const out: Fill[] = [];
+    for (let i = 0; i < ids.length; i += 500) {
+      const part = ids.slice(i, i + 500);
+      const q = part.map(() => '?').join(',');
+      out.push(...(this.db.prepare(`SELECT * FROM fills WHERE id IN (${q})`).all(...part) as Array<Record<string, any>>).map(rowToFill));
+    }
+    return out;
+  }
+
   /** Exact retained fill counts by UTC day and venue, with no API/query cap. */
   fillCountsByDayVenue(): Array<{ utcDay: string; venueId: string; swaps: number }> {
     const rows = this.db.prepare(`
@@ -268,6 +296,78 @@ export class VolumeStore {
       GROUP BY utc_day, venue_id
     `).all() as Array<Record<string, any>>;
     return rows.map((r) => ({ utcDay: r.utc_day, venueId: r.venue_id, swaps: Number(r.swaps) }));
+  }
+
+  // ── onboarding markout backfill (last ~30d per venue) ───────────────────────
+  /** Insert fills only if ABSENT (ON CONFLICT DO NOTHING) — the onboarding fill
+   *  scan re-decodes ranges the live tail may have already persisted, and must
+   *  never clobber a live-marked fill's markouts. Returns rows actually added. */
+  insertFillsIfAbsent(fills: Fill[]): number {
+    if (!fills.length) return 0;
+    const ins = this.db.prepare(`
+      INSERT INTO fills (id, ts, block_number, venue_id, market, side, category, usd, base_amount, exec_px, px_approx, tx_hash, to_label, pool, markouts_bps)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO NOTHING`);
+    let added = 0;
+    this.db.exec('BEGIN');
+    try {
+      for (const f of fills) {
+        const markouts = f.pxApprox ? NULL_MARKOUTS_JSON : JSON.stringify(f.markoutsBps);
+        const info = ins.run(f.id, f.ts, f.blockNumber, f.venueId, f.market, f.side, f.category,
+          f.usd, f.baseAmount, f.execPx, f.pxApprox ? 1 : 0, f.txHash, f.to, f.pool, markouts);
+        added += Number(info.changes);
+      }
+      this.db.exec('COMMIT');
+    } catch (e) {
+      this.db.exec('ROLLBACK');
+      throw e;
+    }
+    return added;
+  }
+
+  /** Markets where this VENUE still has unmarked fills (all-null markouts, real
+   *  execPx) older than `beforeTs` — the remark job's work list. Venue-scoped so
+   *  one venue's onboarding can never skip another's later-added history. */
+  remarkCandidateMarkets(venueId: string, beforeTs: number): string[] {
+    const rows = this.db.prepare(`
+      SELECT DISTINCT market FROM fills
+      WHERE venue_id = ? AND px_approx = 0 AND markouts_bps = ? AND ts < ?
+    `).all(venueId, NULL_MARKOUTS_JSON, beforeTs) as Array<{ market: string }>;
+    return rows.map((r) => r.market);
+  }
+
+  /** Earliest unmarked fill for (venue, market) — initializes the day cursor. */
+  earliestRemarkCandidate(venueId: string, market: string, beforeTs: number): number | null {
+    const row = this.db.prepare(`
+      SELECT MIN(ts) AS t FROM fills
+      WHERE venue_id = ? AND market = ? AND px_approx = 0 AND markouts_bps = ? AND ts < ?
+    `).get(venueId, market, NULL_MARKOUTS_JSON, beforeTs) as { t: number | null } | undefined;
+    return row?.t ?? null;
+  }
+
+  /** Unmarked fills for (venue, market) in [fromTs, toTs) — ts is already the
+   *  REAL block time (the onboarding scan resolves timestamps at decode). */
+  fillsForRemark(venueId: string, market: string, fromTs: number, toTs: number): Array<{ id: string; ts: number; side: string; execPx: number }> {
+    const rows = this.db.prepare(`
+      SELECT id, ts, side, exec_px FROM fills
+      WHERE venue_id = ? AND market = ? AND px_approx = 0 AND markouts_bps = ? AND ts >= ? AND ts < ?
+      ORDER BY ts ASC
+    `).all(venueId, market, NULL_MARKOUTS_JSON, fromTs, toTs) as Array<Record<string, any>>;
+    return rows.map((r) => ({ id: r.id, ts: r.ts, side: r.side, execPx: r.exec_px }));
+  }
+
+  /** Apply computed historical markouts in one transaction. */
+  applyRemarks(rows: Array<{ id: string; markoutsBps: (number | null)[] }>): void {
+    if (!rows.length) return;
+    const upd = this.db.prepare(`UPDATE fills SET markouts_bps = ? WHERE id = ?`);
+    this.db.exec('BEGIN');
+    try {
+      for (const r of rows) upd.run(JSON.stringify(r.markoutsBps), r.id);
+      this.db.exec('COMMIT');
+    } catch (e) {
+      this.db.exec('ROLLBACK');
+      throw e;
+    }
   }
 
   /** Drop fills older than `beforeMs` (retention). Returns rows removed. */

@@ -1,7 +1,9 @@
 import { EventEmitter } from 'node:events';
 import type {
   DataSourceMode, MarketState, QuoteSnapshot, Fill, DailyVolume, StreamMessage,
+  LeaderboardResponse,
 } from '@shared';
+import { computeLeaderboard } from '../analytics.js';
 
 /**
  * A DataSource produces the entire dashboard data model and streams updates.
@@ -18,6 +20,9 @@ export interface DataSource {
   getVolume(): DailyVolume[];
   /** Historical fills query (DB-backed for live, in-memory for sim). */
   queryFills(opts: { sinceMs?: number; limit?: number }): Fill[];
+  /** Aggregated leaderboard/markout stats over the FULL window — computed here,
+   *  next to the rows, because shipping raw fills truncated the wide windows. */
+  leaderboard(days: number): LeaderboardResponse;
   /** The last ~60s of REAL quote ticks for one (market, size) — seeds the
    *  Execution chart so it never fabricates history (flat pre-fill). */
   quoteHistory(market: string, size: number): QuoteSnapshot[];
@@ -41,6 +46,18 @@ export abstract class BaseSource extends EventEmitter implements DataSource {
   /** Rolling ring of the last QUOTE_HISTORY_N broadcast quote matrices — recorded
    *  at the emitMsg choke point so live + sim get it identically for free. */
   private quoteHist: QuoteSnapshot[] = [];
+
+  /** Default: aggregate the in-memory fill window (sim). Live overrides with a
+   *  full-window SQLite scan + TTL cache. */
+  leaderboard(days: number): LeaderboardResponse {
+    const now = Date.now();
+    const since = now - days * 86_400_000;
+    const rows = this.getFills().filter((f) => !f.pxApprox && f.ts >= since);
+    return computeLeaderboard(rows, days, now, (ids) => {
+      const want = new Set(ids);
+      return this.getFills().filter((f) => want.has(f.id));
+    });
+  }
 
   /** Default: filter the in-memory window. Live overrides with a DB query. */
   queryFills(opts: { sinceMs?: number; limit?: number }): Fill[] {
