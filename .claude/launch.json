@@ -6,6 +6,13 @@
       "runtimeExecutable": "npm",
       "runtimeArgs": ["run", "dev"],
       "port": 5173
+    },
+    {
+      "name": "web-prod-proxy",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["-w", "web", "run", "dev"],
+      "port": 5173,
+      "env": { "BACKEND_URL": "https://mpamm.wtf" }
     }
   ]
 }

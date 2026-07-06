@@ -216,6 +216,12 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
   // and a reconnect re-syncs history/fills (spec §8 replay).
   useEffect(() => {
     const mounted = { v: true };
+    // The WS streams volume DELTAS (today's bucket) every tick, and it usually
+    // wins the race against the full REST snapshot. Merging a delta into the
+    // initial empty array made the page render a one-day "history" ($X all-time,
+    // "since today") until the snapshot landed. Gate deltas on the snapshot: the
+    // snapshot carries today's bucket anyway, and the next tick re-syncs it.
+    const snapshotLoaded = { v: false };
     const loadSnapshot = async () => {
       try {
         // markets snapshot + the persisted historical fills window (the tape /
@@ -226,6 +232,7 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
         ]);
         if (!mounted.v) return;
         setState(m.state); setQuotes(m.quotes); setVolume(m.volume);
+        snapshotLoaded.v = true;
         adoptVenues(m.state.venues ?? []);
         // /api/fills is newest-first; store oldest-first so the cap in
         // upsertFill drops the genuine oldest, not the newest (audit B4).
@@ -240,7 +247,7 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
     const dispose = connectStream((msg) => {
       if (msg.ch === 'state') { setState(msg.data); adoptVenues(msg.data.venues ?? []); }
       else if (msg.ch === 'quotes') { setQuotes(msg.data); pushSnapshot(msg.data); setFrame((f) => f + 1); }
-      else if (msg.ch === 'volume') setVolume((prev) => mergeDay(prev, msg.data));
+      else if (msg.ch === 'volume') { if (snapshotLoaded.v) setVolume((prev) => mergeDay(prev, msg.data)); }
       else if (msg.ch === 'fill') setFills((prev) => upsertFill(prev, msg.data));
     }, (s) => { setConn(s); if (s === 'live') loadSnapshot(); });
 
