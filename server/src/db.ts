@@ -270,6 +270,51 @@ export class VolumeStore {
     return rows.map((r) => ({ utcDay: r.utc_day, venueId: r.venue_id, swaps: Number(r.swaps) }));
   }
 
+  // ── historical markout backfill (venue-lifetime markouts) ───────────────────
+  /** Markets that still have UNMARKED historical fills (all-null markouts, real
+   *  execPx) older than `beforeTs` — the remark job's work list. */
+  remarkCandidateMarkets(beforeTs: number): string[] {
+    const rows = this.db.prepare(`
+      SELECT DISTINCT market FROM fills
+      WHERE px_approx = 0 AND markouts_bps = ? AND ts < ?
+    `).all(NULL_MARKOUTS_JSON, beforeTs) as Array<{ market: string }>;
+    return rows.map((r) => r.market);
+  }
+
+  /** Earliest unmarked historical fill for a market (cursor initialization). */
+  earliestRemarkCandidate(market: string, beforeTs: number): number | null {
+    const row = this.db.prepare(`
+      SELECT MIN(ts) AS t FROM fills
+      WHERE market = ? AND px_approx = 0 AND markouts_bps = ? AND ts < ?
+    `).get(market, NULL_MARKOUTS_JSON, beforeTs) as { t: number | null } | undefined;
+    return row?.t ?? null;
+  }
+
+  /** Unmarked historical fills for one market in [fromTs, toTs). */
+  fillsForRemark(market: string, fromTs: number, toTs: number): Array<{ id: string; ts: number; blockNumber: number; side: string; execPx: number }> {
+    const rows = this.db.prepare(`
+      SELECT id, ts, block_number, side, exec_px FROM fills
+      WHERE market = ? AND px_approx = 0 AND markouts_bps = ? AND ts >= ? AND ts < ?
+      ORDER BY ts ASC
+    `).all(market, NULL_MARKOUTS_JSON, fromTs, toTs) as Array<Record<string, any>>;
+    return rows.map((r) => ({ id: r.id, ts: r.ts, blockNumber: r.block_number, side: r.side, execPx: r.exec_px }));
+  }
+
+  /** Apply historical remark results: the fill's REFINED block timestamp (the
+   *  backfill stored a chunk-anchor ts) + its computed markouts, in one txn. */
+  applyRemarks(rows: Array<{ id: string; ts: number; markoutsBps: (number | null)[] }>): void {
+    if (!rows.length) return;
+    const upd = this.db.prepare(`UPDATE fills SET ts = ?, markouts_bps = ? WHERE id = ?`);
+    this.db.exec('BEGIN');
+    try {
+      for (const r of rows) upd.run(r.ts, JSON.stringify(r.markoutsBps), r.id);
+      this.db.exec('COMMIT');
+    } catch (e) {
+      this.db.exec('ROLLBACK');
+      throw e;
+    }
+  }
+
   /** Drop fills older than `beforeMs` (retention). Returns rows removed. */
   pruneFills(beforeMs: number): number {
     const info = this.db.prepare(`DELETE FROM fills WHERE ts < ?`).run(beforeMs);

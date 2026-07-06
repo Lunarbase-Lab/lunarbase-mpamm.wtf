@@ -10,6 +10,7 @@ import { VolumeStore } from '../db.js';
 import { utcDay, annotateCex } from '../util.js';
 import { ADAPTERS, REFERENCES, venueMeta, venueIds, validateRegistry } from '../venues/registry.js';
 import type { AdapterContext, LogBundle, LogSource, VenueAdapter } from '../venues/adapter.js';
+import { pairMidSeries } from '../history/cex.js';
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
@@ -93,7 +94,13 @@ export class LiveDataSource extends BaseSource {
     this.persistTimer = setInterval(() => this.persist(), config.persistMs);
     this.rediscoverTimer = setInterval(() => { void this.rediscover(); }, config.rediscoverMs);
     // seed deep history in the BACKGROUND — never blocks boot or the live tail.
-    if (config.backfillEnabled) void this.backfillOnchain();
+    // After the volume backfill, mark historical fills against the exchanges'
+    // archived prices (venue-lifetime markouts).
+    if (config.backfillEnabled) {
+      void this.backfillOnchain()
+        .then(() => (config.markoutBackfill ? this.remarkHistorical() : undefined))
+        .catch((e) => this.noteOnce(`historical markouts stopped: ${(e as Error).message}; resumes next boot`));
+    }
   }
 
   stop(): void {
@@ -135,11 +142,11 @@ export class LiveDataSource extends BaseSource {
     if (pruned.volume || pruned.fills) this.note(`pruned ${pruned.volume} volume row(s) + ${pruned.fills} fill(s) for removed venue(s)`);
     // 1. authoritative persisted history
     this.days = this.store.all();
-    // load recent fills for live serving; drop rows past the retention window
-    // (the persisted mid curve shares the fills' retention — it only exists to
-    // replay THEM on a markout-model bump).
-    this.store.pruneFills(Date.now() - config.fillsRetentionDays * 86_400_000);
-    this.store.pruneMids(Date.now() - config.fillsRetentionDays * 86_400_000);
+    // load recent fills for live serving. Fills are kept FOREVER by default
+    // (retention 0) — they carry the venue-lifetime markout history; the mid
+    // curve keeps its own fixed recent window (model-bump replay only).
+    if (config.fillsRetentionDays > 0) this.store.pruneFills(Date.now() - config.fillsRetentionDays * 86_400_000);
+    this.store.pruneMids(Date.now() - config.midsRetentionDays * 86_400_000);
     this.fills = this.store.recentFills(400);
     // seed the dedup guard with the persisted window so a gap-fill re-decode of
     // already-counted fills won't re-count them.
@@ -360,6 +367,7 @@ export class LiveDataSource extends BaseSource {
 
     const today = utcDay();
     const acc = new Map<string, { usd: number; swaps: number }>(); // closed utcDay -> totals
+    const histFills: Fill[] = []; // decoded fills pending persistence (flushed at merge points)
     let chunk = BigInt(config.backfillChunk);
     const floor = BigInt(config.getLogsChunk);
     let cursor = from;
@@ -451,6 +459,11 @@ export class LiveDataSource extends BaseSource {
           const bundle: LogBundle = {};
           sources.forEach((s, i) => { bundle[s.key] = batches![i]; });
           const fills = this.ownVenues(a, await a.decode(this.ctx, bundle, tsOf, new Set()), 'backfill fill');
+          // Persist the decoded fills too (deterministic ids → idempotent): the
+          // historical-markout stage later refines each fill's ts to its real
+          // block time and marks it against historical CEX mids. Their volume is
+          // carried by `acc` (SET-per-day), never re-aggregated from these rows.
+          for (const f of fills) if (utcDay(f.ts) < today) histFills.push(f);
           for (const f of fills) {
             const day = utcDay(f.ts);
             if (day >= today) continue; // today is owned by the live tail — no overlap
@@ -465,6 +478,7 @@ export class LiveDataSource extends BaseSource {
       cursor = to + 1n;
       if (++sinceMerge >= config.backfillMergeEvery || cursor > end) {
         this.mergeBackfill(vid, acc);
+        if (histFills.length) { this.store.upsertFills(histFills); histFills.length = 0; }
         this.store.setMeta(`backfill_cursor_${vid}`, String(cursor));
         this.store.upsertMany(this.days);
         sinceMerge = 0;
@@ -473,6 +487,7 @@ export class LiveDataSource extends BaseSource {
     }
 
     this.mergeBackfill(vid, acc);
+    if (histFills.length) { this.store.upsertFills(histFills); histFills.length = 0; }
     this.store.setMeta(`backfill_cursor_${vid}`, String(end + 1n));
     // done even when ranges were skipped — re-running every boot can't fix an RPC
     // archive hole. To re-attempt after the provider repairs it: delete the
@@ -483,6 +498,81 @@ export class LiveDataSource extends BaseSource {
     this.note(`${name}: backfill complete — ${acc.size} day(s) seeded` +
       (skipped > 0n ? ` (${skipped} block(s) unreadable on the RPC archive and skipped — those windows may undercount)` : ''));
     this.emitMsg({ ch: 'volume', data: this.cloneDay(this.today()) }); // nudge connected clients
+  }
+
+  // ── historical (venue-lifetime) markouts ─────────────────────────────────────
+  /**
+   * Mark every persisted HISTORICAL fill against the exchanges' archived prices:
+   * per market, walk forward day by day (cursor meta `mkhist_cursor_<market>`,
+   * resumable), refine each fill's chunk-anchor ts to its REAL block time, and
+   * compute markouts from the pair-terms mid series (Bybit trade dumps at 1s /
+   * Binance 1s klines; crosses+wrap at 1m — server/src/history/cex.ts). A day
+   * whose sources aren't published yet (current month's Bybit dump) defers the
+   * market to a later boot; a mid gap yields a null markout, never a fabricated
+   * one. Live-aged fills are excluded naturally (their markouts are non-null).
+   */
+  private async remarkHistorical(): Promise<void> {
+    const cutoff = this.bootMs - 2 * 3_600_000; // live aging owns the recent window
+    const markets = this.store.remarkCandidateMarkets(cutoff);
+    for (const market of markets) {
+      try { await this.remarkMarket(market, cutoff); }
+      catch (e) { this.noteOnce(`historical markouts (${market}) paused: ${(e as Error).message}; resumes next boot`); }
+    }
+  }
+
+  private async remarkMarket(market: string, cutoff: number): Promise<void> {
+    if (!pairOf(market)) return; // unregistered market — never marked (defense in depth)
+    const metaKey = `mkhist_cursor_${market}`;
+    const first = this.store.earliestRemarkCandidate(market, cutoff);
+    if (first == null) return;
+    let day = this.store.getMeta(metaKey) || utcDay(first);
+    const lastDay = utcDay(cutoff - 86_400_000); // only fully-closed days
+    let marked = 0;
+    this.noteOnce(`${market}: computing historical markouts from ${day}`);
+    while (day <= lastDay) {
+      const dayStart = Date.parse(`${day}T00:00:00Z`);
+      const dayEnd = dayStart + 86_400_000;
+      const fills = this.store.fillsForRemark(market, dayStart, dayEnd);
+      if (fills.length) {
+        // pair-terms mid series covering the day + the markout horizons past midnight.
+        const series = await pairMidSeries(market, dayStart, dayEnd + 120_000);
+        if (!series) { this.noteOnce(`${market}: price archive for ${day} not published yet — resuming later`); return; }
+        // refine chunk-anchor timestamps to REAL block times (batched, cached).
+        const blockTs = new Map<number, number>();
+        const blocks = [...new Set(fills.map((f) => f.blockNumber))];
+        const POOL = 15;
+        for (let i = 0; i < blocks.length; i += POOL) {
+          await Promise.all(blocks.slice(i, i + POOL).map(async (bn) => {
+            for (let r = 0; r < 3; r++) {
+              try {
+                blockTs.set(bn, Number((await publicClient.getBlock({ blockNumber: BigInt(bn) })).timestamp) * 1000);
+                return;
+              } catch { await sleep(config.backfillPaceMs * 5 * (r + 1)); }
+            }
+          }));
+          await sleep(config.backfillPaceMs);
+        }
+        const updates: Array<{ id: string; ts: number; markoutsBps: (number | null)[] }> = [];
+        for (const f of fills) {
+          const ts = blockTs.get(f.blockNumber);
+          if (ts == null) continue; // block unresolvable — stays unmarked (excluded), honest
+          const ss = f.side === 'buy' ? 1 : -1;
+          const marks = MARKOUT_HORIZONS.map((h) => {
+            const mid = series.at(ts + h * 1000);
+            return mid == null || mid <= 0 || f.execPx <= 0 ? null : ss * (mid / f.execPx - 1) * 1e4;
+          });
+          updates.push({ id: f.id, ts, markoutsBps: marks });
+        }
+        this.store.applyRemarks(updates);
+        // count only fills that actually got ≥1 markout — an all-null result
+        // (mid gaps) is applied for its refined ts but isn't "computed".
+        marked += updates.filter((u) => u.markoutsBps.some((m) => m != null)).length;
+      }
+      this.store.setMeta(metaKey, day);
+      day = utcDay(dayStart + 86_400_000 + 1);
+      await sleep(config.backfillPaceMs);
+    }
+    if (marked) this.note(`${market}: historical markouts computed for ${marked} fill(s)`);
   }
 
   /** Merge accumulated backfill totals into this.days, SET per (day, venue):

@@ -66,9 +66,14 @@ export const config = {
   rediscoverMs: num('REDISCOVER_MS', 600_000),
   /** Max same-day gap to fill from getLogs on restart (else start at tip). */
   gapFillMaxBlocks: num('GAPFILL_MAX_BLOCKS', 200000),
-  /** Decoded fills are persisted; rows older than this are pruned. The
-   *  leaderboard's widest window is 30d, so keep a little more. */
-  fillsRetentionDays: num('FILLS_RETENTION_DAYS', 35),
+  /** Decoded fills are persisted FOREVER by default (0 = no pruning): historical
+   *  fills carry the venue-lifetime markouts, and ~1M rows ≈ a few hundred MB is
+   *  fine on the persistent disk. Set a day count to re-enable pruning. */
+  fillsRetentionDays: num('FILLS_RETENTION_DAYS', 0),
+  /** The persisted per-pair mid curve keeps a fixed recent window regardless —
+   *  it only exists to replay RECENT fills on a markout-model bump (historical
+   *  markouts come from the CEX archives instead). */
+  midsRetentionDays: num('MIDS_RETENTION_DAYS', 35),
 
   // ── on-chain backfill (background) ──────────────────────────────────────────
   /** Replay each opted-in adapter's Swap logs from its `backfillFromUtc` to seed
@@ -83,6 +88,11 @@ export const config = {
   backfillPaceMs: num('BACKFILL_PACE_MS', 40),
   /** Merge + persist backfilled volume (and advance the resume cursor) every N chunks. */
   backfillMergeEvery: num('BACKFILL_MERGE_EVERY', 50),
+  /** Historical (venue-lifetime) markouts: after the on-chain backfill, mark
+   *  every persisted historical fill against the exchanges' ARCHIVED prices
+   *  (Bybit trade dumps at 1s, Binance 1s klines; crosses at 1m). Runs in the
+   *  background, day-cursor per market, resumable. MARKOUT_BACKFILL=off disables. */
+  markoutBackfill: (env.MARKOUT_BACKFILL ?? 'on').toLowerCase() !== 'off',
   /** ONE-SHOT full re-scan trigger: comma-separated venue ids (e.g. "metric").
    *  On boot, clears those venues' backfill done-flag + cursor so their history
    *  re-scans from backfillFromUtc — use after switching to a better archive RPC
