@@ -689,7 +689,9 @@ export class LiveDataSource extends BaseSource {
       if (fills.length) {
         // pair-terms mid series covering the day + the horizons past midnight.
         const series = await pairMidSeries(market, dayStart, dayEnd + 120_000);
-        if (!series) { this.noteOnce(`${name} ${market}: CEX price archive for ${day} not published yet — markouts resume later`); return; }
+        // deferral is a BREAK, not a return: the days already marked this walk
+        // must still get their summary note + cache invalidation below.
+        if (!series) { this.noteOnce(`${name} ${market}: CEX price archive for ${day} not published yet — markouts resume later`); break; }
         const updates = fills.map((f) => {
           const ss = f.side === 'buy' ? 1 : -1;
           const marks = MARKOUT_HORIZONS.map((h) => {
@@ -728,8 +730,20 @@ export class LiveDataSource extends BaseSource {
     const inflight = this.lbInflight.get(days);
     if (inflight) return inflight;
     const p = (async () => {
-      const rows = this.store.lbFillsSince(now - days * 86_400_000);
-      const res = await computeLeaderboard(rows, days, now, (ids) => this.store.fillsByIds(ids));
+      // keyset pages (never the whole window — a 30d materialization OOM'd the
+      // 512MB box), upper bound pinned to the request time so BOTH passes see
+      // the same snapshot while live fills keep landing.
+      const since = now - days * 86_400_000;
+      const makePass = () => {
+        let afterTs = -1;
+        let afterId = '';
+        return () => {
+          const page = this.store.lbFillsChunk(since, afterTs, afterId, 25_000, now);
+          if (page.length) { const last = page[page.length - 1]; afterTs = last.ts; afterId = last.id; }
+          return page;
+        };
+      };
+      const res = await computeLeaderboard(makePass, days, now, (ids) => this.store.fillsByIds(ids));
       this.lbCache.set(days, { at: now, res });
       return res;
     })().finally(() => this.lbInflight.delete(days));

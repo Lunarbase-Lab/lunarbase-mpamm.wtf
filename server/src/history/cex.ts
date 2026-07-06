@@ -109,11 +109,28 @@ const dumpDir = () => {
   return d;
 };
 
+const bybitDumpUrl = (symbol: string, month: string) => `https://public.bybit.com/spot/${symbol}/${symbol}-${month}.csv.gz`;
+
+/** true when the month's dump is published (HEAD, no body) — lets a multi-month
+ *  request fail fast BEFORE downloading any dump: without this, every boot
+ *  re-downloaded a full month (~10²MB, tmp cache is wiped per deploy) only to
+ *  defer on the NEXT month's 404. Non-404 probe failures return true (the GET
+ *  decides — a flaky HEAD must not fabricate an "unpublished" verdict). */
+async function bybitDumpExists(symbol: string, month: string): Promise<boolean> {
+  if (existsSync(join(dumpDir(), `${symbol}-${month}.csv.gz`))) return true;
+  try {
+    const r = await fetch(bybitDumpUrl(symbol, month), { method: 'HEAD', signal: AbortSignal.timeout(15_000) });
+    return r.status !== 404;
+  } catch {
+    return true;
+  }
+}
+
 /** Download (once) a Bybit monthly spot trade dump; returns local path or null (404 = month not published). */
 async function bybitDumpFile(symbol: string, month: string /* YYYY-MM */): Promise<string | null> {
   const path = join(dumpDir(), `${symbol}-${month}.csv.gz`);
   if (existsSync(path)) return path;
-  const url = `https://public.bybit.com/spot/${symbol}/${symbol}-${month}.csv.gz`;
+  const url = bybitDumpUrl(symbol, month);
   // generous timeout: it covers the WHOLE body stream (a ~12MB file on a slow
   // link can exceed 2min), and pipeline() propagates every stream error into
   // the awaited promise (a bare .pipe() left source errors unhandled → crash).
@@ -139,6 +156,10 @@ export async function bybitTradeSeries(symbol: string, fromMs: number, toMs: num
   const months = new Set<string>();
   for (let t = fromMs; t < toMs + 86_400_000; t += 86_400_000) months.add(new Date(t).toISOString().slice(0, 7));
   months.add(new Date(toMs).toISOString().slice(0, 7));
+  // fail fast: probe every needed month before downloading ANY of them.
+  for (const month of [...months].sort()) {
+    if (!(await bybitDumpExists(symbol, month))) return null;
+  }
   const ts: number[] = [], px: number[] = [];
   for (const month of [...months].sort()) {
     const file = await bybitDumpFile(symbol, month);

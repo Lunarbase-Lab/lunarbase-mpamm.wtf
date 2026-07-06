@@ -50,12 +50,18 @@ export abstract class BaseSource extends EventEmitter implements DataSource {
   private quoteHist: QuoteSnapshot[] = [];
 
   /** Default: aggregate the in-memory fill window (sim). Live overrides with a
-   *  full-window SQLite scan + TTL cache. */
+   *  keyset-paged SQLite scan + TTL cache. */
   leaderboard(days: number): Promise<LeaderboardResponse> {
     const now = Date.now();
     const since = now - days * 86_400_000;
-    const rows = this.getFills().filter((f) => !f.pxApprox && f.ts >= since);
-    return computeLeaderboard(rows, days, now, (ids) => {
+    const rows = this.getFills()
+      .filter((f) => !f.pxApprox && f.ts >= since && f.ts <= now)
+      .sort((a, b) => a.ts - b.ts || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+    const makePass = () => {
+      let i = 0;
+      return () => rows.slice(i, (i += 5000));
+    };
+    return computeLeaderboard(makePass, days, now, (ids) => {
       const want = new Set(ids);
       return this.getFills().filter((f) => want.has(f.id));
     });
