@@ -37,7 +37,7 @@ export class LiveDataSource extends BaseSource {
     getLogs: getLogsChunked,
     pricer: this.pricer,
     config,
-    log: (m: string) => this.notes.push(m),
+    log: (m: string) => this.note(m),
   };
 
   private quotes: QuoteSnapshot = { block: 0, monUsd: 0, ts: 0, rows: [] };
@@ -81,7 +81,7 @@ export class LiveDataSource extends BaseSource {
     // discover every venue's markets/pools (adapters hold their own state).
     for (const a of ADAPTERS) {
       try { await a.discover(this.ctx); }
-      catch (e) { this.notes.push(`${a.venues()[0]?.name ?? 'venue'} discovery failed: ${(e as Error).message}`); }
+      catch (e) { this.note(`${a.venues()[0]?.name ?? 'venue'} discovery failed: ${(e as Error).message}`); }
     }
 
     await this.initHistory();
@@ -130,7 +130,7 @@ export class LiveDataSource extends BaseSource {
     //    remaining venue's history is kept, unlike a schema reset). Runs before
     //    we load days so a removed venue's stale rows never reach the UI/totals.
     const pruned = this.store.reconcileVenues([...this.knownVenueIds]);
-    if (pruned.volume || pruned.fills) this.notes.push(`pruned ${pruned.volume} volume row(s) + ${pruned.fills} fill(s) for removed venue(s)`);
+    if (pruned.volume || pruned.fills) this.note(`pruned ${pruned.volume} volume row(s) + ${pruned.fills} fill(s) for removed venue(s)`);
     // 1. authoritative persisted history
     this.days = this.store.all();
     // load recent fills for live serving; drop rows past the retention window
@@ -162,7 +162,7 @@ export class LiveDataSource extends BaseSource {
           let row = this.days.find((d) => d.utcDay === bd.utcDay);
           if (!row) { row = this.emptyDay(bd.utcDay, false); this.days.push(row); }
           for (const [venueId, vd] of Object.entries(bd.byVenue)) {
-            if (!allowed.has(venueId)) { this.notes.push(`dropped backfill volume for foreign venue '${venueId}'`); continue; }
+            if (!allowed.has(venueId)) { this.note(`dropped backfill volume for foreign venue '${venueId}'`); continue; }
             row.byVenue[venueId] = { usd: vd.usd, swaps: vd.swaps ?? 0 };
           }
           row.partial = false;
@@ -173,11 +173,11 @@ export class LiveDataSource extends BaseSource {
         // bf.days, so they are NOT ingested (no double-count), and their
         // closed-day blocks sit before the live tail cursor (never re-decoded).
         for (const f of bf.fills ?? []) {
-          if (!allowed.has(f.venueId)) { this.notes.push(`dropped backfill fill for foreign venue '${f.venueId}'`); continue; }
+          if (!allowed.has(f.venueId)) { this.note(`dropped backfill fill for foreign venue '${f.venueId}'`); continue; }
           seededFills.push(f);
         }
       } catch (e) {
-        this.notes.push(`${a.venues()[0]?.name ?? 'venue'} backfill unavailable (${(e as Error).message}); history grows forward`);
+        this.note(`${a.venues()[0]?.name ?? 'venue'} backfill unavailable (${(e as Error).message}); history grows forward`);
       }
     }
     if (seededFills.length) {
@@ -189,7 +189,7 @@ export class LiveDataSource extends BaseSource {
       // markout/leaderboard stats (never fabricated from a much-later mid).
       for (const f of seededFills) if (this.hasFutureMarkoutHorizon(f, bootMs)) this.pending.add(f);
     }
-    if (seeded) this.notes.push(`seeded ${seeded} closed day-row(s) from adapter backfill; on-chain-only venues accumulate forward`);
+    if (seeded) this.note(`seeded ${seeded} closed day-row(s) from adapter backfill; on-chain-only venues accumulate forward`);
     this.days.sort((a, b) => (a.utcDay < b.utcDay ? -1 : 1));
     this.today(); // ensure today's partial bucket, rolling any stale "today" closed
     this.reconcileSwapCounts(); // derive per-venue swap counts from retained + backfilled fills
@@ -203,10 +203,10 @@ export class LiveDataSource extends BaseSource {
     const lpd = this.store.getMeta('lastProcessedDay');
     if (lpb && lpd === today && head - BigInt(lpb) <= BigInt(config.gapFillMaxBlocks)) {
       this.lastBlock = BigInt(lpb);
-      this.notes.push(`resuming: gap-filling ${head - BigInt(lpb)} block(s) since last run`);
+      this.note(`resuming: gap-filling ${head - BigInt(lpb)} block(s) since last run`);
     } else {
       this.lastBlock = head;
-      this.notes.push(lpb ? 'restart across day boundary — today builds forward' : 'cold start — today builds forward from now');
+      this.note(lpb ? 'restart across day boundary — today builds forward' : 'cold start — today builds forward from now');
     }
   }
 
@@ -236,8 +236,23 @@ export class LiveDataSource extends BaseSource {
     return { utcDay: day, byVenue: {}, partial };
   }
 
+  /**
+   * SANITIZE anything that reaches state.notes — notes are served publicly on
+   * /api/markets, and provider error messages embed the FULL request URL,
+   * including a private RPC key (viem prints "URL: https://host/rpc/<key>").
+   * Strip every URL, collapse whitespace, and cap the length.
+   */
+  private scrubNote(msg: string): string {
+    const s = msg.replace(/(?:https?|wss?):\/\/\S+/gi, '<rpc>').replace(/\s+/g, ' ').trim();
+    return s.length > 300 ? s.slice(0, 297) + '…' : s;
+  }
+  /** append a (sanitized) note. ALL notes must go through this or noteOnce. */
+  private note(msg: string): void { this.notes.push(this.scrubNote(msg)); }
   /** push a note at most once — per-tick drop reasons must not spam state.notes. */
-  private noteOnce(msg: string): void { if (!this.notes.includes(msg)) this.notes.push(msg); }
+  private noteOnce(msg: string): void {
+    const s = this.scrubNote(msg);
+    if (!this.notes.includes(s)) this.note(s);
+  }
 
   /** keep only items whose venueId is one this adapter declared — a foreign id
    *  (plugin bug) is dropped with a one-time note, never silently stored (review #3). */
@@ -388,7 +403,7 @@ export class LiveDataSource extends BaseSource {
     this.store.setMeta(`backfill_cursor_${vid}`, String(end + 1n));
     this.store.setMeta(`backfill_done_${vid}`, '1');
     this.store.upsertMany(this.days);
-    this.notes.push(`${name}: backfill complete — ${acc.size} day(s) seeded`);
+    this.note(`${name}: backfill complete — ${acc.size} day(s) seeded`);
     this.emitMsg({ ch: 'volume', data: this.cloneDay(this.today()) }); // nudge connected clients
   }
 
