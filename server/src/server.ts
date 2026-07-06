@@ -69,12 +69,13 @@ export function startServer(source: DataSource): Server {
   // aggregated leaderboard/markout stats over the FULL window (?days=1|7|30) —
   // computed server-side next to the rows; shipping raw fills silently truncated
   // the wide windows at the fetch cap. TAKER-signed; clients derive MAKER.
-  app.get('/api/leaderboard', (req, res) => {
+  app.get('/api/leaderboard', async (req, res) => {
     const days = positiveNumberParam(req.query.days) ?? 1;
     if (!(LEADERBOARD_WINDOW_DAYS as readonly number[]).includes(days)) {
       return res.status(400).json({ error: `days must be one of ${LEADERBOARD_WINDOW_DAYS.join(', ')}` });
     }
-    res.json(source.leaderboard(days));
+    try { res.json(await source.leaderboard(days)); }
+    catch { res.status(500).json({ error: 'aggregation failed' }); }
   });
   app.get('/api/volume', (req, res) => {
     // honor ?from=&to= (YYYY-MM-DD, lexicographic). Both scope columns

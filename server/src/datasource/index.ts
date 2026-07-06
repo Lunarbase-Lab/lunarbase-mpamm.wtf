@@ -21,8 +21,10 @@ export interface DataSource {
   /** Historical fills query (DB-backed for live, in-memory for sim). */
   queryFills(opts: { sinceMs?: number; limit?: number }): Fill[];
   /** Aggregated leaderboard/markout stats over the FULL window — computed here,
-   *  next to the rows, because shipping raw fills truncated the wide windows. */
-  leaderboard(days: number): LeaderboardResponse;
+   *  next to the rows, because shipping raw fills truncated the wide windows.
+   *  Async: the pass yields to the event loop (hundreds of thousands of rows
+   *  at 30d must not stall the quote stream). */
+  leaderboard(days: number): Promise<LeaderboardResponse>;
   /** The last ~60s of REAL quote ticks for one (market, size) — seeds the
    *  Execution chart so it never fabricates history (flat pre-fill). */
   quoteHistory(market: string, size: number): QuoteSnapshot[];
@@ -49,7 +51,7 @@ export abstract class BaseSource extends EventEmitter implements DataSource {
 
   /** Default: aggregate the in-memory fill window (sim). Live overrides with a
    *  full-window SQLite scan + TTL cache. */
-  leaderboard(days: number): LeaderboardResponse {
+  leaderboard(days: number): Promise<LeaderboardResponse> {
     const now = Date.now();
     const since = now - days * 86_400_000;
     const rows = this.getFills().filter((f) => !f.pxApprox && f.ts >= since);

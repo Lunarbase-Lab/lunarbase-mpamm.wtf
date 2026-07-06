@@ -661,7 +661,11 @@ export class LiveDataSource extends BaseSource {
   private async remarkVenue(vid: string, name: string): Promise<void> {
     const cutoff = this.bootMs - 2 * 3_600_000; // the live aging path owns the recent window
     for (const market of this.store.remarkCandidateMarkets(vid, cutoff)) {
-      await this.remarkVenueMarket(vid, name, market, cutoff);
+      // per-market isolation: one market's archive failure (e.g. a geo-blocked
+      // endpoint) must not skip the venue's OTHER markets — observed in prod
+      // when a MON cross-leg 403 paused the whole venue's remark stage.
+      try { await this.remarkVenueMarket(vid, name, market, cutoff); }
+      catch (e) { this.noteOnce(`${name} ${market}: markout backfill paused (${(e as Error).message}); resumes next boot`); }
     }
   }
 
@@ -710,19 +714,27 @@ export class LiveDataSource extends BaseSource {
   }
 
   /** Aggregated leaderboard over the FULL window, from SQLite (no fetch cap).
-   *  TTL-cached per window: the scan is a synchronous full pass over the
-   *  window's rows (~1s at 30d × Metric's fill rate), so polling clients share
-   *  one computation and the event loop pays at most once per TTL. */
+   *  TTL-cached per window so polling clients share one computation, and
+   *  inflight-deduped so concurrent cold hits can't stack N computes. The pass
+   *  itself yields to the event loop (computeLeaderboard) — only the SQL scan
+   *  is a synchronous slice. */
   private lbCache = new Map<number, { at: number; res: LeaderboardResponse }>();
-  leaderboard(days: number): LeaderboardResponse {
-    const ttl = days <= 1 ? 15_000 : days <= 7 ? 60_000 : 300_000;
+  private lbInflight = new Map<number, Promise<LeaderboardResponse>>();
+  leaderboard(days: number): Promise<LeaderboardResponse> {
+    const ttl = days <= 1 ? 15_000 : days <= 7 ? 120_000 : 600_000;
     const now = Date.now();
     const hit = this.lbCache.get(days);
-    if (hit && now - hit.at < ttl) return hit.res;
-    const rows = this.store.lbFillsSince(now - days * 86_400_000);
-    const res = computeLeaderboard(rows, days, now, (ids) => this.store.fillsByIds(ids));
-    this.lbCache.set(days, { at: now, res });
-    return res;
+    if (hit && now - hit.at < ttl) return Promise.resolve(hit.res);
+    const inflight = this.lbInflight.get(days);
+    if (inflight) return inflight;
+    const p = (async () => {
+      const rows = this.store.lbFillsSince(now - days * 86_400_000);
+      const res = await computeLeaderboard(rows, days, now, (ids) => this.store.fillsByIds(ids));
+      this.lbCache.set(days, { at: now, res });
+      return res;
+    })().finally(() => this.lbInflight.delete(days));
+    this.lbInflight.set(days, p);
+    return p;
   }
 
   /** Historical fills from the DB (the leaderboard/markouts query real windows). */

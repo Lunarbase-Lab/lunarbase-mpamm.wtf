@@ -200,7 +200,14 @@ export async function pairMidSeries(market: string, fromMs: number, toMs: number
   } else {
     base = await bybitTradeSeries(asset.cexSymbol, fromMs - STALE_BASE_MS, toMs);
     if (base === null) return null; // dump month not published yet
-    if (crossSym) cross = await bybitKlineSeries(crossSym, fromMs - pad, toMs);
+    if (crossSym) {
+      // api.bybit.com REST geo-blocks some server IPs (403 from Render US —
+      // observed in prod; the dump host public.bybit.com is NOT blocked). The
+      // same stable/stable cross trades on Binance within fractions of a bp,
+      // so fall back to the geo-unrestricted Binance mirror.
+      try { cross = await bybitKlineSeries(crossSym, fromMs - pad, toMs); }
+      catch { cross = await binanceKlineSeries(crossSym, '1m', fromMs - pad, toMs); }
+    }
   }
   if (!base) return null;
 

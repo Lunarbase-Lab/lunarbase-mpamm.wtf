@@ -266,13 +266,18 @@ export class VolumeStore {
    *  every markout/leaderboard stat, volume included. ts-ascending so the
    *  aggregation's cumulative-PnL sparklines accumulate in fill order. */
   lbFillsSince(sinceMs: number): Array<{ id: string; ts: number; venueId: string; category: string; pool: string; to: string; usd: number; markoutsBps: (number | null)[] }> {
+    // horizons extracted in SQL (C-side) — a per-row JSON.parse in JS was a
+    // measurable slice of the 30d pass on the small production box.
     const rows = this.db.prepare(`
-      SELECT id, ts, venue_id, category, pool, to_label, usd, markouts_bps
+      SELECT id, ts, venue_id, category, pool, to_label, usd,
+             json_extract(markouts_bps, '$[0]') AS m0, json_extract(markouts_bps, '$[1]') AS m1,
+             json_extract(markouts_bps, '$[2]') AS m2, json_extract(markouts_bps, '$[3]') AS m3,
+             json_extract(markouts_bps, '$[4]') AS m4
       FROM fills WHERE ts >= ? AND px_approx = 0 ORDER BY ts ASC
     `).all(sinceMs) as Array<Record<string, any>>;
     return rows.map((r) => ({
       id: r.id, ts: r.ts, venueId: r.venue_id, category: r.category,
-      pool: r.pool, to: r.to_label, usd: r.usd, markoutsBps: JSON.parse(r.markouts_bps),
+      pool: r.pool, to: r.to_label, usd: r.usd, markoutsBps: [r.m0, r.m1, r.m2, r.m3, r.m4],
     }));
   }
 
