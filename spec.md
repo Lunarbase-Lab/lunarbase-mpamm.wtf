@@ -5,7 +5,7 @@
 | **Status** | Draft v0.4 — multi-asset pairs, per-pair CEX references |
 | **Date** | 2026-07-03 |
 | **Scope** | Real-time dashboard for **propAMMs** on Monad mainnet |
-| **Venues** | LFJ POE · Metric · Clober Vault (composable adapter registry) |
+| **Venues** | LFJ POE · Metric · Clober · Hanji (composable adapter registry) |
 | **CEX benchmark** | per base asset — Bybit (MON) · Binance VIP9 (BTC/ETH), converted into each pair's terms (stable cross + wrap basis, §5.5) |
 | **Reference model** | [pamm.wtf](https://pamm.wtf) (information architecture, not implementation) |
 
@@ -21,7 +21,7 @@
 
 A read-only, real-time dashboard surfacing three primitives per **propAMM** venue on Monad: **historical filled volume**, **live execution quality** (realized cost vs the pair's CEX reference at a chosen notional), and a **live fill tape / markouts**. The venue set is a **plug-in registry** — each protocol ships one self-contained adapter; the rest of the system never hardcodes a venue.
 
-**propAMM = maker/oracle-priced.** The dashboard is dedicated to venues where a market maker (or an oracle the maker anchors to) sets the price — not passive AMMs whose price emerges from a bonding curve, nor raw CLOBs. Venues: **LFJ POE**, **Metric**, the **Clober Vault**, and **Hanji** (an on-chain LOB whose entire passive side is the protocol's LP vault — verified on-chain — i.e. a propAMM quoting through an order book) (§3).
+**propAMM = maker/oracle-priced.** The dashboard is dedicated to venues where a market maker (or an oracle the maker anchors to) sets the price — not passive AMMs whose price emerges from a bonding curve, nor raw CLOBs. Venues: **LFJ POE**, **Metric**, **Clober**, and **Hanji** (an on-chain LOB whose entire passive side is the protocol's LP vault — verified on-chain — i.e. a propAMM quoting through an order book) (§3).
 
 The defining architectural fact: **fills are events, quotes are not**. Landed trades arrive as logs you subscribe to; a live quote ("what would 50k USDC get right now") exists only by simulating against current state via an on-chain read. No subgraph or REST endpoint returns a fresh quote. That split drives the system — a streamed path for volume + tape, a polled path for execution quality.
 
@@ -55,7 +55,7 @@ Built and run as a **backend service** (§7.D1): the service owns the RPC/WS/CEX
 
 - **Metric** — an **oracle-anchored bin AMM** (propAMM). Each pool has a per-pool `PriceProvider` feeding an off-chain oracle bid/ask; the router simulates a swap over the pool's binned liquidity around that provided price. Prices come from the oracle, not a passive curve.
 
-- **Clober Vault** — Clober V2 is a fully on-chain CLOB; the **LiquidityVault** is an oracle-driven maker that rests orders on the book priced by `SimpleOracleStrategy`. The dashboard tracks **only the vault's flow** (the propAMM cut), not independent-maker CLOB flow.
+- **Clober** — Clober V2 is a fully on-chain CLOB; the **LiquidityVault** (their "Rebalancer") is an oracle-driven maker that rests orders on the books priced by `SimpleOracleStrategy`. The dashboard tracks the vault-run books — which carry **100.0% of Clober's lifetime volume** (measured from their subgraph; non-vault books total ~$38k ever), so the vault IS the venue and it displays as plain "Clober".
 
   > `BookManager.make` has **zero oracle dependency** — the maker passes `params.tick` and that tick *is* the price; anyone can rest a limit order at any tick. `SimpleOracleStrategy` lives in the liquidity-vault package and is consumed **only by the LiquidityVault to price its own orders**; it never sits in any book's make/take path.
 
@@ -163,8 +163,7 @@ Each cycle the core `getLogs` the union of every adapter's `logSources()` over t
 ### 5.4 Historical backfill — persist-forward indexer + optional seed
 The public RPC caps `getLogs` to short ranges, so deep replay at the tip is impractical there. Live mode is a **persist-forward indexer**: SQLite is the source of truth for daily-volume history — loaded on boot, advanced forward from decoded fills (priced via the stable quote leg, exact for registered base/stable pairs), resumed from `lastProcessedBlock` with a same-day `getLogs` gap-fill.
 - **Fail-closed ingest**: any error in a tail cycle — a `fills`/`state` log source, the block-timestamp lookup, or an adapter `decode()` — **holds the global cursor** and retries the exact range; nothing advances/ingests/emits partially. Fills carry a deterministic `venue-txHash-logIndex` id; daily volume + cursor + fills persist in **one transaction** (idempotent re-tail).
-- **Clober** closed days are seeded once via `backfill()` from the **Goldsky subgraph** (`Σ BookDayData.volumeUSD` over registered vault books, using the same pair gate as live decode).
-- **POE and Metric** (no keyless subgraph) are seeded by a **background on-chain backfill**: the core replays each adapter's `Swap` logs from its `backfillFromUtc` (set to the pool's on-chain deploy day — POE `2026-05-09`, Metric `2026-03-31`) up to the boot head, decodes via the adapter's own `decode()`, and folds into daily volume. It runs OFF the boot path (never blocks the dashboard or the tail): adaptive `getLogs` chunks (start wide, auto-shrink on a range 413) paced under the RPC cap, one `getBlock` per chunk for UTC-day bucketing (a chunk spans ~minutes), closed days only (`< today`, so no overlap with the tail), SET-per-day (idempotent). A day-aligned resume cursor + a `backfill_done_<venue>` flag make it resumable across restarts. Knobs: `BACKFILL` / `BACKFILL_CHUNK` / `BACKFILL_PACE_MS` / `BACKFILL_MERGE_EVERY`.
+- **Every venue** is seeded by the **background on-chain backfill**: the core replays each adapter's fill logs from its `backfillFromUtc` (the venue's on-chain deploy / first-activity day — POE `2026-05-09`, Metric `2026-03-31`, Hanji `2026-06-05`, Clober `2025-10-28`), yielding real per-day USD **and swap counts**. (Clober previously used a subgraph volume seed pinned to the dashboard's launch date `2026-05-13`, which hid its ~$230M pre-May history and carried no counts — removed.) The replay runs from `backfillFromUtc` up to the boot head, decodes via the adapter's own `decode()`, and folds into daily volume. It runs OFF the boot path (never blocks the dashboard or the tail): adaptive `getLogs` chunks (start wide, auto-shrink on a range 413) paced under the RPC cap, one `getBlock` per chunk for UTC-day bucketing (a chunk spans ~minutes), closed days only (`< today`, so no overlap with the tail), SET-per-day (idempotent). A day-aligned resume cursor + a `backfill_done_<venue>` flag make it resumable across restarts. Knobs: `BACKFILL` / `BACKFILL_CHUNK` / `BACKFILL_PACE_MS` / `BACKFILL_MERGE_EVERY`.
 - **Onboarding markout backfill** (runs FIRST, before the deep volume scan): once per venue (`mkfill_done_<venue>`), the core scans the venue's last `MARKOUT_BACKFILL_DAYS` (default 30 — the UI's widest window; the display never goes deeper, so venue-lifetime marking would be cost without product) of fills on-chain with **real per-block timestamps** (markouts are a seconds-scale join — the volume path's chunk-anchor shortcut would smear them by minutes), persists them insert-if-absent (never clobbering a live-marked fill), then marks every still-unmarked fill against the exchanges' **archived prices** (`server/src/history/cex.ts`): Bybit monthly public trade dumps reduced to a 1s last-trade series (MON legs), Binance 1s klines (BTC/ETH legs), 1m klines for the slow cross/wrap legs — the same pair-terms construction as the live reference (§5.5). Carry-forward lookups with a staleness cap: a print gap yields a **null** markout, never a fabricated one. Per-(venue, market) day cursors make it resumable; a day whose archive isn't published yet (the current month's Bybit dump) defers and self-heals on a later boot. `MARKOUT_BACKFILL=off` disables.
 
 ### 5.5 CEX references + pricing — the reference is in the PAIR'S OWN TERMS
@@ -229,8 +228,8 @@ Frontend renders purely off these — never touches the RPC, subgraph, or CEX fe
 |---|---|---|
 | **D1** | **Backend service**, thin frontend | One shared set of RPC/WS/CEX connections; tip-accurate quoting needs a trusted node not exposed client-side; on-chain history needs a persistent writer. |
 | **D2** | Venues = **composable adapter registry** | One file + one registry line per protocol; core is venue-agnostic. Enables community PRs and keeps the model generic (`venueId`). |
-| **D3** | Scope = **propAMM-only** | Oracle/MM-priced venues only (POE, Metric, Clober Vault). Passive curve DEXes (incl. LFJ Liquidity Book) and raw CLOBs are excluded by design. |
-| **D4** | History = **persist-forward indexer** + optional per-adapter `backfill()` | SQLite is the source of truth; Clober seeds from its subgraph; POE/Metric accrue forward until a backfill source is wired (D8). |
+| **D3** | Scope = **propAMM-only** | Oracle/MM-priced venues only (POE, Metric, Clober, Hanji). Passive curve DEXes (incl. LFJ Liquidity Book) and raw CLOBs are excluded by design. |
+| **D4** | History = **persist-forward indexer** + on-chain lifetime backfill | SQLite is the source of truth; every venue's history replays on-chain from its `backfillFromUtc`. The optional `backfill()` seed hook remains in the adapter contract but no shipped adapter uses it. |
 | **D5** | Clober attribution = **vault-bookId tagging** via `LiquidityVault.Open` | Only the oracle-vault (propAMM) cut counts; independent-maker CLOB flow is excluded. |
 | **D6** | Universe = **base/stable pairs via a registry** | `@shared` ASSETS + PAIRS (MON/USDC, BTC/USDC, ETH/USDC) — add an asset + a pool and it lists. Quote leg = stable ⇒ exact USD. Adapters are generic over base/quote (WBTC's 8 decimals handled; `assetForToken` replaces MON-specific checks). |
 | **D7** | CEX benchmark = **per-asset registry, converted into the pair's terms** | Routed by asset (`ASSETS.cex`): Bybit for MON (no Binance MON spot), Binance for BTC/ETH. The USDT-quoted reference is converted by the live stable cross (`USDCUSDT`, ~±10bps) and the wrapped/native basis (`WBTCBTC`, ~−5bps) — never a $1 peg or a wrap≡native assumption (§5.5). Realized-vs-realized at size; taker fees are config constants at each exchange's top published tier (Bybit Supreme VIP 4.5 bps, Binance VIP9 2.25 bps — App. D). |
@@ -293,7 +292,7 @@ Frontend renders purely off these — never touches the RPC, subgraph, or CEX fe
 **Primary: on-chain** (RPC `eth_call` / logs). Live quotes, live fills, and forward volume all derive from chain state + logs.
 
 **Seed / cross-check:**
-- **Clober subgraph** (Goldsky, public): `https://api.goldsky.com/api/public/project_clsljw95chutg01w45cio46j0/subgraphs/v2-subgraph-monad/latest/gn`. Entities incl. `BookDayData`, `Take`, `Pool`, `Book`. Used by `backfill()` for registered vault-book closed-day volume.
+- **Clober subgraph** (Goldsky, public): `https://api.goldsky.com/api/public/project_clsljw95chutg01w45cio46j0/subgraphs/v2-subgraph-monad/latest/gn`. Entities incl. `BookDayData`, `Take`, `Pool`, `Book`. Used for vault-book DISCOVERY only (book ids/metadata; `pool != null` = vault) — volume/counts replay on-chain.
 - POE/Metric: no keyless historical source wired yet (§5.4, D8).
 
 ## Appendix C — Event signatures & quote interfaces (verified on-chain)

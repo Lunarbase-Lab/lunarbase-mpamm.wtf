@@ -8,7 +8,7 @@ import type { VenueAdapter, AdapterContext, LogBundle } from './adapter.js';
  *
  * Three sourcing patterns (mix freely):
  *   A. on-chain only  — discover + logSources + decode, NO backfill (like POE / Metric).
- *   B. subgraph seed + on-chain tail — add backfill() (like Clober Vault).
+ *   B. one-time seed (subgraph/REST) + on-chain tail — add backfill().
  *   C. quote-only     — implement quote(); return [] from logSources()/decode().
  */
 

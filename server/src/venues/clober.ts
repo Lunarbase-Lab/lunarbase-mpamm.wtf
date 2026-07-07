@@ -5,13 +5,16 @@ import { bookViewerAbi, bookManagerAbi, liquidityVaultAbi, routerGatewayAbi, CLO
 import { fromUnits, toUnits, shortHex } from '../util.js';
 import type { UsdPricer } from '../pricer.js';
 import type { VenueAdapter, AdapterContext, LogBundle } from './adapter.js';
-import { seedCloberDaily } from '../seed/subgraph.js';
 
-/** Clober oracle-vault (propAMM) display venue — the ONE venue this adapter
- *  surfaces. Its per-theme color is the single source of truth for the frontend. */
-// sinceUtc = where the vault's tracked history starts (the subgraph seed's first day,
-// HISTORY_START_UTC) — before that we have no data for it either way.
-const CLOBER_VAULT_VENUE: VenueMeta = { id: 'clober-vault', name: 'Clober Vault', color: { light: '#9C6B16', dark: '#9A88FF' }, kind: 'vault', role: 'venue', sinceUtc: '2026-05-13' };
+/** Clober display venue — the ONE venue this adapter surfaces. Its per-theme
+ *  color is the single source of truth for the frontend. Displayed as plain
+ *  "Clober": the oracle vault (their "Rebalancer" + Strategy) runs the books
+ *  that carry 100.0% of Clober's lifetime volume (measured from their subgraph
+ *  — non-vault books total ~$38k ever), so the vault IS the venue. The id keeps
+ *  its historical value so persisted history survives the rename.
+ *  sinceUtc = the vault books' true first trading day (their subgraph's
+ *  earliest BookDayData — 2025-10-28), same anchor as backfillFromUtc. */
+const CLOBER_VAULT_VENUE: VenueMeta = { id: 'clober-vault', name: 'Clober', color: { light: '#9C6B16', dark: '#9A88FF' }, kind: 'vault', role: 'venue', sinceUtc: '2025-10-28' };
 
 /**
  * Clober V2 — best-effort live integration (spec §3, §5.1, §5.2), generic over
@@ -453,15 +456,22 @@ export function createCloberVaultAdapter(): VenueAdapter {
 
   return {
     venues: () => [CLOBER_VAULT_VENUE],
+    // Full venue-lifetime volume + swap counts by replaying Take on-chain from
+    // the vault books' first trading day — the same pattern as every other
+    // venue. This REPLACED the old subgraph volume seed, which (a) started at
+    // the dashboard's launch date (2026-05-13) and silently hid the venue's
+    // $230M pre-May history, and (b) carried no swap counts. The subgraph is
+    // still used for what it is authoritative for: vault-book DISCOVERY.
+    backfillFromUtc: '2025-10-28',
     async discover(ctx: AdapterContext) {
       let disc: { books: Map<string, CloberBook>; markets: CloberMarket[]; vault: Set<string> };
       let authoritative = false;
       try {
         disc = await discoverCloberViaSubgraph(ctx.config.subgraphUrl);
         authoritative = true;
-        ctx.log(`Clober Vault: subgraph discovery (${disc.vault.size} vault book(s))`);
+        ctx.log(`Clober: subgraph discovery (${disc.vault.size} vault book(s))`);
       } catch {
-        ctx.log('Clober Vault: subgraph discovery failed; trying recent Open logs');
+        ctx.log('Clober: subgraph discovery failed; trying recent Open logs');
         try { disc = await discoverClober(ctx.client, ctx.getLogs, 2000); } catch { disc = { books: new Map(), markets: [], vault: new Set() }; }
       }
       // MERGE (don't replace): a periodic re-discovery can only ADD/refresh vault
@@ -471,17 +481,8 @@ export function createCloberVaultAdapter(): VenueAdapter {
       markets = assembleCloberMarkets(books);
       if (authoritative) authoritativeDiscovery = true;
       else if (!authoritativeDiscovery) {
-        ctx.log('Clober Vault: authoritative discovery unavailable; holding Take ranges until rediscovery succeeds');
+        ctx.log('Clober: authoritative discovery unavailable; holding Take ranges until rediscovery succeeds');
       }
-    },
-    async backfill(ctx: AdapterContext, sinceUtc: string) {
-      if (!authoritativeDiscovery) throw new Error('authoritative vault-book discovery unavailable');
-      // REGISTERED vault books only (same gate as live decode — registeredBookPair):
-      // a vault book live decode would drop must not leak into closed-day volume.
-      const vaultBookIds = [...books.values()].filter((b) => b.isVault && registeredBookPair(b)).map((b) => String(b.bookId));
-      if (!vaultBookIds.length) return {};
-      const seed = await seedCloberDaily(ctx.config.subgraphUrl, sinceUtc, [], vaultBookIds);
-      return { days: [...seed].map(([utcDay, cd]) => ({ utcDay, byVenue: { [CLOBER_VAULT_VENUE.id]: { usd: cd.vault } } })) };
     },
     quote(ctx, sizesUsd) {
       return quoteClober(ctx.client, markets, sizesUsd, ctx.pricer);
