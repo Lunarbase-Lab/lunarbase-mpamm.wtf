@@ -21,7 +21,7 @@ export type FillCategory = 'DIRECT' | 'ROUTER' | 'AGG' | 'CEX/DEX' | 'UNKNOWN';
 export type DataSourceMode = 'live' | 'sim';
 
 /**
- * Venue identity — the composable unit. Every venue (LFJ POE, Clober Vault, …) and
+ * Venue identity — the composable unit. Every venue (LFJ POE, Clober, …) and
  * CEX reference venue is described by one of these, produced by its
  * adapter on the backend and shipped to the frontend so NOTHING about a venue
  * is hardcoded in the core: name, color and grouping all come from here.
@@ -34,7 +34,7 @@ export type DataSourceMode = 'live' | 'sim';
 export interface VenueMeta {
   /** stable key used everywhere as `Fill.venueId` / `QuoteRow.venueId` (e.g. 'poe', 'clober-vault', 'bybit'). */
   id: string;
-  /** display name (e.g. 'LFJ POE', 'Clober Vault', 'Bybit'). */
+  /** display name (e.g. 'LFJ POE', 'Clober', 'Bybit'). */
   name: string;
   /** venue color per theme — the single source of truth for line/bar/swatch color. */
   color: { light: string; dark: string };
@@ -57,7 +57,10 @@ export interface VenueMeta {
 
 export const MONAD_CHAIN_ID = 143;
 
-/** UTC day this dashboard's history begins (spec: "since 2026-05-13"). */
+/** The dashboard's ORIGINAL v0.1 launch-history date — now only the sim's
+ *  synthetic-history start and the default for the (currently unused) adapter
+ *  backfill() seed hook. Real venue history replays on-chain from each
+ *  adapter's own `backfillFromUtc` (its deploy / first-activity day). */
 export const HISTORY_START_UTC = '2026-05-13';
 
 export const ADDR = {
