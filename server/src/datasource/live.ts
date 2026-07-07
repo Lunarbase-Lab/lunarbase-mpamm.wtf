@@ -66,6 +66,10 @@ export class LiveDataSource extends BaseSource {
   private timer?: ReturnType<typeof setInterval>;
   private persistTimer?: ReturnType<typeof setInterval>;
   private rediscoverTimer?: ReturnType<typeof setInterval>;
+  private remarkTimer?: ReturnType<typeof setInterval>;
+  /** re-entrancy guard shared by the boot onboarding chain and the retry timer
+   *  — two remark walks over the same cursors must never interleave. */
+  private remarkRunning = false;
   private tickRunning = false;
   private notes: string[] = [];
   private block = 0;
@@ -97,6 +101,12 @@ export class LiveDataSource extends BaseSource {
     this.rediscoverTimer = setInterval(() => { void this.rediscover(); }, config.rediscoverMs);
     // seed deep history in the BACKGROUND — never blocks boot or the live tail.
     if (config.backfillEnabled || config.markoutBackfill) void this.backgroundHistory();
+    // Deferred markout backfills retry on a TIMER, not just at boot: a month's
+    // CEX archive publishes days after month end, and "marks itself when it
+    // lands" must not depend on a deploy happening to restart the process. Each
+    // sweep is cheap when nothing is markable (per-venue SQL for candidates +
+    // a HEAD probe per missing dump month — no RPC, no downloads).
+    if (config.markoutBackfill) this.remarkTimer = setInterval(() => { void this.remarkSweep(); }, config.markoutRetryMs);
   }
 
   /** Background history stages, in product-value order: onboarding markouts
@@ -114,6 +124,7 @@ export class LiveDataSource extends BaseSource {
     if (this.timer) clearInterval(this.timer);
     if (this.persistTimer) clearInterval(this.persistTimer);
     if (this.rediscoverTimer) clearInterval(this.rediscoverTimer);
+    if (this.remarkTimer) clearInterval(this.remarkTimer);
     this.persist();
     REFERENCES.stop();
     this.store.close();
@@ -524,6 +535,33 @@ export class LiveDataSource extends BaseSource {
    * Bybit dump) self-heal once it publishes.
    */
   private async markoutOnboarding(): Promise<void> {
+    if (this.remarkRunning) return;
+    this.remarkRunning = true;
+    try { await this.markoutOnboardingInner(); }
+    finally { this.remarkRunning = false; }
+  }
+
+  /** Timer-driven retry of DEFERRED markout backfills (e.g. a month's Bybit
+   *  dump that wasn't published yet): re-walk each venue's remark cursors.
+   *  No-op while the boot chain still owns the stage, and cheap when there is
+   *  nothing markable (SQL candidates + a HEAD probe per missing month). */
+  private async remarkSweep(): Promise<void> {
+    if (this.remarkRunning) return;
+    this.remarkRunning = true;
+    try {
+      for (const a of ADAPTERS) {
+        const vid = a.venues()[0]?.id ?? '';
+        if (!vid || this.store.getMeta(`mkfill_done_${vid}`) !== '1') continue; // boot chain owns pre-scan venues
+        await this.remarkVenue(vid, a.venues()[0]?.name ?? vid);
+      }
+    } catch (e) {
+      this.noteOnce(`markout retry sweep failed: ${(e as Error).message}; retried on the next sweep`);
+    } finally {
+      this.remarkRunning = false;
+    }
+  }
+
+  private async markoutOnboardingInner(): Promise<void> {
     for (const a of ADAPTERS) {
       const vid = a.venues()[0]?.id ?? '';
       const name = a.venues()[0]?.name ?? vid;
@@ -659,7 +697,10 @@ export class LiveDataSource extends BaseSource {
   /** Mark this venue's still-unmarked persisted fills against archived CEX
    *  prices, per market, walking closed days forward (resumable cursor). */
   private async remarkVenue(vid: string, name: string): Promise<void> {
-    const cutoff = this.bootMs - 2 * 3_600_000; // the live aging path owns the recent window
+    // NOW-relative (not boot-relative): the retry timer runs for the process
+    // lifetime, and each sweep may mark newly-closed days. The live aging path
+    // owns the most recent window either way.
+    const cutoff = Date.now() - 2 * 3_600_000;
     for (const market of this.store.remarkCandidateMarkets(vid, cutoff)) {
       // per-market isolation: one market's archive failure (e.g. a geo-blocked
       // endpoint) must not skip the venue's OTHER markets — observed in prod
