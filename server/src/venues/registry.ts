@@ -3,6 +3,7 @@ import type { VenueAdapter, ReferenceRegistry } from './adapter.js';
 import { createPoeAdapter } from './poe.js';
 import { createCloberVaultAdapter } from './clober.js';
 import { createMetricAdapter } from './metric.js';
+import { createHanjiAdapter } from './hanji.js';
 import { createReferenceRegistry } from './reference.js';
 
 /**
@@ -18,6 +19,7 @@ export const ADAPTERS: VenueAdapter[] = [
   createPoeAdapter(),
   createCloberVaultAdapter(),
   createMetricAdapter(),
+  createHanjiAdapter(),
 ];
 
 /** The CEX reference registry — the markout + Execution benchmarks, routed per
