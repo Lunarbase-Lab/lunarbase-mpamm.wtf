@@ -4,7 +4,7 @@ import { Readable } from 'node:stream';
 import { createWriteStream, createReadStream, existsSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { pairOf, assetOf, TOKENS } from '@shared';
+import { pairOf, assetOf, TOKENS, wrapBasisFor } from '@shared';
 import { config } from '../config.js';
 
 /**
@@ -194,51 +194,74 @@ export async function bybitTradeSeries(symbol: string, fromMs: number, toMs: num
   return makeSeries(ts, px, STALE_BASE_MS);
 }
 
-// ── pair-terms mid series (base × wrap ÷ cross — same construction as live) ──
+// ── pair-terms mid series (base × wrap ÷ quote leg — same construction as live) ──
+
+/** an ASSET's own USDT-terms series at second precision — Binance 1s klines, or
+ *  Bybit trade dumps for assets Binance doesn't list (MON). Null = the archive
+ *  for part of the window isn't published yet. */
+async function assetUsdtSeries(assetKey: string, fromMs: number, toMs: number): Promise<StepSeries | null> {
+  const a = assetOf(assetKey);
+  if (!a) return null;
+  return a.cex === 'binance'
+    ? binanceKlineSeries(a.cexSymbol, '1s', fromMs - STALE_BASE_MS, toMs)
+    : bybitTradeSeries(a.cexSymbol, fromMs - STALE_BASE_MS, toMs);
+}
 
 /**
  * The pair's CEX mid at second precision over [fromMs, toMs), in the PAIR'S OWN
  * terms — identical construction to the live ReferenceRegistry (§5.5), sourced
- * from the exchanges' historical archives. Returns null when a required source
- * isn't available yet (e.g. the current month's Bybit dump).
+ * from the exchanges' historical archives:
+ *
+ *   mid(t) = baseUSDT(t) × wrapBasis(t) ÷ quoteLeg(t)
+ *
+ * wrapBasis resolves PER PAIR (wrapBasisFor — cbBTC pairs are parity-overridden,
+ * WBTC pairs use the real WBTCBTC curve). The quote leg is a stable's USDT cross
+ * at 1m (slow-moving) or, for ASSET-quoted pairs (MON/ETH …), the quote asset's
+ * own 1s-precision series. Returns null when a required source isn't available
+ * yet (e.g. the current month's Bybit dump) — the caller defers, never fabricates.
  */
 export async function pairMidSeries(market: string, fromMs: number, toMs: number): Promise<StepSeries | null> {
   const pair = pairOf(market);
   const asset = pair ? assetOf(pair.base) : undefined;
   if (!pair || !asset) return null;
   const pad = STALE_SLOW_MS; // lead-in so carry-forward has a value at fromMs
-  const crossSym = TOKENS[pair.quote]?.usdtCross;
 
-  let base: StepSeries | null;
-  let cross: StepSeries | null = null;
-  const wrapSym = asset.wrapBasisSymbol;
-  let wrap: StepSeries | null = null;
+  const base = await assetUsdtSeries(pair.base, fromMs, toMs);
+  if (!base) return null; // dump month not published yet
 
-  if (asset.cex === 'binance') {
-    base = await binanceKlineSeries(asset.cexSymbol, '1s', fromMs - STALE_BASE_MS, toMs);
-    if (crossSym) cross = await binanceKlineSeries(crossSym, '1m', fromMs - pad, toMs);
-    if (wrapSym) wrap = await binanceKlineSeries(wrapSym, '1m', fromMs - pad, toMs);
+  const wrapSym = wrapBasisFor(pair);
+  const wrap = wrapSym ? await binanceKlineSeries(wrapSym, '1m', fromMs - pad, toMs) : null;
+
+  let quote: StepSeries | null = null;
+  let quoteNeeded = false;
+  if (pair.quoteKind === 'asset') {
+    quoteNeeded = true;
+    quote = await assetUsdtSeries(pair.quote, fromMs, toMs);
+    if (!quote) return null; // quote asset's archive missing (e.g. MON dump month)
   } else {
-    base = await bybitTradeSeries(asset.cexSymbol, fromMs - STALE_BASE_MS, toMs);
-    if (base === null) return null; // dump month not published yet
+    const crossSym = TOKENS[pair.quote]?.usdtCross;
     if (crossSym) {
-      // api.bybit.com REST geo-blocks some server IPs (403 from Render US —
-      // observed in prod; the dump host public.bybit.com is NOT blocked). The
-      // same stable/stable cross trades on Binance within fractions of a bp,
-      // so fall back to the geo-unrestricted Binance mirror.
-      try { cross = await bybitKlineSeries(crossSym, fromMs - pad, toMs); }
-      catch { cross = await binanceKlineSeries(crossSym, '1m', fromMs - pad, toMs); }
+      quoteNeeded = true;
+      if (asset.cex === 'binance') {
+        quote = await binanceKlineSeries(crossSym, '1m', fromMs - pad, toMs);
+      } else {
+        // api.bybit.com REST geo-blocks some server IPs (403 from Render US —
+        // observed in prod; the dump host public.bybit.com is NOT blocked). The
+        // same stable/stable cross trades on Binance within fractions of a bp,
+        // so fall back to the geo-unrestricted Binance mirror.
+        try { quote = await bybitKlineSeries(crossSym, fromMs - pad, toMs); }
+        catch { quote = await binanceKlineSeries(crossSym, '1m', fromMs - pad, toMs); }
+      }
     }
   }
-  if (!base) return null;
 
   return {
     at(t: number): number | null {
-      const b = base!.at(t);
+      const b = base.at(t);
       if (b == null) return null;
       let v = b;
       if (wrapSym) { const w = wrap?.at(t); if (w == null) return null; v *= w; }
-      if (crossSym) { const c = cross?.at(t); if (c == null) return null; v /= c; }
+      if (quoteNeeded) { const q = quote?.at(t); if (q == null || q <= 0) return null; v /= q; }
       return v;
     },
   };

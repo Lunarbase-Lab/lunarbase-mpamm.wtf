@@ -86,6 +86,10 @@ export interface TokenInfo {
    *  Unset = treated ≡ USDT (exact for USDT0 — it IS Tether's USDT on Monad;
    *  an approximation for unlisted stables like AUSD). */
   usdtCross?: string;
+  /** the base ASSET this (non-stable) token represents when it is NOT the
+   *  asset's canonical wrapper (e.g. cbBTC → 'BTC'; WBTC is already
+   *  ASSETS.BTC.token). Lets `assetForToken` price alternative wrappers. */
+  baseAsset?: string;
 }
 
 /**
@@ -107,6 +111,10 @@ export const TOKENS: Record<string, TokenInfo> = {
   MON: { symbol: 'MON', address: NATIVE_MON, decimals: 18, stable: false },
   WBTC: { symbol: 'WBTC', address: '0x0555e30da8f98308edb960aa94c0db47230d2b9c', decimals: 8, stable: false },
   WETH: { symbol: 'WETH', address: '0xee8c0e9f1bffb4eb878d8f15f368a02a35481242', decimals: 18, stable: false },
+  // Coinbase wrapped BTC (Hanji's BTC representation). NO CEX lists a cbBTC/BTC
+  // basis pair, so cbBTC pairs use wrapBasisOverride: '' (parity — Coinbase 1:1
+  // mint/redeem keeps it ~sub-bp) with a UI caveat, unlike WBTC's live WBTCBTC.
+  CBBTC: { symbol: 'cbBTC', address: '0xd18b7ec58cdf4876f6afebd3ed1730e4ce10414b', decimals: 8, stable: false, baseAsset: 'BTC' },
 };
 
 /** A set of every token address that denotes MON (WMON wrapper + native MON). */
@@ -157,14 +165,26 @@ export const ASSETS: Record<string, AssetSpec> = {
   ETH: { key: 'ETH', symbol: 'ETH', token: 'WETH', cex: 'binance', cexSymbol: 'ETHUSDT' },
 };
 
-/** A tracked market: a base asset vs a USD-stable quote. `symbol` is the display
- *  key used as `Fill.market` / `QuoteRow.market` (e.g. 'BTC/USDC'). */
+/** A tracked market: a base asset vs a quote. `symbol` is the display key used
+ *  as `Fill.market` / `QuoteRow.market` (e.g. 'BTC/USDC'). The quote is a USD
+ *  stable by default; `quoteKind: 'asset'` marks a crypto-quoted pair (e.g.
+ *  MON/ETH), whose reference quote leg is the quote ASSET's own USDT mid. */
 export interface Pair {
   symbol: string;
   /** base asset key (ASSETS). */
   base: string;
-  /** quote stable token key (TOKENS). */
+  /** quote key: a stable token (TOKENS) by default, or an asset (ASSETS) when
+   *  `quoteKind: 'asset'`. */
   quote: string;
+  /** 'asset' = crypto-quoted pair: refPx = baseUSDT × wrap ÷ quoteUSDT (the
+   *  quote asset's own CEX mid replaces the stable's USDT cross). USD sizing
+   *  uses the quote asset's live USD price instead of ≡$1. */
+  quoteKind?: 'asset';
+  /** override the BASE asset's wrap-basis CEX symbol for THIS pair — different
+   *  venues trade different wrappers of one asset (Metric/Clober BTC = WBTC,
+   *  live 'WBTCBTC' basis; Hanji BTC = cbBTC, no CEX basis pair → '' = parity).
+   *  undefined = inherit ASSETS[base].wrapBasisSymbol. */
+  wrapBasisOverride?: string;
 }
 
 /** The pair registry — THE tracked-market universe, the single source of truth.
@@ -179,6 +199,14 @@ export const PAIRS: Pair[] = [
   { symbol: 'MON/USDT0', base: 'MON', quote: 'USDT0' },
   { symbol: 'MON/AUSD', base: 'MON', quote: 'AUSD' },
   { symbol: 'MON/USD1', base: 'MON', quote: 'USD1' },
+  // Hanji's markets (cbBTC ≠ WBTC — distinct market symbols so each wrapper
+  // gets ITS OWN reference basis; sharing 'BTC/USDC' would mis-mark cbBTC by
+  // the live WBTC basis). NB pairFor(base, quote) resolves the CANONICAL pair
+  // (first match) — token-specific pairs like these are referenced by symbol.
+  { symbol: 'cbBTC/USDC', base: 'BTC', quote: 'USDC', wrapBasisOverride: '' },
+  { symbol: 'MON/ETH', base: 'MON', quote: 'ETH', quoteKind: 'asset' },
+  { symbol: 'cbBTC/MON', base: 'BTC', quote: 'MON', quoteKind: 'asset', wrapBasisOverride: '' },
+  { symbol: 'cbBTC/ETH', base: 'BTC', quote: 'ETH', quoteKind: 'asset', wrapBasisOverride: '' },
 ];
 
 /** Market symbols (derived from the pair registry). */
@@ -206,11 +234,24 @@ export function baseTokenOf(baseKey: string): TokenInfo | undefined {
   return a ? TOKENS[a.token] : undefined;
 }
 /** The base asset denoted by an on-chain token address (native MON, WMON, WBTC,
- *  WETH). Replaces MON-specific checks so adapters are asset-generic. */
+ *  WETH, cbBTC). Replaces MON-specific checks so adapters are asset-generic;
+ *  alternative wrappers resolve via `TokenInfo.baseAsset`. */
 export function assetForToken(addr: string): AssetSpec | undefined {
   const a = addr.toLowerCase();
   if (isMonAddress(a)) return ASSETS.MON;
-  return Object.values(ASSETS).find((as) => TOKENS[as.token]?.address.toLowerCase() === a);
+  const canonical = Object.values(ASSETS).find((as) => TOKENS[as.token]?.address.toLowerCase() === a);
+  if (canonical) return canonical;
+  const alt = Object.values(TOKENS).find((t) => t.baseAsset && t.address.toLowerCase() === a);
+  return alt?.baseAsset ? ASSETS[alt.baseAsset] : undefined;
+}
+
+/** The BASE wrap-basis CEX symbol effective for a pair — the pair's override
+ *  (''= parity, e.g. cbBTC) or the base asset's default (WBTC → 'WBTCBTC').
+ *  Shared by the live reference, the historical markout series, and the UI's
+ *  basis notes so the three can never disagree. */
+export function wrapBasisFor(pair: Pair): string | undefined {
+  const sym = pair.wrapBasisOverride !== undefined ? pair.wrapBasisOverride : ASSETS[pair.base]?.wrapBasisSymbol;
+  return sym || undefined;
 }
 /** Which CEX benchmarks a base asset (default Bybit). */
 export function cexForBase(baseKey: string): CexId {

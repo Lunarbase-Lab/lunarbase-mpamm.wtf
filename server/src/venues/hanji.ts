@@ -1,0 +1,264 @@
+import { parseAbi } from 'viem';
+import type { QuoteRow, Fill, Side, VenueMeta } from '@shared';
+import { TOKENS, pairOf } from '@shared';
+import { shortHex } from '../util.js';
+import type { VenueAdapter, AdapterContext, LogBundle } from './adapter.js';
+
+/**
+ * Hanji adapter — a fully on-chain LOB whose ENTIRE passive side is the
+ * protocol's LP vault (verified on-chain: 100% of resting orders on the sampled
+ * books are owned by the LPManager), i.e. a propAMM quoting through an order
+ * book. Integration per the Hanji team's brief, with every unit VERIFIED
+ * against live fills before shipping:
+ *
+ *   quotes:  FastQuoterHelper.assembleOrderbooksFromOrders(PROXY, levels) — the
+ *            proxy view includes the vault's virtual liquidity (their guidance).
+ *   fills:   OrderPlaced on the CLOBs where aggressive_shares > 0. The event's
+ *            `price` is the LIMIT price (market orders carry sentinels — never
+ *            use it); realized price = aggressive_value / filled base (VWAP).
+ *   units:   everything is in SHARES, scaled per market by getConfig():
+ *              baseHuman  = shares × scalingX / 10^xDec
+ *              quoteHuman = value  × scalingY / 10^yDec
+ *              humanPrice = raw × (scalingY/10^yDec) ÷ (scalingX/10^xDec)
+ *            (the derived price scale reproduces Hanji's published priceScale on
+ *            all six markets; 30/30 sampled fills matched book mids to <2%).
+ *   fees:    getConfig()[9] is the taker rate in 1e18 scale (1e14 = 1bp live on
+ *            every market — matches aggressive_fee/aggressive_value exactly).
+ *
+ * Scaling factors, token layout and fees are read ON-CHAIN at discovery and
+ * checked against the expected token addresses — a config drift fails loud
+ * instead of silently mispricing. BTC markets trade cbBTC (not WBTC), so they
+ * map to the dedicated cbBTC/* pairs (parity wrap basis — no CEX lists a
+ * cbBTC/BTC pair; see @shared PAIRS).
+ */
+
+// sinceUtc = the CLOBs' on-chain deploy day (blocks 79242115–79242169, bisected).
+const HANJI_VENUE: VenueMeta = { id: 'hanji', name: 'Hanji', color: { light: '#6D28D9', dark: '#A78BFA' }, kind: 'clob', role: 'venue', sinceUtc: '2026-06-05' };
+
+const FAST_QUOTER_HELPER = '0x237dB58fea34A35A8543b44C217d221606cE7788' as const;
+
+/** Hanji markets (team-provided, tokens verified on-chain via getConfig).
+ *  `market` is the @shared pair symbol; base/quote are TOKENS registry keys. */
+const KNOWN_MARKETS = [
+  { market: 'MON/USDC', clob: '0xC35b1Ca1a2C398A21df5783b3a5eA6A2D56f298F', proxy: '0x1aeD222dda944a87703c918745b11bE13f8eEf10', baseTok: 'WMON', quoteTok: 'USDC' },
+  { market: 'ETH/USDC', clob: '0xAC652E05Ac4B2e9eCaE5C65595E4E4E2734F61Cc', proxy: '0x0ACBA24cecd750bAdB3179FB9eE3F2Cd27431778', baseTok: 'WETH', quoteTok: 'USDC' },
+  { market: 'cbBTC/USDC', clob: '0xbc87C6e5A9788404C143D42474508956267B253D', proxy: '0xC11805e92CA6a36cE9507902Ab6Bb5Cd11e438bf', baseTok: 'CBBTC', quoteTok: 'USDC' },
+  { market: 'MON/ETH', clob: '0xBe717AEdc2cdc0a4d3903B7A6a70691942E72793', proxy: '0xc4aDcB94D0dce7fc84e180fAE3621Df13ad37e06', baseTok: 'WMON', quoteTok: 'WETH' },
+  { market: 'cbBTC/MON', clob: '0x77ED4fcB978fa0CE78799064cB38D12FE7c3ce7d', proxy: '0x012e06b56EEE881603E47748931dC38EfaBf54eF', baseTok: 'CBBTC', quoteTok: 'WMON' },
+  { market: 'cbBTC/ETH', clob: '0x8A89f08d3B5aB37f634f2B4dCf2DB29Ecf9938c7', proxy: '0x05e028d33fA727168bC9396bDAc5Cab387c8a196', baseTok: 'CBBTC', quoteTok: 'WETH' },
+] as const;
+
+const lobAbi = parseAbi([
+  // verified layout (all six CLOBs share the implementation): scaling factors,
+  // token addresses, and the 1e18-scaled taker fee rate at index 9.
+  'function getConfig() view returns (uint256 scalingX, uint256 scalingY, address tokenX, address tokenY, uint256 f4, uint256 f5, address a6, address a7, uint256 f8, uint256 takerFeeRate, uint256 f10, uint256 f11, uint256 f12)',
+  'event OrderPlaced(address indexed owner, address indexed initiator, uint64 order_id, bool indexed isAsk, uint128 quantity, uint72 price, uint128 passive_shares, uint128 passive_fee, uint128 aggressive_shares, uint128 aggressive_value, uint128 aggressive_fee, bool market_only, bool post_only)',
+]);
+const helperAbi = parseAbi([
+  'function assembleOrderbooksFromOrders(address lobAddress, uint24 maxPriceLevels) view returns (uint72[] bidPrices, uint128[] bidShares, uint72[] askPrices, uint128[] askShares)',
+]);
+
+const ev = (abi: readonly unknown[], name: string) => abi.find((x: any) => x.type === 'event' && x.name === name);
+
+/** book depth requested per quote poll — enough for the largest probed notional. */
+const BOOK_LEVELS = 60;
+
+interface HanjiMarket {
+  market: string;
+  clob: `0x${string}`;
+  proxy: `0x${string}`;
+  baseTok: string;   // TOKENS key
+  quoteTok: string;  // TOKENS key
+  /** shares → human base: shares × baseShare (= scalingX / 10^xDec). */
+  baseShare: number;
+  /** value-shares → human quote: value × quoteShare (= scalingY / 10^yDec). */
+  quoteShare: number;
+  /** raw uint72 price → human quote-per-base. */
+  pxScale: number;
+  feeBps: number;
+}
+
+export function createHanjiAdapter(): VenueAdapter {
+  let markets: HanjiMarket[] = [];
+  let byClob = new Map<string, HanjiMarket>();
+  let discovered = false;
+
+  return {
+    venues: () => [HANJI_VENUE],
+    // seed daily volume by replaying OrderPlaced on-chain from the CLOBs'
+    // deployment day (2026-06-05). Background — see live.ts.
+    backfillFromUtc: '2026-06-05',
+
+    async discover(ctx: AdapterContext) {
+      const res = await ctx.client.multicall({
+        contracts: KNOWN_MARKETS.map((m) => ({ address: m.clob as `0x${string}`, abi: lobAbi, functionName: 'getConfig' as const })),
+        allowFailure: true,
+      });
+      const found: HanjiMarket[] = [];
+      for (let i = 0; i < KNOWN_MARKETS.length; i++) {
+        const m = KNOWN_MARKETS[i];
+        const r = res[i];
+        // fail closed: a configured market that won't resolve is a hard error
+        // (held cursor), not a silent skip.
+        if (r.status !== 'success') throw new Error(`Hanji getConfig failed for ${m.market} (${m.clob})`);
+        const [sx, sy, tokenX, tokenY, , , , , , takerFeeRate] = r.result as readonly [bigint, bigint, string, string, bigint, bigint, string, string, bigint, bigint, bigint, bigint, bigint];
+        const base = TOKENS[m.baseTok], quote = TOKENS[m.quoteTok];
+        if (!base || !quote) throw new Error(`Hanji ${m.market}: unknown token key`);
+        // the on-chain token layout must match the configured pair — a mismatch
+        // means this table is stale and every unit below would be wrong.
+        if (String(tokenX).toLowerCase() !== base.address.toLowerCase() || String(tokenY).toLowerCase() !== quote.address.toLowerCase()) {
+          throw new Error(`Hanji ${m.market}: on-chain tokens ${tokenX}/${tokenY} don't match ${m.baseTok}/${m.quoteTok}`);
+        }
+        if (!pairOf(m.market)) { ctx.log(`Hanji: ${m.market} is not a registered pair — skipped`); continue; }
+        const baseShare = Number(sx) / 10 ** base.decimals;
+        const quoteShare = Number(sy) / 10 ** quote.decimals;
+        found.push({
+          market: m.market, clob: m.clob as `0x${string}`, proxy: m.proxy as `0x${string}`,
+          baseTok: m.baseTok, quoteTok: m.quoteTok,
+          baseShare, quoteShare,
+          pxScale: quoteShare / baseShare, // humanPrice = raw × quoteShare ÷ baseShare⁻¹… = raw × (sy/10^yDec)/(sx/10^xDec)
+          feeBps: Number(takerFeeRate) / 1e14, // 1e18-scaled rate → bps
+        });
+      }
+      markets = found;
+      byClob = new Map(markets.map((m) => [m.clob.toLowerCase(), m]));
+      discovered = true;
+      ctx.log(`Hanji: ${markets.length} market(s), taker fee ${markets[0]?.feeBps ?? '?'}bps (on-chain config)`);
+    },
+
+    async quote(ctx: AdapterContext, sizesUsd: readonly number[]): Promise<QuoteRow[]> {
+      if (!markets.length) return [];
+      // one multicall for every market's book (proxy → includes vault liquidity).
+      const res = await ctx.client.multicall({
+        contracts: markets.map((m) => ({
+          address: FAST_QUOTER_HELPER, abi: helperAbi,
+          functionName: 'assembleOrderbooksFromOrders' as const,
+          args: [m.proxy, BOOK_LEVELS] as const,
+        })),
+        allowFailure: true,
+      });
+
+      const rows: QuoteRow[] = [];
+      const ts = Date.now();
+      for (let i = 0; i < markets.length; i++) {
+        const m = markets[i];
+        const r = res[i];
+        if (r.status !== 'success') continue;
+        // bps anchor = the pair-terms CEX mid (wrap basis + quote leg applied).
+        const pxMid = ctx.pricer.pairMid(m.market);
+        if (pxMid <= 0) continue; // reference leg not warm — no comparable row
+        const [bidP, bidS, askP, askS] = r.result as readonly [readonly bigint[], readonly bigint[], readonly bigint[], readonly bigint[]];
+        const fee = m.feeBps / 1e4;
+
+        // walk a ladder for `baseNeeded`, best level first → VWAP + filled-full.
+        const walk = (prices: readonly bigint[], shares: readonly bigint[], baseNeeded: number) => {
+          let remaining = baseNeeded, cost = 0;
+          for (let k = 0; k < prices.length && remaining > 0; k++) {
+            const px = Number(prices[k]) * m.pxScale;
+            const avail = Number(shares[k]) * m.baseShare;
+            const take = Math.min(avail, remaining);
+            cost += take * px;
+            remaining -= take;
+          }
+          const filled = baseNeeded - remaining;
+          return { vwap: filled > 0 ? cost / filled : 0, filledFull: remaining <= baseNeeded * 0.001 };
+        };
+
+        for (const size of sizesUsd) {
+          const baseNeeded = ctx.pricer.tokenForUsd(m.baseTok, size);
+          if (baseNeeded <= 0) continue;
+          const buy = walk(askP, askS, baseNeeded);   // buy base = consume asks
+          const sell = walk(bidP, bidS, baseNeeded);  // sell base = consume bids
+          const hasAsk = buy.vwap > 0, hasBid = sell.vwap > 0;
+          if (!hasAsk && !hasBid) continue;
+          // taker fee on top of the walked book (the ladder is raw prices).
+          const askPx = hasAsk ? buy.vwap * (1 + fee) : 0;
+          const bidPx = hasBid ? sell.vwap * (1 - fee) : 0;
+          rows.push({
+            venueId: HANJI_VENUE.id, market: m.market, sizeUsd: size,
+            askPx, bidPx,
+            askBps: hasAsk ? (askPx / pxMid - 1) * 1e4 : 0,
+            bidBps: hasBid ? (bidPx / pxMid - 1) * 1e4 : 0,
+            spreadBps: hasAsk && hasBid ? ((askPx - bidPx) / pxMid) * 1e4 : 0,
+            filledFull: (hasAsk ? buy.filledFull : true) && (hasBid ? sell.filledFull : true),
+            ...(hasAsk && hasBid ? {} : { oneSided: true }),
+            feeBps: m.feeBps, ts,
+          });
+        }
+      }
+      return rows;
+    },
+
+    logSources() {
+      if (!discovered) throw new Error('Hanji discovery unavailable'); // hold the cursor until discovered
+      if (!markets.length) return [];
+      return [{ key: 'orderPlaced', address: markets.map((m) => m.clob), events: [ev(lobAbi, 'OrderPlaced')], kind: 'fills' as const }];
+    },
+
+    async decode(ctx: AdapterContext, logs: LogBundle, tsOf) {
+      // keep only real trades first (the aggressive portion of an order);
+      // passive placements — incl. the vault's re-quotes — are not fills.
+      const trades = (logs.orderPlaced ?? []).filter((l) => {
+        const m = byClob.get(String(l.address).toLowerCase());
+        const a = l.args;
+        return !!m && !!a && a.aggressive_shares !== undefined
+          && BigInt(a.aggressive_shares) !== 0n && BigInt(a.aggressive_value) !== 0n;
+      });
+      if (!trades.length) return [];
+
+      // ATTRIBUTION: the event's owner/initiator are the Hanji PROXY for routed
+      // flow (verified on-chain — both fields were the proxy on a live fill),
+      // which would collapse the leaderboard's TO-ADDRESS grouping to one row.
+      // The real trader is tx.from; tx.to distinguishes direct proxy calls from
+      // an upstream router. One getTransaction per unique fill tx (pooled) —
+      // a lookup failure degrades that fill to UNKNOWN, never drops it.
+      const txs = [...new Set(trades.map((l) => String(l.transactionHash)))];
+      const txInfo = new Map<string, { from: string; to: string }>();
+      const proxies = new Set(markets.map((m) => m.proxy.toLowerCase()));
+      const POOL = 10;
+      for (let i = 0; i < txs.length; i += POOL) {
+        await Promise.all(txs.slice(i, i + POOL).map(async (h) => {
+          for (let r = 0; r < 3; r++) {
+            try {
+              const t = await ctx.client.getTransaction({ hash: h as `0x${string}` });
+              txInfo.set(h, { from: String(t.from).toLowerCase(), to: String(t.to ?? '').toLowerCase() });
+              return;
+            } catch { await new Promise((res) => setTimeout(res, 150 * (r + 1))); }
+          }
+        }));
+      }
+
+      const out: Fill[] = [];
+      for (const l of trades) {
+        const m = byClob.get(String(l.address).toLowerCase())!;
+        const a = l.args;
+        const baseAmount = Number(a.aggressive_shares) * m.baseShare;
+        const quoteAmount = Number(a.aggressive_value) * m.quoteShare;
+        if (baseAmount <= 0 || quoteAmount <= 0) continue;
+        const execPx = quoteAmount / baseAmount; // realized VWAP in pair terms (real markouts, no pxApprox)
+        // USD notional: the quote leg (exact ≡$1 for stables); crypto-quoted
+        // pairs price the quote leg live, with the base leg as fallback. If
+        // NEITHER leg is priceable the cycle must fail closed (held cursor /
+        // paused backfill) rather than store a $0 fill.
+        let usd = ctx.pricer.usdForToken(m.quoteTok, quoteAmount);
+        if (usd <= 0) usd = ctx.pricer.usdForToken(m.baseTok, baseAmount);
+        if (usd <= 0) throw new Error(`Hanji ${m.market}: no USD price for either leg (feeds warming?)`);
+        // isAsk = the aggressive order SELLS the base (tokenX) into the book.
+        const side: Side = a.isAsk ? 'sell' : 'buy';
+        const tx = txInfo.get(String(l.transactionHash));
+        out.push({
+          id: `hanji-${String(l.transactionHash).toLowerCase()}-${l.logIndex}`,
+          venueId: HANJI_VENUE.id,
+          market: m.market, side,
+          category: tx ? (proxies.has(tx.to) ? 'DIRECT' : 'ROUTER') : 'UNKNOWN',
+          usd, baseAmount, execPx,
+          txHash: l.transactionHash, to: tx ? shortHex(tx.from) : shortHex(String(a.initiator ?? '0x')),
+          pool: `lob ${m.clob.slice(0, 8)}`,
+          blockNumber: Number(l.blockNumber), ts: tsOf(l.blockNumber),
+          markoutsBps: [null, null, null, null, null],
+        });
+      }
+      return out;
+    },
+  };
+}

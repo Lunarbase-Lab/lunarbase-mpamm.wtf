@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef } from 'react';
-import { SIZES_USD, TOKENS, ASSETS, pairOf, type VenueMeta, type QuoteRow } from '@shared';
+import { SIZES_USD, TOKENS, pairOf, wrapBasisFor, type VenueMeta, type QuoteRow } from '@shared';
 import { useDashboard } from '../store';
 import { C, hexA, pill, venueColor } from '../theme';
 import { Panel, PanelHead, Field } from '../components/ui';
@@ -137,10 +137,16 @@ export function ExecutionTab() {
     const p = pairOf(pair);
     if (!p) return [];
     const notes: string[] = [];
-    const wrapSym = ASSETS[p.base]?.wrapBasisSymbol;
+    const wrapSym = wrapBasisFor(p); // per-pair: WBTC pairs adjust, cbBTC pairs are parity
+    const baseSym = p.symbol.split('/')[0];
     if (wrapSym) notes.push(`${pair} trades a wrapped asset — the ${refName} reference is adjusted by the ${wrapSym} mid (wrapped/native basis, a proxy for the bridged asset), so the CEX line is shown in wrapped terms for a like-for-like comparison.`);
-    const crossSym = TOKENS[p.quote]?.usdtCross;
-    if (crossSym) notes.push(`${pair} is quoted in ${p.quote} but the ${refName} book is USDT — the reference is converted by the live ${crossSym} mid (the ${p.quote}/USDT basis is real, ~±10bps), not a $1 peg.`);
+    else if (p.wrapBasisOverride === '') notes.push(`${pair} trades ${baseSym}, a wrapped asset with NO CEX basis market — the ${refName} reference assumes parity with native ${p.base} (${baseSym} is 1:1 mint/redeemable, typically sub-bp; there is no live basis feed to price it).`);
+    if (p.quoteKind === 'asset') {
+      notes.push(`${pair} is crypto-quoted — the reference is a SYNTHETIC cross: the ${p.base} leg's CEX book converted by the live ${p.quote}/USDT mid (two real markets, possibly on different exchanges), so bps compare like-for-like in ${p.quote} terms.`);
+    } else {
+      const crossSym = TOKENS[p.quote]?.usdtCross;
+      if (crossSym) notes.push(`${pair} is quoted in ${p.quote} but the ${refName} book is USDT — the reference is converted by the live ${crossSym} mid (the ${p.quote}/USDT basis is real, ~±10bps), not a $1 peg.`);
+    }
     return notes;
   }, [pair, refName]);
 

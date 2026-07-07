@@ -12,6 +12,7 @@ contract is only about the *shapes you return*, not where you get them.
 The shipped adapters are the reference implementations:
 - **`poe.ts`** / **`metric.ts`** — fully on-chain (discover pools via a factory/immutables read, quote via a view call, decode Swap logs), seeded by the core's background on-chain backfill (`backfillFromUtc`).
 - **`clober.ts`** — mixed: subgraph for discovery + closed-day `backfill()`, chain for live quotes + fills (with router attribution + mid-run book discovery).
+- **`hanji.ts`** — fully on-chain LOB: static market table verified against each CLOB's `getConfig()` at discovery (token layout, share scaling factors, taker fee — all read from the chain, nothing assumed), book quotes via a helper view on the PROXY (includes the vault's virtual liquidity), fills = `OrderPlaced` events with an aggressive portion (realized VWAP = value/shares in share units, never the event's limit-price field).
 
 ## Quick start
 1. `cp _template.ts myvenue.ts` and fill in the TODOs.
