@@ -7,7 +7,7 @@ import { fmtUsd, clockMs, clockSec, fmtInt, shortHex } from '../lib/format';
 
 const H = [0, 5, 10, 30, 60];
 const TAPE_GRID = '78px 78px 84px 84px 64px 92px 80px 88px 46px 80px 80px 52px 52px 52px 52px 52px';
-const OUT_GRID = '84px 88px 96px 56px 100px 110px 120px 1fr 1fr';
+const OUT_GRID = '78px 82px 92px 84px 84px 46px 88px 88px 84px 96px 1fr 1fr';
 
 // CATEGORY colour — a fill's routing class, coloured from stable semantic/theme
 // tokens (never a venue color): UNKNOWN/ROUTER→amber, CEX/DEX→link, AGG→accent, DIRECT→faint.
@@ -174,8 +174,9 @@ export function MarkoutsTab() {
         </div>
 
         <div style={{ display: 'grid', gridTemplateColumns: OUT_GRID, gap: '0 8px', padding: '9px 14px', fontSize: 8.5, color: C.faint2, letterSpacing: '.04em', borderBottom: `1px solid ${C.line}` }}>
-          <div>WHEN</div><div>BLOCK</div><div>PAIR</div><div>SIDE</div>
-          <div style={{ textAlign: 'right' }}>USD</div><div style={{ textAlign: 'right' }}>MK-0S (BPS)</div><div style={{ textAlign: 'right' }}>MK-0S P&amp;L</div><div>TX</div><div>TO</div>
+          <div>WHEN</div><div>BLOCK</div><div>PROTOCOL</div><div>PAIR</div><div>POOL</div><div>SIDE</div>
+          <div style={{ textAlign: 'right' }}>USD</div><div style={{ textAlign: 'right' }}>EXEC PX</div>
+          <div style={{ textAlign: 'right' }}>MK-0S (BPS)</div><div style={{ textAlign: 'right' }}>MK-0S P&amp;L</div><div>TX</div><div>TO</div>
         </div>
 
         {outliers.map(({ f, pnl }) => {
@@ -192,13 +193,16 @@ export function MarkoutsTab() {
             >
               <div style={{ color: C.faint }}>{clockMs(f.ts).slice(0, 8)}</div>
               <div style={{ color: C.dim3 }}>{fmtInt(f.blockNumber)}</div>
+              <div style={{ color: venueColor(venuesById[f.venueId], d.theme), fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{venueNameUpper(f)}</div>
               <div style={{ color: C.text2 }}>{f.market}</div>
+              <div style={{ color: C.faint2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{f.pool}</div>
               <div><SideTag side={f.side} /></div>
               <div style={{ textAlign: 'right', color: C.text }}>{fmtUsd(f.usd)}</div>
+              <div style={{ textAlign: 'right', color: C.dim }}>{f.pxApprox ? '—' : f.execPx.toFixed(5)}</div>
               <div style={{ textAlign: 'right', color: mk0 >= 0 ? C.green : C.red }}>{(mk0 >= 0 ? '+' : '') + mk0.toFixed(2)}</div>
               <div style={{ textAlign: 'right', color: pnl >= 0 ? C.green : C.red, fontWeight: 600 }}>{(pnl >= 0 ? '+$' : '−$') + Math.abs(pnl).toFixed(2)}</div>
               <div style={{ color: C.link }}>{shortHex(f.txHash)}</div>
-              <div style={{ color: C.faint2 }}>{f.to}</div>
+              <div style={{ color: C.faint2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{f.to}</div>
             </a>
           );
         })}
