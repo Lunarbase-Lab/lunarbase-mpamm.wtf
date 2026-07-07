@@ -23,7 +23,8 @@ import type { VenueAdapter, AdapterContext, LogBundle } from './adapter.js';
  */
 
 /** LFJ POE display venue — keeps LFJ's brand palette (POE is an LFJ product). */
-const POE_VENUE: VenueMeta = { id: 'poe', name: 'LFJ POE', color: { light: '#FF4D00', dark: '#6E8BFF' }, kind: 'amm', role: 'venue' };
+// sinceUtc = the pool's on-chain deploy day (block 73455416) — same anchor as backfillFromUtc.
+const POE_VENUE: VenueMeta = { id: 'poe', name: 'LFJ POE', color: { light: '#FF4D00', dark: '#6E8BFF' }, kind: 'amm', role: 'venue', sinceUtc: '2026-05-09' };
 
 /** POE OraclePoolFactory on Monad (sorts token args internally). */
 const FACTORY = '0x78120F2C0EBF0cc8B7E7749e62D36e6523dD711D' as const;

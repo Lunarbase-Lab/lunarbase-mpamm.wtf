@@ -43,6 +43,12 @@ export interface VenueMeta {
   /** true when a reference venue is walked as a taker (order book + fee), not at mid.
    *  Drives the "vs CEX" comparison basis; the Execution prose explains the method. */
   taker?: boolean;
+  /** first UTC day ('YYYY-MM-DD') this venue EXISTED (deployment day, or the day
+   *  its tracked history starts). Per-day views (e.g. Volume hover tooltips) omit
+   *  the venue before this date — a venue that didn't exist yet must not render
+   *  as "$0 / 0.0%", which reads as a live venue doing no business. Unset = shown
+   *  for every day. */
+  sinceUtc?: string;
 }
 
 // ──────────────────────────────────────────────────────────────────────────

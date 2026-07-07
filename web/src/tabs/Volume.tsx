@@ -14,6 +14,9 @@ interface SeriesDef {
   val: (d: DailyVolume) => number;
   /** real per-source swap count for this series (no USD proration). */
   swaps: (d: DailyVolume) => number;
+  /** first UTC day the venue existed (VenueMeta.sinceUtc) — per-day tooltips
+   *  omit it before this date instead of showing a misleading "$0 / 0.0%". */
+  since?: string;
 }
 
 /** which chart the pointer is over + the hovered day index within THAT chart's window. */
@@ -116,7 +119,11 @@ export function VolumeTab() {
       color: venueColor(v, d.theme),
       val: (x) => x.byVenue[v.id]?.usd ?? 0,
       swaps: (x) => x.byVenue[v.id]?.swaps ?? 0,
+      since: v.sinceUtc,
     }));
+    // a venue belongs in a DAY-scoped row only from its first day of existence:
+    // "$0" is honest for a live-but-quiet venue, misleading for one not deployed yet.
+    const existsOn = (s: SeriesDef, x: DailyVolume) => !s.since || x.utcDay >= s.since;
 
     const f = (m: number) => fMillions(m);
 
@@ -271,7 +278,7 @@ export function VolumeTab() {
       const x = wDays[hiW];
       dailyTip = {
         left: tipLeft(hiW, ndW), date: dateOf(x), total: f(dayTotal(x)),
-        rows: series.map((s) => ({ name: s.name, color: s.color, val: f(s.val(x)) })),
+        rows: series.filter((s) => existsOn(s, x)).map((s) => ({ name: s.name, color: s.color, val: f(s.val(x)) })),
       };
     } else if (hiP >= 0) {
       const x = pDays[hiP];
@@ -282,7 +289,7 @@ export function VolumeTab() {
         const t = pTot[hiP] || 1;
         msTip = {
           left: tipLeft(hiP, ndP), guide: guideLeft(hiP, ndP), date: dateOf(x),
-          rows: series.map((s) => ({ name: s.name, color: s.color, pct: (s.val(x) / t * 100).toFixed(1) + '%', val: f(s.val(x)) })),
+          rows: series.filter((s) => existsOn(s, x)).map((s) => ({ name: s.name, color: s.color, pct: (s.val(x) / t * 100).toFixed(1) + '%', val: f(s.val(x)) })),
         };
       }
     }

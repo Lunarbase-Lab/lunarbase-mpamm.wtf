@@ -42,6 +42,7 @@ Everything you need is on `ctx` (`AdapterContext`) — **use it instead of impor
 - **`VenueMeta`** — `{ id, name, color: { light, dark }, kind: 'amm'|'clob'|'vault'|'cex', role: 'venue' }`. `id` is the stable key used as `Fill.venueId` / `QuoteRow.venueId`. `color` is the single source of truth the UI uses for lines/bars/swatches.
 - **`Fill`** — `{ id, venueId, market, side, category, usd, baseAmount, execPx, txHash, to, pool, blockNumber, ts, markoutsBps: [null,null,null,null,null] }`. Give `id` a **deterministic** value (`` `${venue}-${txHash}-${logIndex}` ``) so a re-tail/gap-fill/restart dedupes instead of double-counting. Leave `markoutsBps` null — the core ages them vs the reference. Set `pxApprox: true` if `execPx` isn't a real realized price (it'll be excluded from markout stats).
 - **`QuoteRow`** — `{ venueId, market, sizeUsd, bidBps, askBps, bidPx, askPx, spreadBps, filledFull, feeBps, ts }`. bid/ask in **bps vs the reference mid**; px is **quote-per-base** (stable per base asset). Set `oneSided: true` when only one side is executable at that size.
+- **`VenueMeta.sinceUtc`** — set it to the venue's on-chain deploy day (or where its tracked history starts). Per-day UI views (Volume hover tooltips) omit the venue before that date instead of rendering a misleading "$0 / 0.0%" for a venue that didn't exist yet.
 - **`backfill()`** → `{ days?: [{ utcDay, byVenue: { [id]: { usd, swaps? } } }], fills? }`. Volume-only closed days are fine (`swaps` defaults to 0).
 
 ## How the core uses you

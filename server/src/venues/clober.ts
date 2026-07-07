@@ -9,7 +9,9 @@ import { seedCloberDaily } from '../seed/subgraph.js';
 
 /** Clober oracle-vault (propAMM) display venue — the ONE venue this adapter
  *  surfaces. Its per-theme color is the single source of truth for the frontend. */
-const CLOBER_VAULT_VENUE: VenueMeta = { id: 'clober-vault', name: 'Clober Vault', color: { light: '#9C6B16', dark: '#9A88FF' }, kind: 'vault', role: 'venue' };
+// sinceUtc = where the vault's tracked history starts (the subgraph seed's first day,
+// HISTORY_START_UTC) — before that we have no data for it either way.
+const CLOBER_VAULT_VENUE: VenueMeta = { id: 'clober-vault', name: 'Clober Vault', color: { light: '#9C6B16', dark: '#9A88FF' }, kind: 'vault', role: 'venue', sinceUtc: '2026-05-13' };
 
 /**
  * Clober V2 — best-effort live integration (spec §3, §5.1, §5.2), generic over
