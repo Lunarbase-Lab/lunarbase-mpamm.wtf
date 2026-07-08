@@ -157,7 +157,7 @@ export function VolumeTab() {
         msTopName: '—', msTopPct: '0.0%', msTopColor: msLabelColor(C.faint2),
         msBotName: '—', msBotPct: '0.0%', msBotColor: msLabelColor(C.faint2),
         brk: [] as { name: string; color: string; vol: string; share: string; shareW: string; swaps: string; peakV: string; peakDay: string; first: string }[],
-        brkTotalVol: f(0), brkTotalSwaps: '0', brkTotalFirst: '—',
+        brkTotalVol: f(0), brkTotalSwaps: '0',
         volScopeNote: scopeNote,
         ndPreset: 0,
         dailyTip: null as null | { left: string; date: string; total: string; rows: { name: string; color: string; val: string }[] },
@@ -324,7 +324,7 @@ export function VolumeTab() {
       msBotName: series[0].name,
       msBotPct: (series[0].val(pDays[ndP - 1]) / lt * 100).toFixed(1) + '%',
       msBotColor: msLabelColor(series[0].color),
-      brk, brkTotalVol: f(allTot), brkTotalSwaps: brkSwapTotal.toLocaleString(), brkTotalFirst: since,
+      brk, brkTotalVol: f(allTot), brkTotalSwaps: brkSwapTotal.toLocaleString(),
       volScopeNote: scopeNote,
       ndPreset: ndP,
       dailyTip, cumTip, msTip,
@@ -582,7 +582,8 @@ export function VolumeTab() {
             <div style={{ color: C.dim }}>100%</div>
             <div style={{ textAlign: 'right', color: C.dim }}>{vm.brkTotalSwaps}</div>
             <div style={{ textAlign: 'right', color: C.faint2 }}>—</div>
-            <div style={{ textAlign: 'right', color: C.dim3 }}>{vm.brkTotalFirst}</div>
+            {/* an aggregate has no single first-active date */}
+            <div style={{ textAlign: 'right', color: C.dim3 }}>—</div>
           </div>
         </div>
       </div>
