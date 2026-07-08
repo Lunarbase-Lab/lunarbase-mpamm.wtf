@@ -573,7 +573,7 @@ export function VolumeTab() {
         </div>
         <div style={{ padding: '6px 14px 12px' }}>
           <div style={{ display: 'grid', gridTemplateColumns: '1.4fr 1fr 1.4fr 1fr 1.2fr 1fr', gap: 8, padding: '9px 6px', fontSize: 9, color: C.faint2, letterSpacing: '.05em', borderBottom: `1px solid ${C.line}` }}>
-            <div>VENUE</div><div style={{ textAlign: 'right' }}>{vm.rangeLabel} VOL</div><div>SHARE</div><div style={{ textAlign: 'right' }}>SWAPS</div><div style={{ textAlign: 'right' }}>PEAK DAY</div><div style={{ textAlign: 'right' }}>FIRST ACTIVE</div>
+            <div>VENUE</div><div style={{ textAlign: 'right' }}>{vm.rangeLabel} VOL</div><div style={{ textAlign: 'right' }}>SHARE</div><div style={{ textAlign: 'right' }}>SWAPS</div><div style={{ textAlign: 'right' }}>PEAK DAY</div><div style={{ textAlign: 'right' }}>FIRST ACTIVE</div>
           </div>
           {vm.brk.map((r) => (
             <div key={r.name} style={{ display: 'grid', gridTemplateColumns: '1.4fr 1fr 1.4fr 1fr 1.2fr 1fr', gap: 8, padding: '10px 6px', fontSize: 11.5, borderBottom: `1px solid ${C.line3}`, alignItems: 'center' }}>
@@ -596,7 +596,7 @@ export function VolumeTab() {
           <div style={{ display: 'grid', gridTemplateColumns: '1.4fr 1fr 1.4fr 1fr 1.2fr 1fr', gap: 8, padding: '10px 6px', fontSize: 11.5, alignItems: 'center' }}>
             <div style={{ color: C.dim3 }}>TOTAL</div>
             <div style={{ textAlign: 'right', color: C.text, fontWeight: 600 }}>{vm.brkTotalVol}</div>
-            <div style={{ color: C.dim }}>100%</div>
+            <div style={{ textAlign: 'right', color: C.dim }}>100%</div>
             <div style={{ textAlign: 'right', color: C.dim }}>{vm.brkTotalSwaps}</div>
             <div style={{ textAlign: 'right', color: C.faint2 }}>—</div>
             {/* an aggregate has no single first-active date */}
