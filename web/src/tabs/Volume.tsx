@@ -53,7 +53,10 @@ export function VolumeTab() {
     return rangeN ? [Math.max(0, n - rangeN), n - 1] : [0, n - 1];
   };
   const [wS, wE] = winFor(true);   // daily chart + brush follow presets AND the brush
-  const [pS, pE] = winFor(false);  // cumulative + market-share follow presets ONLY (intentional)
+  // ONE window below the KPI tiles: cumulative, market-share, the daily legend
+  // and the venue breakdown all follow the same selected range (presets AND the
+  // hand-drawn brush). Only the top tiles keep all-time/7d/today semantics.
+  const [pS, pE] = winFor(true);
 
   const setWin = (s: number, e: number) => {
     d.set('volStart', s); d.set('volEnd', e); d.set('volRange', 'CUSTOM');
@@ -153,6 +156,7 @@ export function VolumeTab() {
         since: '—',
         legRows: series.map((s) => ({ name: s.name, color: s.color, vol: f(0), share: '0.0%' })),
         legTotal: f(0), cumLine: '', cumArea: '', cumSigma: f(0),
+        rangeLabel: 'ALL-TIME', rangeCaption: '',
         msBands: [] as { path: string; color: string }[],
         msTopName: '—', msTopPct: '0.0%', msTopColor: msLabelColor(C.faint2),
         msBotName: '—', msBotPct: '0.0%', msBotColor: msLabelColor(C.faint2),
@@ -189,11 +193,20 @@ export function VolumeTab() {
       onEnter: () => setHover({ c: 'daily', i }),
     }));
 
-    // ── KPIs / legend / breakdown stay FULL-history (all-time semantics — our
-    // approved divergence; the window drives only the charts).
-    const totals = series.map((s) => ({ name: s.name, color: s.color, tot: allDays.reduce((a, x) => a + s.val(x), 0) }));
-    const allTot = totals.reduce((a, t) => a + t.tot, 0);
-    const share = (x: number) => (allTot ? (x / allTot * 100) : 0).toFixed(1) + '%';
+    // ── KPI tiles stay FULL-history (all-time / trailing-7d / today semantics);
+    // everything below them — legend, breakdown, all three charts — follows the
+    // SELECTED window so the page reads as one coherent range.
+    const allTot = allDays.reduce((a, x) => a + dayTotal(x), 0);
+    const isFullWindow = wS === 0 && wE === nd - 1;
+    const rangeLabel = isFullWindow ? 'ALL-TIME' : 'WINDOW';
+    const rangeCaption = isFullWindow ? '' : `${mmdd(wDays[0].utcDay)} → ${mmdd(wDays[ndW - 1].utcDay)}`;
+    const winEndDay = wDays[ndW - 1].utcDay;
+    // window totals per venue — venues that didn't EXIST during any part of the
+    // window are omitted (same honesty rule as the per-day tooltips).
+    const winSeries = series.filter((s) => !s.since || s.since <= winEndDay);
+    const totals = winSeries.map((s) => ({ name: s.name, color: s.color, tot: wDays.reduce((a, x) => a + s.val(x), 0) }));
+    const winTot = totals.reduce((a, t) => a + t.tot, 0);
+    const share = (x: number) => (winTot ? (x / winTot * 100) : 0).toFixed(1) + '%';
 
     const aTot = allDays.map(dayTotal);
     // real trailing 7-calendar-day windows anchored on the latest day present —
@@ -248,21 +261,24 @@ export function VolumeTab() {
     const lt = pTot[ndP - 1] || 1;
     const pPeak = (s: SeriesDef) => {
       let pv = -1, pd = '';
-      allDays.forEach((x) => { const v = s.val(x); if (v > pv) { pv = v; pd = mmdd(x.utcDay); } });
+      wDays.forEach((x) => { const v = s.val(x); if (v > pv) { pv = v; pd = mmdd(x.utcDay); } });
       return { v: f(pv), day: pd };
     };
     // real per-source swap counts (no USD proration): each venue counts its own takes.
-    const brkSwaps = series.map((s) => allDays.reduce((a, x) => a + s.swaps(x), 0));
+    const brkSwaps = winSeries.map((s) => wDays.reduce((a, x) => a + s.swaps(x), 0));
     const brkSwapTotal = brkSwaps.reduce((a, b) => a + b, 0);
-    const brk = series.map((s, k) => {
-      const tot = allDays.reduce((a, x) => a + s.val(x), 0);
+    const brk = winSeries.map((s, k) => {
+      const tot = totals[k].tot;
       const pk = pPeak(s);
+      // first day IN THE WINDOW with any notional (the venue's true first-active
+      // still anchors the all-time tile's "since" line).
+      const firstInWin = wDays.find((x) => s.val(x) > 0)?.utcDay ?? '—';
       return {
         name: s.name, color: s.color, vol: f(tot), share: share(tot),
-        shareW: (allTot ? tot / allTot * 100 : 0).toFixed(1),
+        shareW: (winTot ? tot / winTot * 100 : 0).toFixed(1),
         swaps: brkSwaps[k].toLocaleString(),
         peakV: pk.v, peakDay: pk.day,
-        first: firstActive(s),
+        first: firstInWin,
       };
     });
 
@@ -316,7 +332,8 @@ export function VolumeTab() {
       kTodaycss: todayChg >= 0 ? C.green : C.red,
       since,
       legRows: totals.map((t) => ({ name: t.name, color: t.color, vol: f(t.tot), share: share(t.tot) })),
-      legTotal: f(allTot), cumLine, cumArea, cumSigma: f(cum || allTot),
+      legTotal: f(winTot), cumLine, cumArea, cumSigma: f(cum || winTot),
+      rangeLabel, rangeCaption,
       msBands,
       msTopName: series[series.length - 1].name,
       msTopPct: (series[series.length - 1].val(pDays[ndP - 1]) / lt * 100).toFixed(1) + '%',
@@ -324,7 +341,7 @@ export function VolumeTab() {
       msBotName: series[0].name,
       msBotPct: (series[0].val(pDays[ndP - 1]) / lt * 100).toFixed(1) + '%',
       msBotColor: msLabelColor(series[0].color),
-      brk, brkTotalVol: f(allTot), brkTotalSwaps: brkSwapTotal.toLocaleString(),
+      brk, brkTotalVol: f(winTot), brkTotalSwaps: brkSwapTotal.toLocaleString(),
       volScopeNote: scopeNote,
       ndPreset: ndP,
       dailyTip, cumTip, msTip,
@@ -463,7 +480,7 @@ export function VolumeTab() {
           {/* summary table — a real column now (was an absolute overlay hiding the newest bars) */}
           <div style={{ flex: 'none', width: 248, background: C.overlay, border: `1px solid ${C.line}`, padding: '8px 10px' }}>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 70px 44px', gap: '3px 8px', fontSize: 8.5, color: C.faint2, letterSpacing: '.05em', paddingBottom: 5, borderBottom: `1px solid ${C.line}` }}>
-              <div>VENUE</div><div style={{ textAlign: 'right' }}>ALL-TIME</div><div style={{ textAlign: 'right' }}>SHARE</div>
+              <div>VENUE</div><div style={{ textAlign: 'right' }}>{vm.rangeLabel}</div><div style={{ textAlign: 'right' }}>SHARE</div>
             </div>
             {vm.legRows.map((r) => (
               <div key={r.name} style={{ display: 'grid', gridTemplateColumns: '1fr 70px 44px', gap: '3px 8px', fontSize: 10.5, padding: '4px 0', alignItems: 'center' }}>
@@ -552,11 +569,11 @@ export function VolumeTab() {
         <i style={{ position: 'absolute', top: -1, left: -1, width: 8, height: 8, borderTop: `1px solid ${C.purple}`, borderLeft: `1px solid ${C.purple}` }} />
         <i style={{ position: 'absolute', bottom: -1, right: -1, width: 8, height: 8, borderBottom: `1px solid ${C.purple}`, borderRight: `1px solid ${C.purple}` }} />
         <div style={{ padding: '9px 12px', borderBottom: `1px solid ${C.line2}`, fontSize: 11, letterSpacing: '.03em' }}>
-          <span style={{ color: C.purple }}>#</span> <span style={{ color: C.text, fontWeight: 600 }}>VENUE_BREAKDOWN</span>
+          <span style={{ color: C.purple }}>#</span> <span style={{ color: C.text, fontWeight: 600 }}>VENUE_BREAKDOWN</span>{vm.rangeCaption ? <span style={{ color: C.faint }}> {vm.rangeCaption}</span> : null}
         </div>
         <div style={{ padding: '6px 14px 12px' }}>
           <div style={{ display: 'grid', gridTemplateColumns: '1.4fr 1fr 1.4fr 1fr 1.2fr 1fr', gap: 8, padding: '9px 6px', fontSize: 9, color: C.faint2, letterSpacing: '.05em', borderBottom: `1px solid ${C.line}` }}>
-            <div>VENUE</div><div style={{ textAlign: 'right' }}>ALL-TIME VOL</div><div>SHARE</div><div style={{ textAlign: 'right' }}>SWAPS</div><div style={{ textAlign: 'right' }}>PEAK DAY</div><div style={{ textAlign: 'right' }}>FIRST ACTIVE</div>
+            <div>VENUE</div><div style={{ textAlign: 'right' }}>{vm.rangeLabel} VOL</div><div>SHARE</div><div style={{ textAlign: 'right' }}>SWAPS</div><div style={{ textAlign: 'right' }}>PEAK DAY</div><div style={{ textAlign: 'right' }}>FIRST ACTIVE</div>
           </div>
           {vm.brk.map((r) => (
             <div key={r.name} style={{ display: 'grid', gridTemplateColumns: '1.4fr 1fr 1.4fr 1fr 1.2fr 1fr', gap: 8, padding: '10px 6px', fontSize: 11.5, borderBottom: `1px solid ${C.line3}`, alignItems: 'center' }}>
