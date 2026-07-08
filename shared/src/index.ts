@@ -29,7 +29,9 @@ export type DataSourceMode = 'live' | 'sim';
  * `role: 'venue'` = a propAMM/on-chain venue that lands fills and shows in
  * Volume/Markouts/Leaderboard. `role: 'reference'` = a CEX benchmark venue
  * (Bybit for MON, Binance for BTC/ETH): it provides the markout/quote reference
- * and shows only in Execution.
+ * and shows only in Execution. `role: 'baseline'` = a quote-only standard-DEX
+ * comparison (Uniswap v4): Execution-page only — rendered as a cost-envelope
+ * band, toggled OFF by default, never in volume/markouts/leaderboard, never ★.
  */
 export interface VenueMeta {
   /** stable key used everywhere as `Fill.venueId` / `QuoteRow.venueId` (e.g. 'poe', 'clober-vault', 'bybit'). */
@@ -39,7 +41,7 @@ export interface VenueMeta {
   /** venue color per theme — the single source of truth for line/bar/swatch color. */
   color: { light: string; dark: string };
   kind: 'amm' | 'clob' | 'vault' | 'cex';
-  role: 'venue' | 'reference';
+  role: 'venue' | 'reference' | 'baseline';
   /** true when a reference venue is walked as a taker (order book + fee), not at mid.
    *  Drives the "vs CEX" comparison basis; the Execution prose explains the method. */
   taker?: boolean;

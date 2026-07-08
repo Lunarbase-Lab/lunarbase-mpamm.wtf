@@ -12,6 +12,7 @@ contract is only about the *shapes you return*, not where you get them.
 The shipped adapters are the reference implementations:
 - **`poe.ts`** / **`metric.ts`** — fully on-chain (discover pools via a factory/immutables read, quote via a view call, decode Swap logs), seeded by the core's background on-chain backfill (`backfillFromUtc`).
 - **`clober.ts`** — subgraph for vault-book DISCOVERY only; quotes/fills/history all on-chain (router attribution + mid-run book discovery; lifetime volume via the core's `backfillFromUtc` replay).
+- **`uniswap.ts`** — a `role: 'baseline'` adapter: QUOTE-ONLY (logSources → [], no decode). Baselines are standard-DEX comparison bands on the Execution page — never in volume/markouts/leaderboard, default-off toggle, never ★. Discovery picks the deepest hookless standard-tier v4 pool per registered pair (StateView); quotes via V4Quoter eth_call; `QuoteRow.feeBps` carries the pool tier so the UI labels the band with the ACTUAL pool used.
 - **`hanji.ts`** — fully on-chain LOB: static market table verified against each CLOB's `getConfig()` at discovery (token layout, share scaling factors, taker fee — all read from the chain, nothing assumed), book quotes via a helper view on the PROXY (includes the vault's virtual liquidity), fills = `OrderPlaced` events with an aggressive portion (realized VWAP = value/shares in share units, never the event's limit-price field).
 
 ## Quick start

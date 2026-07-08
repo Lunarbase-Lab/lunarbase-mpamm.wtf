@@ -40,10 +40,14 @@ export function ExecutionTab() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [d.quotes]);
   const pairVenues = d.displayVenues.filter((v) => seenVenuePairs.current.has(`${v.id}|${pair}`));
-  // toggle chips: the propAMM venues that support this pair + its CEX reference
-  // (before the first quote tick, fall back to all venues so the row isn't empty).
+  // toggle chips: the propAMM venues that support this pair + any BASELINE that
+  // quotes it (the standard-DEX band — only pairs with a live, sane Uniswap
+  // pool ever emit rows, so illiquid/poolless pairs never grow the chip) + the
+  // pair's CEX reference. (Before the first quote tick, fall back to all
+  // venues so the row isn't empty.)
   const shown = pairVenues.length ? pairVenues : d.displayVenues;
-  const chips: VenueMeta[] = ref ? [...shown, ref] : shown;
+  const pairBaselines = d.baselines.filter((v) => seenVenuePairs.current.has(`${v.id}|${pair}`));
+  const chips: VenueMeta[] = [...shown, ...pairBaselines, ...(ref ? [ref] : [])];
   // active = chips the user has enabled (all registry venues default on).
   const active = chips.filter((v) => d.venueToggles[v.id]);
   const refName = ref?.name ?? 'the CEX reference';
@@ -54,12 +58,20 @@ export function ExecutionTab() {
   const row = (v: VenueMeta, s: number): QuoteRow | undefined =>
     d.quotes?.rows.find((r) => r.venueId === v.id && r.market === pair && r.sizeUsd === s);
 
+  // baseline label = venue name + the ACTUAL pool tier used for this pair
+  // (the adapter reports the pool's fee in QuoteRow.feeBps: 5 → "0.05%").
+  const displayName = (v: VenueMeta): string => {
+    if (v.role !== 'baseline') return v.name;
+    const r = d.quotes?.rows.find((x) => x.venueId === v.id && x.market === pair);
+    return r ? `${v.name} · ${(r.feeBps / 100).toLocaleString(undefined, { maximumFractionDigits: 2 })}%` : v.name;
+  };
+
   // legend — active venues at selected pair/size, sorted by spread
   const legend = useMemo(() => {
     const leg = active.map((v) => {
       const r = row(v, size);
       return {
-        id: v.id, name: v.name, color: venueColor(v, d.theme),
+        id: v.id, name: displayName(v), color: venueColor(v, d.theme), baseline: v.role === 'baseline',
         spread: r?.spreadBps ?? 0, bid: r?.bidBps ?? 0, ask: r?.askBps ?? 0,
         // realized buy-MON cost vs the reference-as-taker, + = on-chain worse (spec §4.2)
         vsCex: r?.cexAskBps, has: !!r,
@@ -75,8 +87,9 @@ export function ExecutionTab() {
     return leg;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [d.quotes, d.venueToggles, d.venues, pair, size, d.frame, d.theme]);
-  // tightest = tightest genuinely-executable quote (full-size + two-sided), by id
-  const tight = legend.find((x) => !x.oneSided && x.full)?.id;
+  // tightest = tightest genuinely-executable quote (full-size + two-sided), by
+  // id — baselines are a comparison overlay, never ★-eligible.
+  const tight = legend.find((x) => !x.oneSided && x.full && !x.baseline)?.id;
 
   // depth ladder — per size, per venue bar widths
   const depth = useMemo(() => SIZES_USD.map((sz) => {
@@ -102,13 +115,14 @@ export function ExecutionTab() {
     const rows = active.map((v) => {
       const a = d.samples[v.id] ?? [];
       return {
-        id: v.id, name: v.name, color: venueColor(v, d.theme),
+        id: v.id, name: displayName(v), color: venueColor(v, d.theme), baseline: v.role === 'baseline',
         p5: percentile(a, .05), p25: percentile(a, .25), p50: percentile(a, .5),
         p75: percentile(a, .75), p95: percentile(a, .95),
         avg: a.length ? a.reduce((x, y) => x + y, 0) / a.length : 0, sd: stdev(a), n: a.length,
       };
     });
-    const tightest = rows.length ? rows.reduce((m, r) => (r.p50 < m.p50 ? r : m), rows[0]).id : null;
+    const eligible = rows.filter((r) => !r.baseline && r.n > 0);
+    const tightest = eligible.length ? eligible.reduce((m, r) => (r.p50 < m.p50 ? r : m), eligible[0]).id : null;
     return { rows, tightest };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [d.frame, d.venueToggles, d.venues, d.theme]);
@@ -178,7 +192,7 @@ export function ExecutionTab() {
               {chips.map((v) => {
                 const on = d.venueToggles[v.id];
                 const color = venueColor(v, d.theme);
-                const label = v.name.toUpperCase();
+                const label = displayName(v).toUpperCase();
                 return (
                   <div key={v.id} onClick={() => d.toggleVenue(v.id)} style={{
                     display: 'flex', alignItems: 'center', gap: 6, padding: '4px 9px', borderRadius: 4, cursor: 'pointer',

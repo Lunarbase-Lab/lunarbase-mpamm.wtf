@@ -42,6 +42,7 @@ export class SimDataSource extends BaseSource {
 
   private venues: VenueMeta[] = venueMeta();
   private display: VenueMeta[] = this.venues.filter((v) => v.role === 'venue');
+  private baselines: VenueMeta[] = this.venues.filter((v) => v.role === 'baseline');
   private references: VenueMeta[] = this.venues.filter((v) => v.role === 'reference');
   private param: Record<string, Param> = {};
 
@@ -62,6 +63,11 @@ export class SimDataSource extends BaseSource {
 
   constructor() {
     super();
+    // baselines simulate a standard-DEX cost envelope (design's UniV4 mock):
+    // wide half-spread, strong size sensitivity, slight positive offset.
+    this.baselines.forEach((v) => {
+      this.param[v.id] = { offset: 0.8, half: 9.0, slip: 4.2, markoutBias: 0, weight: 0 };
+    });
     // deterministic per-venue params by registry order (venue 0 = tightest/heaviest).
     this.display.forEach((v, i) => {
       this.param[v.id] = {
@@ -121,6 +127,21 @@ export class SimDataSource extends BaseSource {
             filledFull: size < 100000,
             feeBps: v.kind === 'amm' ? 0.3 + 0.04 * sizeStep : 0,
             ts,
+          });
+        }
+      }
+    }
+    // baseline (standard-DEX band) rows — quote-only, exec page. Fee tier label
+    // parity with live: feeBps = the mock pool's tier (0.05% → 5bps).
+    for (const v of this.baselines) {
+      for (const market of MARKETS) {
+        for (const size of SIZES_USD) {
+          const q = this.quoteAt(v.id, market, size);
+          rows.push({
+            venueId: v.id, market, sizeUsd: size,
+            bidBps: q.bidBps, askBps: q.askBps, bidPx: q.bidPx, askPx: q.askPx,
+            spreadBps: q.askBps - q.bidBps,
+            filledFull: true, feeBps: 5, ts,
           });
         }
       }

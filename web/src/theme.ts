@@ -55,9 +55,9 @@ export const SEM: Record<Theme, { green: { css: string; rgb: string }; red: { cs
   dark: { green: { css: 'rgb(53,208,160)', rgb: '53,208,160' }, red: { css: 'rgb(242,86,106)', rgb: '242,86,106' } },
 };
 /** Quote-canvas chrome: grid lines, axis labels, ribbon fill alpha (design CH). */
-export const CH: Record<Theme, { grid: string; grid2: string; label: string; label2: string; ribbon: number }> = {
-  light: { grid: 'rgba(23,20,15,0.08)', grid2: 'rgba(23,20,15,0.05)', label: 'rgb(122,116,103)', label2: 'rgb(150,143,128)', ribbon: 0.10 },
-  dark: { grid: 'rgba(255,255,255,0.05)', grid2: 'rgba(255,255,255,0.035)', label: 'rgb(107,109,118)', label2: 'rgb(94,96,104)', ribbon: 0.08 },
+export const CH: Record<Theme, { grid: string; grid2: string; label: string; label2: string; ribbon: number; ribbonB: number }> = {
+  light: { grid: 'rgba(23,20,15,0.08)', grid2: 'rgba(23,20,15,0.05)', label: 'rgb(122,116,103)', label2: 'rgb(150,143,128)', ribbon: 0.10, ribbonB: 0.17 },
+  dark: { grid: 'rgba(255,255,255,0.05)', grid2: 'rgba(255,255,255,0.035)', label: 'rgb(107,109,118)', label2: 'rgb(94,96,104)', ribbon: 0.08, ribbonB: 0.15 },
 };
 /** rgba() from a #rrggbb hex + alpha — for the venue-color getters (hex inputs only). */
 export function hexA(hex: string, a: number): string {

@@ -519,12 +519,13 @@
 class Component extends DCLogic {
   PAIRS = ['MON/USDC', 'MON/USDT0', 'MON/AUSD', 'MON/USD1'];
   SIZES = [100, 1000, 10000, 100000];
-  VEN = ['LFJ', 'Clober', 'Vault', 'Bybit'];
+  VEN = ['LFJ', 'Clober', 'Vault', 'Bybit', 'UniV4'];
+  BENCH = ['UniV4'];   // standard-DEX benchmark band
   get isLight() { return !this.state || this.state.theme !== 'dark'; }
   get COL() {
     return this.isLight
-      ? { LFJ: '#FF4D00', Clober: '#221E15', Vault: '#9C6B16', Bybit: '#8A8375' }
-      : { LFJ: '#6E8BFF', Clober: '#45C8E8', Vault: '#9A88FF', Bybit: '#B9BCC6' };
+      ? { LFJ: '#FF4D00', Clober: '#221E15', Vault: '#9C6B16', Bybit: '#8A8375', UniV4: '#3F6212' }
+      : { LFJ: '#6E8BFF', Clober: '#45C8E8', Vault: '#9A88FF', Bybit: '#B9BCC6', UniV4: '#4D7C0F' };
   }
   get SEM() {
     return this.isLight
@@ -533,16 +534,16 @@ class Component extends DCLogic {
   }
   get CH() {
     return this.isLight
-      ? { grid: 'rgba(23,20,15,0.08)', grid2: 'rgba(23,20,15,0.05)', label: 'rgb(122,116,103)', label2: 'rgb(150,143,128)', ribbon: 0.10 }
-      : { grid: 'rgba(255,255,255,0.05)', grid2: 'rgba(255,255,255,0.035)', label: 'rgb(107,109,118)', label2: 'rgb(94,96,104)', ribbon: 0.08 };
+      ? { grid: 'rgba(23,20,15,0.08)', grid2: 'rgba(23,20,15,0.05)', label: 'rgb(122,116,103)', label2: 'rgb(150,143,128)', ribbon: 0.10, ribbonB: 0.17 }
+      : { grid: 'rgba(255,255,255,0.05)', grid2: 'rgba(255,255,255,0.035)', label: 'rgb(107,109,118)', label2: 'rgb(94,96,104)', ribbon: 0.08, ribbonB: 0.15 };
   }
   base = 0.01928;
   takerBps = 10;
   N = 120;
-  slip = { LFJ: 1.3, Clober: 1.7, Vault: 0.5, Bybit: 0.22 };
+  slip = { LFJ: 1.3, Clober: 1.7, Vault: 0.5, Bybit: 0.22, UniV4: 4.2 };
   pairMult = { 'MON/USDC': 1.0, 'MON/USDT0': 1.15, 'MON/AUSD': 1.4, 'MON/USD1': 1.6 };
 
-  state = { tab: 'exec', pair: 'MON/USDC', size: 1000, frame: 0, theme: (function () { try { return localStorage.getItem('pamm-theme') === 'dark' ? 'dark' : 'light'; } catch (e) { return 'light'; } })(), ven: { LFJ: true, Clober: true, Vault: true, Bybit: true }, mkProto: 'ALL', mkSide: 'ALL', mkSize: 'ANY', mkPaused: false, clScope: 'venue', volRange: 'ALL', volHover: null, lbWin: '24H', lbShow: 'PROPAMM', lbGroup: 'PROTOCOL', lbHz: 'T+0S', lbMk: 'TAKER', lbWinners: true, lbTop: 25 };
+  state = { tab: 'exec', pair: 'MON/USDC', size: 1000, frame: 0, theme: (function () { try { return localStorage.getItem('pamm-theme') === 'dark' ? 'dark' : 'light'; } catch (e) { return 'light'; } })(), ven: { LFJ: true, Clober: true, Vault: true, Bybit: true, UniV4: false }, mkProto: 'ALL', mkSide: 'ALL', mkSize: 'ANY', mkPaused: false, clScope: 'venue', volRange: 'ALL', volHover: null, lbWin: '24H', lbShow: 'PROPAMM', lbGroup: 'PROTOCOL', lbHz: 'T+0S', lbMk: 'TAKER', lbWinners: true, lbTop: 25 };
 
   setCanvas = (el) => { this.canvas = el; };
   setSel = (k, v) => { if (k === 'pair') this.pairSel = v; if (k === 'size') this.sizeSel = v; this.setState({ [k]: v }); this.reseedQuotes(); };
@@ -558,10 +559,10 @@ class Component extends DCLogic {
   componentDidMount() {
     this.mon = this.base;
     this.block = 47128560;
-    this.off = { LFJ: -1.0, Clober: -1.6, Vault: -0.2, Bybit: 0 };
-    this.hs = { LFJ: 3.6, Clober: 2.0, Vault: 1.0, Bybit: 0.16 };
-    this.hsMin = { LFJ: 2.4, Clober: 1.2, Vault: 0.6, Bybit: 0.10 };
-    this.hsMax = { LFJ: 5.5, Clober: 3.4, Vault: 1.7, Bybit: 0.30 };
+    this.off = { LFJ: -1.0, Clober: -1.6, Vault: -0.2, Bybit: 0, UniV4: 0.8 };
+    this.hs = { LFJ: 3.6, Clober: 2.0, Vault: 1.0, Bybit: 0.16, UniV4: 9.0 };
+    this.hsMin = { LFJ: 2.4, Clober: 1.2, Vault: 0.6, Bybit: 0.10, UniV4: 6.5 };
+    this.hsMax = { LFJ: 5.5, Clober: 3.4, Vault: 1.7, Bybit: 0.30, UniV4: 14.0 };
     this._hold = 0;
     this.series = {}; this.samples = {};
     this.VEN.forEach(v => { this.series[v] = { bid: [], ask: [] }; this.samples[v] = []; });
@@ -603,7 +604,7 @@ class Component extends DCLogic {
       this._hold = 6 + Math.floor(Math.random() * 22);       // hold ~3-14s between steps
       shift = true;
     }
-    ['LFJ', 'Clober', 'Vault'].forEach(v => {
+    ['LFJ', 'Clober', 'Vault', 'UniV4'].forEach(v => {
       // re-quote on a regime shift, or occasionally alone — otherwise hold the level flat
       if (shift || Math.random() < 0.06) {
         this.off[v] += this.rnd() * (shift ? 0.7 : 0.35);
@@ -988,14 +989,15 @@ class Component extends DCLogic {
       for (let i = 1; i < n; i++) { ctx.lineTo(X(i), Y(S.ask[i - 1])); ctx.lineTo(X(i), Y(S.ask[i])); }
       ctx.lineTo(X(n - 1), Y(S.bid[n - 1]));
       for (let i = n - 1; i > 0; i--) { ctx.lineTo(X(i - 1), Y(S.bid[i])); ctx.lineTo(X(i - 1), Y(S.bid[i - 1])); }
-      ctx.closePath(); ctx.fillStyle = this.hex(c, CH.ribbon); ctx.fill();
+      ctx.closePath(); ctx.fillStyle = this.hex(c, this.BENCH.includes(v) ? CH.ribbonB : CH.ribbon); ctx.fill();
     });
     // STROKES on top — solid = ask, dashed = bid, both stepped
     active.forEach(v => {
       const c = this.COL[v], S = this.series[v];
+      const bench = this.BENCH.includes(v);
       ctx.strokeStyle = c;
-      ctx.lineWidth = 1.5; ctx.setLineDash([]); this.stepPath(ctx, S.ask, X, Y); ctx.stroke();
-      ctx.lineWidth = 1.1; ctx.setLineDash([3, 3]); this.stepPath(ctx, S.bid, X, Y); ctx.stroke(); ctx.setLineDash([]);
+      ctx.lineWidth = bench ? 1.9 : 1.5; ctx.setLineDash([]); this.stepPath(ctx, S.ask, X, Y); ctx.stroke();
+      ctx.lineWidth = bench ? 1.4 : 1.1; ctx.setLineDash([3, 3]); this.stepPath(ctx, S.bid, X, Y); ctx.stroke(); ctx.setLineDash([]);
     });
   }
 
@@ -1013,7 +1015,7 @@ class Component extends DCLogic {
     const pairs = this.PAIRS.map(p => ({ name: p, onClick: () => this.setSel('pair', p), style: st.pair === p ? pillOn : pillOff }));
     const sizes = this.SIZES.map(s => ({ label: this.sizeLabel(s), onClick: () => this.setSel('size', s), style: st.size === s ? pillOn : pillOff }));
     const venues = this.VEN.map(v => ({
-      label: v === 'Bybit' ? 'BYBIT (taker)' : v.toUpperCase(), onClick: () => this.toggleVen(v),
+      label: v === 'Bybit' ? 'BYBIT (taker)' : v === 'UniV4' ? 'UNI-V4 0.05%' : v.toUpperCase(), onClick: () => this.toggleVen(v),
       style: 'display:flex;align-items:center;gap:6px;padding:4px 9px;border-radius:4px;cursor:pointer;font-size:11px;white-space:nowrap;border:1px solid ' + (st.ven[v] ? this.hex(this.COL[v], 0.5) : 'var(--pill-border)') + ';color:' + (st.ven[v] ? 'var(--text)' : 'var(--faint)') + ';background:' + (st.ven[v] ? this.hex(this.COL[v], 0.12) : 'transparent'),
       dot: 'width:7px;height:7px;border-radius:50%;background:' + (st.ven[v] ? this.COL[v] : 'var(--faint2)')
     }));

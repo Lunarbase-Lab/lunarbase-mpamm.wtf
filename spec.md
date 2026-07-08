@@ -72,7 +72,7 @@ Built and run as a **backend service** (§7.D1): the service owns the RPC/WS/CEX
 Borrow pamm.wtf's information architecture; build the UI custom. Every tab renders purely from the venue registry (`state.venues`) — name, color, and grouping come from `VenueMeta`, nothing hardcoded.
 
 ### 4.1 Execution (`[1]`)
-Rolling window (~60s) of live quotes per pair at a chosen notional, expressed as **realized cost in bps vs the pair's CEX reference** (Bybit for MON, Binance for BTC/ETH — converted into pair terms, §5.5). For each pair × side × notional:
+Rolling window (~60s) of live quotes per pair at a chosen notional, expressed as **realized cost in bps vs the pair's CEX reference**. An optional **standard-DEX baseline band** (Uniswap v4, `role: 'baseline'`, default OFF) overlays the vanilla-AMM cost envelope for the same size — deepest hookless pool per pair, tier shown in the label, quote-only (never in volume/markouts/leaderboard, never ★) (Bybit for MON, Binance for BTC/ETH — converted into pair terms, §5.5). For each pair × side × notional:
 1. **On-chain realized** — simulate the fill via the adapter's `quote()` (§5.1); `realized = quote-per-base`, venue-fee-inclusive.
 2. **CEX realized** — walk the pair's CEX book (Bybit `MONUSDT` / Binance `BTCUSDT`/`ETHUSDT`, §5.5) for the **same base size**, convert into the pair's terms (wrap basis + stable cross), then overlay the **taker fee** (config constant). Realized-vs-realized at size — the only honest comparison for size-sensitive flow.
 3. **vs CEX (bps)** = realized on-chain buy vs the pair's CEX-as-taker, sign-normalized so positive = on-chain worse.

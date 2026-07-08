@@ -4,6 +4,7 @@ import { createPoeAdapter } from './poe.js';
 import { createCloberVaultAdapter } from './clober.js';
 import { createMetricAdapter } from './metric.js';
 import { createHanjiAdapter } from './hanji.js';
+import { createUniswapAdapter } from './uniswap.js';
 import { createReferenceRegistry } from './reference.js';
 
 /**
@@ -20,6 +21,7 @@ export const ADAPTERS: VenueAdapter[] = [
   createCloberVaultAdapter(),
   createMetricAdapter(),
   createHanjiAdapter(),
+  createUniswapAdapter(), // baseline (quote-only) — the standard-DEX band
 ];
 
 /** The CEX reference registry — the markout + Execution benchmarks, routed per
@@ -47,6 +49,15 @@ export function validateRegistry(): void {
   const adapterRefs = ADAPTERS.flatMap((a) => a.venues()).filter((v) => v.role === 'reference');
   if (adapterRefs.length) {
     throw new Error(`venue registry: adapter venue '${adapterRefs[0].id}' has role 'reference' — CEX benchmarks belong in the reference registry`);
+  }
+  // 'baseline' adapters are quote-only comparisons (e.g. Uniswap v4): they may
+  // not produce fills — a fill would flow into volume/markout stores no UI reads.
+  const baselineIds = new Set(ADAPTERS.flatMap((a) => a.venues()).filter((v) => v.role === 'baseline').map((v) => v.id));
+  for (const a of ADAPTERS) {
+    const ids = a.venues().map((v) => v.id);
+    if (ids.some((id) => baselineIds.has(id)) && a.logSources().length > 0) {
+      throw new Error(`venue registry: baseline venue '${ids[0]}' declares log sources — baselines are quote-only`);
+    }
   }
   const seen = new Set<string>();
   for (const v of metas) {

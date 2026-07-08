@@ -49,6 +49,7 @@ interface Dashboard extends UiState {
   // in the UI reads these; nothing about a venue is hardcoded client-side.
   venues: VenueMeta[];
   displayVenues: VenueMeta[];              // role === 'venue' (propAMM makers)
+  baselines: VenueMeta[];                  // role === 'baseline' (quote-only comparisons, exec-page band)
   reference: VenueMeta | undefined;        // default CEX benchmark (first reference)
   references: VenueMeta[];                  // all CEX benchmarks (role === 'reference')
   /** the CEX benchmark for a market, routed by base asset (Bybit for MON, Binance for BTC/ETH). */
@@ -214,7 +215,9 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
       const next = { ...s.venueToggles };
       let changed = false;
       for (const v of venues) {
-        if (!(v.id in next)) { next[v.id] = true; changed = true; }
+        // baselines (standard-DEX comparison band) default OFF — an opt-in
+        // overlay, per the product decision; everything else defaults on.
+        if (!(v.id in next)) { next[v.id] = v.role !== 'baseline'; changed = true; }
       }
       return changed ? { ...s, venueToggles: next } : s;
     });
@@ -295,12 +298,13 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
   useEffect(() => { reseed(); setFrame((f) => f + 1); /* eslint-disable-next-line */ }, [venueIds(state).join(',')]);
 
   const venues = state?.venues ?? [];
-  const { displayVenues, references, reference, venuesById } = useMemo(() => {
+  const { displayVenues, baselines, references, reference, venuesById } = useMemo(() => {
     const byId: Record<string, VenueMeta> = {};
     for (const v of venues) byId[v.id] = v;
     const refs = venues.filter((v) => v.role === 'reference');
     return {
       displayVenues: venues.filter((v) => v.role === 'venue'),
+      baselines: venues.filter((v) => v.role === 'baseline'),
       references: refs,
       reference: refs[0],
       venuesById: byId,
@@ -314,7 +318,7 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
 
   const api = useMemo<Dashboard>(() => ({
     ...ui, conn, state, quotes, volume, fills, lb, lbDay, frame,
-    venues, displayVenues, reference, references, referenceFor, venuesById,
+    venues, displayVenues, baselines, reference, references, referenceFor, venuesById,
     series: seriesRef.current, samples: samplesRef.current,
     set: (k, v) => setUi((s) => ({ ...s, [k]: v })),
     toggleVenue: (id) => setUi((s) => ({ ...s, venueToggles: { ...s.venueToggles, [id]: !s.venueToggles[id] } })),
@@ -330,7 +334,7 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
       setFrame((f) => f + 1);
     },
     resetLb: () => setUi((s) => ({ ...s, lbWin: '24H', lbGroup: 'PROTOCOL', lbHz: 'T+0S', lbMk: 'MAKER', lbWinners: true, lbTop: 25 })),
-  }), [ui, conn, state, quotes, volume, fills, lb, lbDay, frame, venues, displayVenues, reference, references, referenceFor, venuesById]);
+  }), [ui, conn, state, quotes, volume, fills, lb, lbDay, frame, venues, displayVenues, baselines, reference, references, referenceFor, venuesById]);
 
   return <Ctx.Provider value={api}>{children}</Ctx.Provider>;
 }

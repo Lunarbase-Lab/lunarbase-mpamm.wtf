@@ -46,7 +46,7 @@ export function QuoteCanvas() {
     // propAMM venues + the selected pair's CEX reference (Bybit for MON, Binance for
     // BTC/ETH), filtered by the user's toggles. Everything comes from the registry.
     const cexRef = d.referenceFor(d.pair);
-    const chips: VenueMeta[] = cexRef ? [...d.displayVenues, cexRef] : d.displayVenues;
+    const chips: VenueMeta[] = [...d.displayVenues, ...d.baselines, ...(cexRef ? [cexRef] : [])];
     const active = chips.filter((v) => d.venueToggles[v.id]);
     if (!active.length) return;
 
@@ -114,7 +114,9 @@ export function QuoteCanvas() {
       ctx.lineTo(X(n - 1), Y(s.bid[n - 1]));
       for (let i = n - 1; i > 0; i--) { ctx.lineTo(X(i - 1), Y(s.bid[i])); ctx.lineTo(X(i - 1), Y(s.bid[i - 1])); } // stepped bottom (bid)
       ctx.closePath();
-      ctx.fillStyle = hexA(venueColor(v, d.theme), ch.ribbon); ctx.fill();
+      // baseline (standard-DEX) venues render as a HEAVIER cost-envelope band —
+      // the design's ribbonB — so the propAMM lines visibly sit inside it.
+      ctx.fillStyle = hexA(venueColor(v, d.theme), v.role === 'baseline' ? ch.ribbonB : ch.ribbon); ctx.fill();
     }
 
     // STROKES on top — solid stepped ask, dashed stepped bid (each side drawn
@@ -122,9 +124,10 @@ export function QuoteCanvas() {
     for (const v of active) {
       const s = d.series[v.id];
       if (!s) continue;
+      const bench = v.role === 'baseline'; // heavier strokes frame the band (design)
       ctx.strokeStyle = venueColor(v, d.theme);
-      if (s.ask.length >= 2) { ctx.lineWidth = 1.5; ctx.setLineDash([]); stepPath(s.ask); ctx.stroke(); }
-      if (s.bid.length >= 2) { ctx.lineWidth = 1.1; ctx.setLineDash([3, 3]); stepPath(s.bid); ctx.stroke(); ctx.setLineDash([]); }
+      if (s.ask.length >= 2) { ctx.lineWidth = bench ? 1.9 : 1.5; ctx.setLineDash([]); stepPath(s.ask); ctx.stroke(); }
+      if (s.bid.length >= 2) { ctx.lineWidth = bench ? 1.4 : 1.1; ctx.setLineDash([3, 3]); stepPath(s.bid); ctx.stroke(); ctx.setLineDash([]); }
     }
   };
 
