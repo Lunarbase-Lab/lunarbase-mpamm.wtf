@@ -83,7 +83,7 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
     venueToggles: {},
     mkProto: 'ALL', mkSide: 'ALL', mkSize: 'ANY', mkPaused: false,
     volRange: 'ALL', volStart: null, volEnd: null,
-    lbWin: '24H', lbGroup: 'PROTOCOL', lbHz: 'T+0S', lbMk: 'TAKER', lbWinners: true, lbTop: 25,
+    lbWin: '24H', lbGroup: 'PROTOCOL', lbHz: 'T+0S', lbMk: 'MAKER', lbWinners: true, lbTop: 25,
   });
   const [conn, setConn] = useState<'connecting' | 'live' | 'reconnecting'>('connecting');
   const [state, setState] = useState<MarketState | null>(null);
@@ -329,7 +329,7 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
       // canvas colors come from JS getters (not var()), so force a repaint.
       setFrame((f) => f + 1);
     },
-    resetLb: () => setUi((s) => ({ ...s, lbWin: '24H', lbGroup: 'PROTOCOL', lbHz: 'T+0S', lbMk: 'TAKER', lbWinners: true, lbTop: 25 })),
+    resetLb: () => setUi((s) => ({ ...s, lbWin: '24H', lbGroup: 'PROTOCOL', lbHz: 'T+0S', lbMk: 'MAKER', lbWinners: true, lbTop: 25 })),
   }), [ui, conn, state, quotes, volume, fills, lb, lbDay, frame, venues, displayVenues, reference, references, referenceFor, venuesById]);
 
   return <Ctx.Provider value={api}>{children}</Ctx.Provider>;
