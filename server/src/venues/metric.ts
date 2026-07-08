@@ -19,7 +19,7 @@ import type { VenueAdapter, AdapterContext, LogBundle } from './adapter.js';
  */
 
 // sinceUtc = the pools' on-chain deploy day (block 65042020) — same anchor as backfillFromUtc.
-const METRIC_VENUE: VenueMeta = { id: 'metric', name: 'Metric', color: { light: '#0F9D8C', dark: '#2DD4BF' }, kind: 'amm', role: 'venue', sinceUtc: '2026-03-31' };
+const METRIC_VENUE: VenueMeta = { id: 'metric', name: 'Metric', color: { light: '#0F9D8C', dark: '#0D9488' }, kind: 'amm', role: 'venue', sinceUtc: '2026-03-31' };
 
 /** Shared MetricOmmSwapRouter on Monad (same for every pool). */
 const ROUTER = '0xaF9ADa6b6eC7993CE146f6c0bF98f7211CDfD3e5' as const;

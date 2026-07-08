@@ -14,7 +14,10 @@ import type { VenueAdapter, AdapterContext, LogBundle } from './adapter.js';
  *  its historical value so persisted history survives the rename.
  *  sinceUtc = the vault books' true first trading day (their subgraph's
  *  earliest BookDayData — 2025-10-28), same anchor as backfillFromUtc. */
-const CLOBER_VAULT_VENUE: VenueMeta = { id: 'clober-vault', name: 'Clober', color: { light: '#9C6B16', dark: '#9A88FF' }, kind: 'vault', role: 'venue', sinceUtc: '2025-10-28' };
+// color: sky in BOTH themes — the old light brown-gold sat next to Binance's
+// gold, and the old dark lavender was near-identical to Hanji's and the UI
+// accent purple. Palette validated (CVD/contrast, both surfaces).
+const CLOBER_VAULT_VENUE: VenueMeta = { id: 'clober-vault', name: 'Clober', color: { light: '#0284C7', dark: '#0284C7' }, kind: 'vault', role: 'venue', sinceUtc: '2025-10-28' };
 
 /**
  * Clober V2 — best-effort live integration (spec §3, §5.1, §5.2), generic over

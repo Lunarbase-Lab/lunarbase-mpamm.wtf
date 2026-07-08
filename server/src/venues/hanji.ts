@@ -33,7 +33,9 @@ import type { VenueAdapter, AdapterContext, LogBundle } from './adapter.js';
  */
 
 // sinceUtc = the CLOBs' on-chain deploy day (blocks 79242115–79242169, bisected).
-const HANJI_VENUE: VenueMeta = { id: 'hanji', name: 'Hanji', color: { light: '#6D28D9', dark: '#A78BFA' }, kind: 'clob', role: 'venue', sinceUtc: '2026-06-05' };
+// color: fuchsia in BOTH themes — the old dark lavender was near-identical to
+// Clober's and to the UI accent purple. Palette validated (CVD/contrast).
+const HANJI_VENUE: VenueMeta = { id: 'hanji', name: 'Hanji', color: { light: '#A21CAF', dark: '#C026D3' }, kind: 'clob', role: 'venue', sinceUtc: '2026-06-05' };
 
 const FAST_QUOTER_HELPER = '0x237dB58fea34A35A8543b44C217d221606cE7788' as const;
 
