@@ -234,6 +234,21 @@ export class VolumeStore {
     }
   }
 
+  /** Wipe one venue's gas series AND its scan metas in one transaction — the
+   *  accrual is additive, so deepening a scan without clearing the rows it
+   *  already wrote would double-count. Used by the venue-lifetime migration. */
+  resetGas(venueId: string): void {
+    this.db.exec('BEGIN');
+    try {
+      this.db.prepare(`DELETE FROM daily_gas WHERE venue_id = ?`).run(venueId);
+      this.db.prepare(`DELETE FROM meta WHERE key IN (?, ?)`).run(`gas_cursor_${venueId}`, `gas_from_${venueId}`);
+      this.db.exec('COMMIT');
+    } catch (e) {
+      this.db.exec('ROLLBACK');
+      throw e;
+    }
+  }
+
   /** Reconstruct GasDay[] (ascending). `today` marks the partial bucket. */
   gasDays(today: string): GasDay[] {
     const rows = this.db.prepare(`SELECT utc_day, venue_id, mon, txs FROM daily_gas ORDER BY utc_day ASC`).all() as Array<Record<string, any>>;

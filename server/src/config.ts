@@ -109,10 +109,6 @@ export const config = {
    *  spends on price updates (adapter gasSources()). GAS_METRIC=off disables
    *  the tracker (the API then serves whatever was already persisted). */
   gasMetric: (env.GAS_METRIC ?? 'on').toLowerCase() !== 'off',
-  /** history horizon on first run (days). Deliberately shallow: the burn is a
-   *  recent-behavior signal, and deep history costs receipts (Clober alone is
-   *  ~4k update txs/day). Forward accrual is unbounded. */
-  gasBackfillDays: num('GAS_BACKFILL_DAYS', 30),
   /** logs-mode receipt sampling: per processed chunk, fetch at most this many
    *  receipts (evenly strided) and scale by the chunk's tx count. Update txs
    *  have flat gas limits and ride the ~100 gwei base-fee floor, so a modest

@@ -126,11 +126,11 @@ export class SimDataSource extends BaseSource {
       try { if (a.gasSources!().some((s) => s.mode === 'blocks')) approx.push(v.id); }
       catch { approx.push(v.id); }
     }
+    // venue-lifetime like live: each venue's series runs from its sinceUtc
+    // (clamped to the sim's own history start).
     const sinceOf = new Map(this.venues.map((v) => [v.id, v.sinceUtc ?? '']));
-    const horizon = utcDay(Date.now() - config.gasBackfillDays * 86_400_000);
     const dayFrac = Math.max(0.02, (Date.now() - Date.parse(`${utcDay()}T00:00:00Z`)) / 86_400_000);
     const days = this.days
-      .filter((d) => d.utcDay >= horizon)
       .map((d) => {
         const byVenue: Record<string, VenueGasDaily> = {};
         vids.forEach((vid, i) => {

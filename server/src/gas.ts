@@ -12,8 +12,9 @@ const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
  * spends keeping its quotes fresh, bucketed per (UTC day, venue) into
  * `daily_gas`. Venues declare WHERE their update txs are found (adapter
  * `gasSources()`, destination-keyed — sender rotation never matters); this
- * tracker owns the how: cursors, the first-run backfill (gasBackfillDays) and
- * forward accrual are the same loop, so there is no separate onboarding stage.
+ * tracker owns the how: cursors, the first-run VENUE-LIFETIME backfill (from
+ * the venue's sinceUtc — same anchor as the volume backfill) and forward
+ * accrual are the same loop, so there is no separate onboarding stage.
  *
  * Monad charges gas_limit, and receipts report gasUsed == limit, so a tx's
  * true cost is exactly receipt.gasUsed × effectiveGasPrice — no estimation on
@@ -104,17 +105,27 @@ export class GasTracker {
     // finality margin: Monad receipts/logs can mutate for ~2 blocks (~800ms).
     const head = (await this.client.getBlockNumber()) - 5n;
     const cursorKey = `gas_cursor_${vid}`;
+    // VENUE-LIFETIME series, same anchor as the volume backfill: the burn
+    // history should start when the venue did, not at an arbitrary horizon.
+    const sinceDay = a.venues()[0]?.sinceUtc ?? a.backfillFromUtc ?? utcDay();
+    // one-time migration: rows seeded before gas_from existed came from the
+    // old shallow (30d) horizon — wipe them WITH their cursor and re-scan from
+    // the venue's start (additive rows + a deeper scan would double-count).
+    // Self-healing for the future too: if a venue's start ever moves EARLIER,
+    // the same wipe-and-rescan deepens its series on the next boot.
+    const fromKey = `gas_from_${vid}`;
+    const seededFrom = this.store.getMeta(fromKey);
+    if (this.store.getMeta(cursorKey) && (!seededFrom || seededFrom > sinceDay)) {
+      this.store.resetGas(vid);
+      this.note(`${name}: deepening quote-update gas history to ${sinceDay} — re-scanning`);
+    }
     const cur = this.store.getMeta(cursorKey);
     let cursor: bigint;
     if (cur) {
       cursor = BigInt(cur);
     } else {
-      // first run: shallow history horizon (the burn is a recent-behavior
-      // signal), clamped to the venue's own start when it is younger.
-      let sinceDay = utcDay(Date.now() - config.gasBackfillDays * 86_400_000);
-      const born = a.venues()[0]?.sinceUtc;
-      if (born && born > sinceDay) sinceDay = born;
       cursor = await blockAtOrAfter(Math.floor(Date.parse(`${sinceDay}T00:00:00Z`) / 1000), head);
+      this.store.setMeta(fromKey, sinceDay);
       this.noteOnce(`${name}: quote-update gas scan from ${sinceDay} — blocks ${cursor}→${head}`);
     }
     if (cursor > head) return;
