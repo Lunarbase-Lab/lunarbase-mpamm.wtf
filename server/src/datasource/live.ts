@@ -2,10 +2,11 @@ import { BaseSource } from './index.js';
 import {
   MARKETS, SIZES_USD, MARKOUT_HORIZONS, ASSETS, PAIRS, pairOf,
   type DataSourceMode, type MarketState, type QuoteSnapshot, type QuoteRow, type Fill, type DailyVolume,
-  type LeaderboardResponse,
+  type LeaderboardResponse, type GasResponse,
 } from '@shared';
 import { computeLeaderboard } from '../analytics.js';
 import { pairMidSeries } from '../history/cex.js';
+import { GasTracker } from '../gas.js';
 import { config } from '../config.js';
 import { publicClient, getLogsChunked, probeChain, blockAtOrAfter } from '../chain/rpc.js';
 import { UsdPricer } from '../pricer.js';
@@ -34,6 +35,8 @@ export class LiveDataSource extends BaseSource {
 
   private pricer = new UsdPricer((key) => REFERENCES.assetUsd(key), (market) => REFERENCES.midForPair(market));
   private store = new VolumeStore(config.dbPath);
+  /** QUOTE_UPDATE_BURN accrual — destination-keyed per-venue keeper gas. */
+  private gas = new GasTracker(publicClient, this.store, ADAPTERS, (m) => this.noteOnce(m));
   /** shared infra handed to every adapter (they don't import globals). */
   private ctx: AdapterContext = {
     client: publicClient,
@@ -101,6 +104,10 @@ export class LiveDataSource extends BaseSource {
     this.rediscoverTimer = setInterval(() => { void this.rediscover(); }, config.rediscoverMs);
     // seed deep history in the BACKGROUND — never blocks boot or the live tail.
     if (config.backfillEnabled || config.markoutBackfill) void this.backgroundHistory();
+    // quote-update gas: its own cursor + loop (first pass covers the shallow
+    // history horizon, later passes tail forward) — independent of the fills
+    // pipeline on purpose: a gas-source failure must never hold the fill cursor.
+    if (config.gasMetric) this.gas.start();
     // Deferred markout backfills retry on a TIMER, not just at boot: a month's
     // CEX archive publishes days after month end, and "marks itself when it
     // lands" must not depend on a deploy happening to restart the process. Each
@@ -125,9 +132,15 @@ export class LiveDataSource extends BaseSource {
     if (this.persistTimer) clearInterval(this.persistTimer);
     if (this.rediscoverTimer) clearInterval(this.rediscoverTimer);
     if (this.remarkTimer) clearInterval(this.remarkTimer);
+    this.gas.stop();
     this.persist();
     REFERENCES.stop();
     this.store.close();
+  }
+
+  /** QUOTE_UPDATE_BURN series — straight from daily_gas (tiny table). */
+  gasSeries(): GasResponse {
+    return { days: this.store.gasDays(utcDay()), approx: this.gas.approxVenueIds() };
   }
 
   /** Periodically re-run each adapter's discover() so mid-run or missed pool

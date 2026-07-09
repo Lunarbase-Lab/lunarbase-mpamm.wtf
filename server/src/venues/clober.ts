@@ -1,7 +1,7 @@
 import type { PublicClient } from 'viem';
 import type { QuoteRow, Fill, Side, FillCategory, VenueMeta, Pair } from '@shared';
 import { ADDR, TOKENS, ASSETS, PAIRS, pairFor, assetForToken, baseTokenOf } from '@shared';
-import { bookViewerAbi, bookManagerAbi, liquidityVaultAbi, routerGatewayAbi, CLOBER_MIN_PRICE } from '../chain/abis.js';
+import { bookViewerAbi, bookManagerAbi, liquidityVaultAbi, routerGatewayAbi, simpleOracleStrategyAbi, CLOBER_MIN_PRICE } from '../chain/abis.js';
 import { fromUnits, toUnits, shortHex } from '../util.js';
 import type { UsdPricer } from '../pricer.js';
 import type { VenueAdapter, AdapterContext, LogBundle } from './adapter.js';
@@ -489,6 +489,15 @@ export function createCloberVaultAdapter(): VenueAdapter {
     },
     quote(ctx, sizesUsd) {
       return quoteClober(ctx.client, markets, sizesUsd, ctx.pricer);
+    },
+    // QUOTE_UPDATE_BURN: the vault's quotes live on the books, and every
+    // repricing is one keeper tx through the operator contract that emits
+    // SimpleOracleStrategy.UpdatePosition (verified on-chain: ~1 update/21s,
+    // flat 1.7M gas limit — which Monad charges in full). One event per
+    // (key, update); the tracker dedupes to unique txs, so a multi-pair
+    // update tx is counted once with its real cost.
+    gasSources() {
+      return [{ mode: 'logs' as const, address: ADDR.simpleOracleStrategy as `0x${string}`, events: [ev(simpleOracleStrategyAbi, 'UpdatePosition')] }];
     },
     logSources() {
       return [

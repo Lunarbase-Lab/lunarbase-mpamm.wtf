@@ -20,7 +20,7 @@ interface SeriesDef {
 }
 
 /** which chart the pointer is over + the hovered day index within THAT chart's window. */
-type HoverState = { c: 'daily' | 'cum' | 'ms'; i: number } | null;
+type HoverState = { c: 'daily' | 'burn' | 'cum' | 'ms'; i: number } | null;
 
 const RANGE_PRESETS = ['7D', '14D', '30D', 'ALL'] as const;
 const RANGE_DAYS: Record<string, number> = { '7D': 7, '14D': 14, '30D': 30 };
@@ -169,6 +169,12 @@ export function VolumeTab() {
         msTip: null as null | { left: string; guide: string; date: string; rows: { name: string; color: string; pct: string; val: string }[] },
         brushBars: [] as { h: string; color: string }[],
         brushLeft: '0', brushWidth: '100', brushStartLbl: '—', brushEndLbl: '—',
+        hasBurn: false,
+        burnBars: [] as { op: number; segs: { h: string; color: string }[]; bg: string; onEnter: () => void }[],
+        burnMaxLabel: '0 MON', burnMidLabel: '0 MON',
+        burnTip: null as null | { left: string; date: string; total: string; usd: string; rows: { name: string; color: string; val: string }[] },
+        burnRows: [] as { name: string; color: string; burn: string; updates: string }[],
+        burnTotal: '0 MON', burnUpdatesTotal: '0', burnColHdr: 'ALL-TIME BURN', burnPerM: '0',
       };
     }
 
@@ -310,6 +316,54 @@ export function VolumeTab() {
       }
     }
 
+    // ── QUOTE_UPDATE_BURN (MON, not USD): the gas each venue's own keeper
+    // spends keeping quotes fresh. Same window + x-domain as the daily chart
+    // (reuses volAxis, no brush of its own). Venues appear only when the
+    // server tracks a series for them — a venue that doesn't self-fund its
+    // price updates (external oracle / taker-paid JIT) has no row, on purpose.
+    const gasByDay = new Map((d.gas?.days ?? []).map((g) => [g.utcDay, g.byVenue]));
+    const approx = new Set(d.gas?.approx ?? []);
+    const gasVenueIds = new Set<string>();
+    for (const g of d.gas?.days ?? []) for (const vid of Object.keys(g.byVenue)) gasVenueIds.add(vid);
+    const burnSeries = series.filter((s) => gasVenueIds.has(s.id));
+    const hasBurn = burnSeries.length > 0;
+    const gVal = (utc: string, vid: string) => gasByDay.get(utc)?.[vid]?.mon ?? 0;
+    const gTxs = (utc: string, vid: string) => gasByDay.get(utc)?.[vid]?.txs ?? 0;
+    const fMON = (m: number) => (m >= 1000 ? (m / 1000).toFixed(1) + 'K' : Math.round(m).toLocaleString()) + ' MON';
+    const bTot = wDays.map((x) => burnSeries.reduce((a, s) => a + gVal(x.utcDay, s.id), 0));
+    const bMax = Math.max(...bTot, 0) || 1;
+    const hiB = hv && hv.c === 'burn' ? Math.min(hv.i, ndW - 1) : -1;
+    const burnBars = wDays.map((x, i) => ({
+      op: x.partial ? 0.5 : 1,
+      segs: burnSeries.filter((s) => gVal(x.utcDay, s.id) > 0).map((s) => ({ h: (gVal(x.utcDay, s.id) / bMax * H).toFixed(1), color: s.color })),
+      bg: hiB === i ? 'var(--accent-dim)' : 'transparent',
+      onEnter: () => setHover({ c: 'burn', i }),
+    }));
+    let burnTip = null;
+    if (hiB >= 0) {
+      const x = wDays[hiB];
+      const monUsd = d.state?.monUsd ?? 0;
+      burnTip = {
+        left: tipLeft(hiB, ndW), date: dateOf(x),
+        rows: burnSeries.filter((s) => gVal(x.utcDay, s.id) > 0)
+          .map((s) => ({ name: s.name, color: s.color, val: (approx.has(s.id) ? '≈' : '') + gVal(x.utcDay, s.id).toFixed(1) + ' MON' })),
+        total: Math.round(bTot[hiB]).toLocaleString() + ' MON',
+        usd: monUsd > 0 ? '~$' + (bTot[hiB] * monUsd).toFixed(0) : '',
+      };
+    }
+    const burnRows = burnSeries.map((s) => {
+      const tot = wDays.reduce((a, x) => a + gVal(x.utcDay, s.id), 0);
+      const ups = wDays.reduce((a, x) => a + gTxs(x.utcDay, s.id), 0);
+      return { name: s.name, color: s.color, burn: (approx.has(s.id) ? '≈' : '') + fMON(tot), updates: ups.toLocaleString() };
+    });
+    const burnTotal = bTot.reduce((a, b) => a + b, 0);
+    const burnUpdatesTotal = burnSeries.reduce((a, s) => a + wDays.reduce((x, y) => x + gTxs(y.utcDay, s.id), 0), 0);
+    // burn per $1M of volume, over only the days that HAVE a gas series — the
+    // burn history is deliberately shallow (~30d), so dividing by the window's
+    // FULL volume would understate the ratio on wide windows.
+    const volOnGasDays = wDays.reduce((a, x) => a + (gasByDay.has(x.utcDay) ? dayTotal(x) : 0), 0);
+    const burnPerM = volOnGasDays > 0 ? (burnTotal / (volOnGasDays / 1e6)).toFixed(1) : '0';
+
     // ── brush / minimap: the FULL history as miniature total bars, window-tinted.
     const aMax = Math.max(...aTot) || 1;
     const brushBars = allDays.map((x, i) => ({
@@ -346,9 +400,14 @@ export function VolumeTab() {
       ndPreset: ndP,
       dailyTip, cumTip, msTip,
       brushBars, brushLeft, brushWidth, brushStartLbl, brushEndLbl,
+      hasBurn, burnBars,
+      burnMaxLabel: fMON(bMax), burnMidLabel: fMON(bMax / 2),
+      burnTip, burnRows,
+      burnTotal: fMON(burnTotal), burnUpdatesTotal: burnUpdatesTotal.toLocaleString(),
+      burnColHdr: `${rangeLabel} BURN`, burnPerM,
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [d.volume, d.theme, d.displayVenues, wS, wE, pS, pE, hover]);
+  }, [d.volume, d.gas, d.theme, d.displayVenues, wS, wE, pS, pE, hover]);
 
   // svg charts: cursor-x → nearest day index (round(frac × (n−1))); only
   // re-render when the index or chart changes, not on every mousemove pixel.
@@ -500,6 +559,77 @@ export function VolumeTab() {
           </div>
         </div>
       </div>
+
+      {/* QUOTE_UPDATE_BURN — same window + x-domain as DAILY_VOLUME (no brush of
+          its own; the one above is the page's single range control). Rendered
+          only once the server has a burn series for at least one venue. */}
+      {vm.hasBurn && (
+        <div style={{ position: 'relative', border: `1px solid ${C.line}`, background: C.panel, margin: '0 18px 14px' }}>
+          <i style={{ position: 'absolute', top: -1, left: -1, width: 8, height: 8, borderTop: `1px solid ${C.purple}`, borderLeft: `1px solid ${C.purple}` }} />
+          <i style={{ position: 'absolute', bottom: -1, right: -1, width: 8, height: 8, borderBottom: `1px solid ${C.purple}`, borderRight: `1px solid ${C.purple}` }} />
+          <div style={{ padding: '9px 12px', borderBottom: `1px solid ${C.line2}`, fontSize: 11, letterSpacing: '.03em' }}>
+            <span style={{ color: C.purple }}>~</span> <span style={{ color: C.text, fontWeight: 600 }}>QUOTE_UPDATE_BURN</span> <span style={{ color: C.faint }}>gas burned keeping quotes fresh · MON · UTC days · tracked venues</span>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'flex-start', gap: 14, padding: '16px 18px 8px' }}>
+            <div style={{ position: 'relative', flex: 1, minWidth: 0 }}>
+              <div style={{ position: 'absolute', top: -2, left: 0, fontSize: 8.5, color: C.faint2 }}>{vm.burnMaxLabel}</div>
+              <div style={{ position: 'absolute', top: 72, left: 0, fontSize: 8.5, color: C.faint2 }}>{vm.burnMidLabel}</div>
+              <div onMouseLeave={leave} style={{ display: 'flex', alignItems: 'flex-end', gap: 1.5, height: 150, paddingLeft: 42, borderBottom: `1px solid ${C.line}` }}>
+                {vm.burnBars.map((b, i) => (
+                  <div key={i} onMouseEnter={b.onEnter}
+                    style={{ display: 'flex', flexDirection: 'column-reverse', justifyContent: 'flex-start', alignSelf: 'stretch', flex: 1, gap: 1, opacity: b.op, background: b.bg }}>
+                    {b.segs.map((s, j) => <div key={j} style={{ height: `${s.h}px`, background: s.color }} />)}
+                  </div>
+                ))}
+              </div>
+              {vm.burnTip && (
+                <div style={{ ...tipBox, top: 12, left: `${vm.burnTip.left}%`, minWidth: 180 }}>
+                  <div style={{ fontSize: 9, color: C.faint2, letterSpacing: '.05em', paddingBottom: 5, borderBottom: `1px solid ${C.line2}` }}>{vm.burnTip.date}</div>
+                  {vm.burnTip.rows.map((r) => (
+                    <div key={r.name} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 10.5, padding: '4px 0 0' }}>
+                      <span style={{ width: 8, height: 8, borderRadius: 2, background: r.color, flex: 'none' }} />
+                      <span style={{ color: C.text2 }}>{r.name}</span>
+                      <span style={{ marginLeft: 'auto', color: C.text }}>{r.val}</span>
+                    </div>
+                  ))}
+                  <div style={{ display: 'flex', alignItems: 'baseline', fontSize: 10.5, paddingTop: 5, marginTop: 5, borderTop: `1px solid ${C.line2}` }}>
+                    <span style={{ color: C.dim }}>TOTAL</span>
+                    <span style={{ marginLeft: 'auto', color: C.text, fontWeight: 600 }}>{vm.burnTip.total}</span>
+                    {vm.burnTip.usd && <span style={{ color: C.faint, fontSize: 9, marginLeft: 6 }}>{vm.burnTip.usd}</span>}
+                  </div>
+                </div>
+              )}
+              <div style={{ position: 'relative', height: 14, marginTop: 4, marginLeft: 42 }}>
+                {vm.volAxis.map((a, i) => (
+                  <div key={i} style={{ position: 'absolute', left: a.left, transform: 'translateX(-50%)', fontSize: 8.5, color: C.faint2 }}>{a.label}</div>
+                ))}
+              </div>
+            </div>
+            {/* summary column — VENUE / window burn / update-tx counts */}
+            <div style={{ flex: 'none', width: 248, background: C.overlay, border: `1px solid ${C.line}`, padding: '8px 10px' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 84px 58px', gap: '3px 8px', fontSize: 8.5, color: C.faint2, letterSpacing: '.05em', paddingBottom: 5, borderBottom: `1px solid ${C.line}` }}>
+                <div>VENUE</div><div style={{ textAlign: 'right' }}>{vm.burnColHdr}</div><div style={{ textAlign: 'right' }}>UPDATES</div>
+              </div>
+              {vm.burnRows.map((r) => (
+                <div key={r.name} style={{ display: 'grid', gridTemplateColumns: '1fr 84px 58px', gap: '3px 8px', fontSize: 10.5, padding: '4px 0', alignItems: 'center' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
+                    <span style={{ width: 8, height: 8, borderRadius: 2, background: r.color, flex: 'none' }} />
+                    <span style={{ color: C.text2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', minWidth: 0 }}>{r.name}</span>
+                  </div>
+                  <div style={{ textAlign: 'right', color: C.text }}>{r.burn}</div>
+                  <div style={{ textAlign: 'right', color: C.dim }}>{r.updates}</div>
+                </div>
+              ))}
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 84px 58px', gap: '3px 8px', fontSize: 10.5, paddingTop: 6, marginTop: 3, borderTop: `1px solid ${C.line}` }}>
+                <div style={{ color: C.dim3 }}>TOTAL</div>
+                <div style={{ textAlign: 'right', color: C.text, fontWeight: 600 }}>{vm.burnTotal}</div>
+                <div style={{ textAlign: 'right', color: C.dim }}>{vm.burnUpdatesTotal}</div>
+              </div>
+              <div style={{ fontSize: 9, color: C.faint2, marginTop: 5, textAlign: 'right' }}>burn per $1M volume: {vm.burnPerM} MON</div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* CUMULATIVE + MARKET SHARE — follow the RANGE presets, not the custom brush (intentional) */}
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14, margin: '0 18px 14px' }}>

@@ -50,6 +50,30 @@ export interface LogSource {
 /** Logs delivered to `decode()`, keyed by `LogSource.key`. */
 export type LogBundle = Record<string, any[]>;
 
+/**
+ * How a venue's QUOTE-UPDATE transactions are found on-chain — the txs its own
+ * keeper sends to push prices / reprice books (QUOTE_UPDATE_BURN). Monad
+ * charges gas_limit (receipts report gasUsed == limit), so a tx's cost is
+ * exactly receipt.gasUsed × effectiveGasPrice.
+ *
+ *  - 'logs':   every update emits an event — enumerate update txs via getLogs
+ *              (`events` ABI objects, or a raw `topic0` when the contract is
+ *              unverified and only the hash is known). Counts are exact; cost
+ *              is receipt-sampled per chunk (flat keeper gas limits make the
+ *              estimate sub-1%).
+ *  - 'blocks': updates emit NO logs (e.g. POE's ClapOracle setData) — sample
+ *              blocks with eth_getBlockReceipts, count txs `to === address`,
+ *              scale by the stride. ESTIMATE (UI shows ≈) — only sound for a
+ *              near-constant-cadence keeper (POE pushes every block).
+ *
+ * A venue whose quoting cost is NOT self-funded (external oracle, taker-paid
+ * JIT repricing) simply doesn't implement gasSources — absence is the honest
+ * value, not zero.
+ */
+export type GasSource =
+  | { mode: 'logs'; address: `0x${string}` | `0x${string}`[]; events?: readonly unknown[]; topic0?: `0x${string}` }
+  | { mode: 'blocks'; address: `0x${string}` };
+
 /** Optional historical seed returned by `backfill()`. */
 export interface AdapterBackfill {
   /** closed-day per-venue volume to merge into the store (usd; swaps defaults to 0). */
@@ -80,6 +104,11 @@ export interface VenueAdapter {
    *  throw here so the core holds the cursor instead of tailing an incomplete
    *  source set. Returning [] means there are genuinely no logs to tail. */
   logSources(): LogSource[];
+  /** optional: where this venue's own quote-update txs are found (see
+   *  GasSource). Throw if discovery hasn't resolved the destination yet — the
+   *  gas tracker holds that venue's cursor and retries. Omit entirely when the
+   *  venue doesn't self-fund its price updates. */
+  gasSources?(): GasSource[];
   /** decode this adapter's fetched logs into normalized fills. Owns any
    *  venue-specific correlation (router maps, mid-run pool discovery, filtering).
    *  `failedSources` holds the keys of any `'attribution'` sources whose fetch

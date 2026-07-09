@@ -104,6 +104,26 @@ export const config = {
    *  it), so redeploys don't re-trigger; to re-run again later, change the value
    *  (e.g. "metric@2"). The SET-per-day merge keeps re-scans idempotent. */
   backfillReset: env.BACKFILL_RESET ?? '',
+
+  /** QUOTE_UPDATE_BURN (Volume tab): track the MON each venue's own keeper
+   *  spends on price updates (adapter gasSources()). GAS_METRIC=off disables
+   *  the tracker (the API then serves whatever was already persisted). */
+  gasMetric: (env.GAS_METRIC ?? 'on').toLowerCase() !== 'off',
+  /** history horizon on first run (days). Deliberately shallow: the burn is a
+   *  recent-behavior signal, and deep history costs receipts (Clober alone is
+   *  ~4k update txs/day). Forward accrual is unbounded. */
+  gasBackfillDays: num('GAS_BACKFILL_DAYS', 30),
+  /** logs-mode receipt sampling: per processed chunk, fetch at most this many
+   *  receipts (evenly strided) and scale by the chunk's tx count. Update txs
+   *  have flat gas limits and ride the ~100 gwei base-fee floor, so a modest
+   *  sample tracks the true cost to well under 1%; counts stay EXACT. */
+  gasReceiptSamplePerChunk: num('GAS_RECEIPT_SAMPLE_PER_CHUNK', 40),
+  /** blocks-mode (no-event oracles, e.g. POE setData): sample one block every
+   *  N blocks via eth_getBlockReceipts and scale by the stride. Only sound for
+   *  near-constant-cadence keepers — POE pushes exactly once per block. */
+  gasSampleStrideBlocks: num('GAS_SAMPLE_STRIDE_BLOCKS', 1000),
+  /** idle sleep between gas tail passes once caught up to head (ms). */
+  gasTailMs: num('GAS_TAIL_MS', 60_000),
 } as const;
 
 export type Config = typeof config;

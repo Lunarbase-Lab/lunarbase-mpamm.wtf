@@ -1,7 +1,7 @@
 import { EventEmitter } from 'node:events';
 import type {
   DataSourceMode, MarketState, QuoteSnapshot, Fill, DailyVolume, StreamMessage,
-  LeaderboardResponse,
+  LeaderboardResponse, GasResponse,
 } from '@shared';
 import { computeLeaderboard } from '../analytics.js';
 
@@ -28,6 +28,8 @@ export interface DataSource {
   /** The last ~60s of REAL quote ticks for one (market, size) — seeds the
    *  Execution chart so it never fabricates history (flat pre-fill). */
   quoteHistory(market: string, size: number): QuoteSnapshot[];
+  /** QUOTE_UPDATE_BURN: per-venue quote-update gas per UTC day (Volume tab). */
+  gasSeries(): GasResponse;
   on(ev: 'message', cb: (m: StreamMessage) => void): this;
   off(ev: 'message', cb: (m: StreamMessage) => void): this;
 }
@@ -66,6 +68,9 @@ export abstract class BaseSource extends EventEmitter implements DataSource {
       return this.getFills().filter((f) => want.has(f.id));
     });
   }
+
+  /** Default: no gas series. Live reads daily_gas; sim synthesizes one. */
+  gasSeries(): GasResponse { return { days: [], approx: [] }; }
 
   /** Default: filter the in-memory window. Live overrides with a DB query. */
   queryFills(opts: { sinceMs?: number; limit?: number }): Fill[] {

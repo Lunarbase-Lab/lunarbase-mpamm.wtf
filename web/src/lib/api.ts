@@ -1,4 +1,4 @@
-import type { MarketsResponse, StreamMessage, Fill, QuoteSnapshot, LeaderboardResponse } from '@shared';
+import type { MarketsResponse, StreamMessage, Fill, QuoteSnapshot, LeaderboardResponse, GasResponse } from '@shared';
 
 export async function fetchMarkets(): Promise<MarketsResponse> {
   const r = await fetch('/api/markets');
@@ -20,6 +20,13 @@ export async function fetchQuoteHistory(market: string, size: number): Promise<Q
 export async function fetchFills(days = 1, limit = 5000): Promise<Fill[]> {
   const r = await fetch(`/api/fills?days=${days}&limit=${limit}`);
   if (!r.ok) throw new Error(`/api/fills ${r.status}`);
+  return r.json();
+}
+
+/** QUOTE_UPDATE_BURN: per-venue quote-update gas per UTC day (Volume tab). */
+export async function fetchGas(): Promise<GasResponse> {
+  const r = await fetch('/api/gas');
+  if (!r.ok) throw new Error(`/api/gas ${r.status}`);
   return r.json();
 }
 

@@ -77,6 +77,10 @@ export function startServer(source: DataSource): Server {
     try { res.json(await source.leaderboard(days)); }
     catch { res.status(500).json({ error: 'aggregation failed' }); }
   });
+  // QUOTE_UPDATE_BURN: per-venue quote-update gas per UTC day (MON + tx
+  // counts), plus which venues are sampled estimates (UI shows ≈).
+  app.get('/api/gas', (_req, res) => res.json(source.gasSeries()));
+
   app.get('/api/volume', (req, res) => {
     // honor ?from=&to= (YYYY-MM-DD, lexicographic). Both scope columns
     // (cloberVenue / cloberVault) are carried per row and the client selects, so

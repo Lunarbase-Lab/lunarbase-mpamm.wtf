@@ -1,0 +1,283 @@
+import type { PublicClient } from 'viem';
+import { config } from './config.js';
+import { utcDay } from './util.js';
+import { blockAtOrAfter } from './chain/rpc.js';
+import type { VolumeStore } from './db.js';
+import type { GasSource, VenueAdapter } from './venues/adapter.js';
+
+const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+
+/**
+ * GasTracker — QUOTE_UPDATE_BURN accrual: the MON each venue's own keeper
+ * spends keeping its quotes fresh, bucketed per (UTC day, venue) into
+ * `daily_gas`. Venues declare WHERE their update txs are found (adapter
+ * `gasSources()`, destination-keyed — sender rotation never matters); this
+ * tracker owns the how: cursors, the first-run backfill (gasBackfillDays) and
+ * forward accrual are the same loop, so there is no separate onboarding stage.
+ *
+ * Monad charges gas_limit, and receipts report gasUsed == limit, so a tx's
+ * true cost is exactly receipt.gasUsed × effectiveGasPrice — no estimation on
+ * the cost side. Two enumeration modes (see GasSource):
+ *  - 'logs':   update events → EXACT tx counts; cost receipt-sampled per chunk
+ *              (keeper gas limits are flat → sub-1% error, counts untouched).
+ *  - 'blocks': no events (POE setData) → sampled eth_getBlockReceipts scaled
+ *              by stride; ESTIMATE (approx venue, UI shows ≈). Only sound for
+ *              a near-constant-cadence keeper.
+ *
+ * Crash-safety: increments are ADDITIVE, committed atomically WITH the venue's
+ * cursor (VolumeStore.applyGas) — a crash can never double-count. Known blind
+ * spot (documented, accepted): logs-mode misses REVERTED keeper txs, which on
+ * Monad still pay their full gas_limit — a small undercount when a keeper
+ * misfires; blocks-mode sees them (receipts carry status).
+ */
+export class GasTracker {
+  private stopped = false;
+  private running = false;
+  private timer?: ReturnType<typeof setTimeout>;
+  /** venues whose numbers are sampled estimates — sticky, persisted as meta so
+   *  the ≈ marker survives restarts even before the venue's sources resolve. */
+  private approx = new Set<string>();
+  private noted = new Set<string>();
+
+  constructor(
+    private client: PublicClient,
+    private store: VolumeStore,
+    private adapters: readonly VenueAdapter[],
+    private note: (m: string) => void,
+  ) {
+    for (const a of adapters) {
+      const vid = a.venues()[0]?.id;
+      if (vid && this.store.getMeta(`gas_approx_${vid}`) === '1') this.approx.add(vid);
+    }
+  }
+
+  start(): void {
+    void this.pass();
+  }
+
+  stop(): void {
+    this.stopped = true;
+    if (this.timer) clearTimeout(this.timer);
+  }
+
+  /** venue ids whose values are sampled estimates (blocks mode). */
+  approxVenueIds(): string[] { return [...this.approx].sort(); }
+
+  /** one pass: tail every gas-declaring venue to head, then reschedule. */
+  private async pass(): Promise<void> {
+    if (this.running || this.stopped) return;
+    this.running = true;
+    try {
+      for (const a of this.adapters) {
+        if (this.stopped) return;
+        if (!a.gasSources) continue;
+        const vid = a.venues()[0]?.id ?? '';
+        const name = a.venues()[0]?.name ?? vid;
+        if (!vid) continue;
+        try { await this.tailVenue(a, vid, name); }
+        catch (e) { this.note(`${name}: quote-update gas tail paused (${(e as Error).message}); retried next pass`); }
+      }
+    } finally {
+      this.running = false;
+      if (!this.stopped) this.timer = setTimeout(() => { void this.pass(); }, config.gasTailMs);
+    }
+  }
+
+  private async tailVenue(a: VenueAdapter, vid: string, name: string): Promise<void> {
+    let sources: GasSource[];
+    try { sources = a.gasSources!(); }
+    catch { return; } // destination not resolved yet (discovery) — retried next pass
+    if (!sources.length) return;
+
+    // one enumeration mode per venue: a single block cursor can't track two
+    // differently-paced walks. Every current venue declares exactly one source.
+    const mode = sources[0].mode;
+    if (sources.some((s) => s.mode !== mode)) {
+      this.noteOnce(`${name}: mixed gas-source modes — using '${mode}' sources only`);
+      sources = sources.filter((s) => s.mode === mode);
+    }
+    if (mode === 'blocks' && !this.approx.has(vid)) {
+      this.approx.add(vid);
+      this.store.setMeta(`gas_approx_${vid}`, '1');
+    }
+
+    // finality margin: Monad receipts/logs can mutate for ~2 blocks (~800ms).
+    const head = (await this.client.getBlockNumber()) - 5n;
+    const cursorKey = `gas_cursor_${vid}`;
+    const cur = this.store.getMeta(cursorKey);
+    let cursor: bigint;
+    if (cur) {
+      cursor = BigInt(cur);
+    } else {
+      // first run: shallow history horizon (the burn is a recent-behavior
+      // signal), clamped to the venue's own start when it is younger.
+      let sinceDay = utcDay(Date.now() - config.gasBackfillDays * 86_400_000);
+      const born = a.venues()[0]?.sinceUtc;
+      if (born && born > sinceDay) sinceDay = born;
+      cursor = await blockAtOrAfter(Math.floor(Date.parse(`${sinceDay}T00:00:00Z`) / 1000), head);
+      this.noteOnce(`${name}: quote-update gas scan from ${sinceDay} — blocks ${cursor}→${head}`);
+    }
+    if (cursor > head) return;
+
+    if (mode === 'logs') await this.tailLogs(vid, name, sources, cursor, head, cursorKey);
+    else await this.tailBlocks(vid, sources[0].address as `0x${string}`, cursor, head, cursorKey);
+  }
+
+  // ── logs mode: events enumerate update txs; receipts price them ────────────
+  private async tailLogs(vid: string, name: string, sources: GasSource[], cursor: bigint, head: bigint, cursorKey: string): Promise<void> {
+    const maxChunk = BigInt(config.backfillChunk);
+    const floor = BigInt(config.getLogsChunk);
+    let chunk = maxChunk;
+    const acc = new Map<string, { mon: number; txs: number }>();
+    let sinceCommit = 0;
+
+    const fetchLogs = async (from: bigint, to: bigint): Promise<any[]> => {
+      const batches = await Promise.all(sources.map((s) => {
+        if (s.mode !== 'logs') return Promise.resolve([] as any[]);
+        if (s.topic0) {
+          // unverified destination — only the event's topic hash is known.
+          return this.client.request({
+            method: 'eth_getLogs',
+            params: [{ address: s.address, topics: [s.topic0], fromBlock: `0x${from.toString(16)}`, toBlock: `0x${to.toString(16)}` }],
+          }) as Promise<any[]>;
+        }
+        return this.client.getLogs({ address: s.address as any, fromBlock: from, toBlock: to, events: s.events as any } as any) as Promise<any[]>;
+      }));
+      return batches.flat();
+    };
+
+    while (cursor <= head && !this.stopped) {
+      const to = cursor + chunk - 1n > head ? head : cursor + chunk - 1n;
+      let logs: any[] | null = null;
+      let tries = 0;
+      while (logs === null) {
+        try {
+          logs = await fetchLogs(cursor, to);
+          if (chunk < maxChunk) chunk = chunk * 2n > maxChunk ? maxChunk : chunk * 2n; // recover after shrinks
+        } catch {
+          if (chunk > floor) { chunk = chunk / 2n > floor ? chunk / 2n : floor; break; } // too wide → shrink, retry cursor
+          if (++tries <= 5) { await sleep(config.backfillPaceMs * 25 * tries); continue; } // transient → back off
+          // a range the RPC can't serve is skipped LOUDLY (undercount, never a stall).
+          this.noteOnce(`${name}: gas scan could not read blocks near ${cursor} — a small range was skipped`);
+          logs = [];
+        }
+      }
+      if (logs === null) continue; // shrank — retry same cursor with a narrower span
+
+      if (logs.length) {
+        // unique update txs in the chunk (one tx may emit several update events)
+        const txBlocks = new Map<string, bigint>();
+        for (const l of logs) {
+          const h = String(l.transactionHash).toLowerCase();
+          if (!txBlocks.has(h)) txBlocks.set(h, BigInt(l.blockNumber));
+        }
+        // ONE anchor timestamp per chunk (≤ ~5 min span) is enough for DAILY buckets.
+        let anchorMs = NaN;
+        for (const bn of new Set(txBlocks.values())) {
+          for (let i = 0; i < 3 && !Number.isFinite(anchorMs); i++) {
+            try { anchorMs = Number((await this.client.getBlock({ blockNumber: bn })).timestamp) * 1000; }
+            catch { await sleep(config.backfillPaceMs * 5 * (i + 1)); }
+          }
+          if (Number.isFinite(anchorMs)) break;
+        }
+        if (!Number.isFinite(anchorMs)) {
+          this.noteOnce(`${name}: gas scan block timestamps unresolved near ${cursor} — chunk skipped`);
+        } else {
+          // receipts: evenly-strided sample, scaled to the exact tx count. Keeper
+          // limits are flat and prices ride the base-fee floor — the sample tracks
+          // the true sum to well under 1% while counts stay exact.
+          const hashes = [...txBlocks.keys()];
+          const target = Math.max(1, config.gasReceiptSamplePerChunk);
+          const stride = Math.max(1, Math.ceil(hashes.length / target));
+          const sample = hashes.filter((_, i) => i % stride === 0);
+          let sampledMon = 0;
+          let sampledN = 0;
+          const POOL = 15;
+          for (let i = 0; i < sample.length; i += POOL) {
+            await Promise.all(sample.slice(i, i + POOL).map(async (h) => {
+              for (let r = 0; r < 3; r++) {
+                try {
+                  const rc = await this.client.getTransactionReceipt({ hash: h as `0x${string}` });
+                  sampledMon += Number(rc.gasUsed * rc.effectiveGasPrice) / 1e18;
+                  sampledN++;
+                  return;
+                } catch { await sleep(config.backfillPaceMs * 5 * (r + 1)); }
+              }
+            }));
+            await sleep(config.backfillPaceMs);
+          }
+          if (sampledN > 0) {
+            const day = utcDay(anchorMs);
+            const e = acc.get(day) ?? { mon: 0, txs: 0 };
+            e.mon += (sampledMon / sampledN) * hashes.length;
+            e.txs += hashes.length;
+            acc.set(day, e);
+          } else {
+            this.noteOnce(`${name}: gas scan receipts unavailable near ${cursor} — chunk skipped`);
+          }
+        }
+      }
+
+      cursor = to + 1n;
+      if (++sinceCommit >= config.backfillMergeEvery || cursor > head) {
+        this.commit(vid, acc, cursorKey, cursor);
+        sinceCommit = 0;
+      }
+      await sleep(config.backfillPaceMs);
+    }
+    this.commit(vid, acc, cursorKey, cursor);
+  }
+
+  // ── blocks mode: no events — sample block receipts, scale by stride ────────
+  private async tailBlocks(vid: string, address: `0x${string}`, cursor: bigint, head: bigint, cursorKey: string): Promise<void> {
+    const target = address.toLowerCase();
+    const stride = BigInt(Math.max(1, config.gasSampleStrideBlocks));
+    const acc = new Map<string, { mon: number; txs: number }>();
+    let sinceCommit = 0;
+
+    while (cursor <= head && !this.stopped) {
+      const segEnd = cursor + stride - 1n > head ? head : cursor + stride - 1n;
+      const segLen = Number(segEnd - cursor + 1n);
+      let ok = false;
+      for (let r = 0; r < 3 && !ok; r++) {
+        try {
+          const [receipts, block] = await Promise.all([
+            this.client.request({ method: 'eth_getBlockReceipts', params: [`0x${cursor.toString(16)}`] }) as Promise<any[]>,
+            this.client.getBlock({ blockNumber: cursor }),
+          ]);
+          // includes reverted txs on purpose — Monad charges their full limit too.
+          const mine = (receipts ?? []).filter((rc) => String(rc.to ?? '').toLowerCase() === target);
+          const mon = mine.reduce((a, rc) => a + Number(BigInt(rc.gasUsed) * BigInt(rc.effectiveGasPrice)) / 1e18, 0);
+          const day = utcDay(Number(block.timestamp) * 1000);
+          const e = acc.get(day) ?? { mon: 0, txs: 0 };
+          e.mon += mon * segLen;
+          e.txs += mine.length * segLen;
+          acc.set(day, e);
+          ok = true;
+        } catch { await sleep(config.backfillPaceMs * 5 * (r + 1)); }
+      }
+      // an unreadable sample block skips its segment (tiny undercount, no stall)
+      cursor = segEnd + 1n;
+      if (++sinceCommit >= config.backfillMergeEvery || cursor > head) {
+        this.commit(vid, acc, cursorKey, cursor);
+        sinceCommit = 0;
+      }
+      await sleep(config.backfillPaceMs);
+    }
+    this.commit(vid, acc, cursorKey, cursor);
+  }
+
+  private commit(vid: string, acc: Map<string, { mon: number; txs: number }>, cursorKey: string, cursor: bigint): void {
+    const rows = [...acc.entries()]
+      .filter(([, v]) => v.txs > 0 || v.mon > 0)
+      .map(([day, v]) => ({ utcDay: day, venueId: vid, mon: v.mon, txs: v.txs }));
+    this.store.applyGas(rows, cursorKey, String(cursor));
+    acc.clear();
+  }
+
+  private noteOnce(m: string): void {
+    if (this.noted.has(m)) return;
+    this.noted.add(m);
+    this.note(m);
+  }
+}

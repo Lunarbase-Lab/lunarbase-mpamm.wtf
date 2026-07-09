@@ -38,6 +38,7 @@ const poeFactoryAbi = parseAbi([
 const poePoolAbi = parseAbi([
   'function getTokens() view returns (address tokenX, address tokenY)',
   'function getQuote(bool swapXtoY, uint256 amountIn) view returns (uint256 amountOut, uint256 actualAmountIn, uint256 feeIn, uint256 feeOut)',
+  'function getOracle() view returns (address)',
   'event Swap(address indexed sender, address indexed recipient, bool indexed swapXtoY, uint256 actualAmountIn, uint256 amountOut, uint256 feeIn, uint256 feeOut)',
 ]);
 
@@ -65,6 +66,10 @@ export function createPoeAdapter(): VenueAdapter {
   const byMarket = new Map<string, PoePool>();
   const byAddr = new Map<string, PoePool>();
   let discovered = false;
+  /** the shared ClapOracle — every pool prices off it; LFJ's keeper pushes
+   *  setData() to it EVERY block. Resolved on-chain (pool.getOracle()) so an
+   *  oracle migration re-resolves on rediscovery instead of tracking a corpse. */
+  let clapOracle: `0x${string}` | undefined;
 
   return {
     venues: () => [POE_VENUE],
@@ -104,6 +109,14 @@ export function createPoeAdapter(): VenueAdapter {
         contracts: candidates.map((c) => ({ address: c.pool, abi: poePoolAbi, functionName: 'getTokens' as const })),
         allowFailure: true,
       });
+      // the shared ClapOracle, from the first pool that answers (they all
+      // return the same one — verified on-chain). Best-effort: a failed read
+      // defers the gas source (gasSources throws), never discovery itself.
+      try {
+        const o = String(await ctx.client.readContract({ address: candidates[0].pool, abi: poePoolAbi, functionName: 'getOracle' }));
+        if (/^0x[0-9a-fA-F]{40}$/.test(o) && o !== ZERO) clapOracle = o.toLowerCase() as `0x${string}`;
+      } catch { /* resolved on a later rediscovery */ }
+
       for (let i = 0; i < candidates.length; i++) {
         const r = tokRes[i];
         if (r.status !== 'success') throw new Error(`POE getTokens failed for ${candidates[i].pool}`);
@@ -189,6 +202,16 @@ export function createPoeAdapter(): VenueAdapter {
       const pairs = [...byMarket.values()].map((p) => p.pool);
       if (!pairs.length) return [];
       return [{ key: 'swap', address: pairs, events: [ev(poePoolAbi, 'Swap')], kind: 'fills' as const }];
+    },
+
+    // QUOTE_UPDATE_BURN: LFJ's keeper pushes setData() to the ClapOracle every
+    // block (~400ms) with NO event, so updates can't be enumerated from logs —
+    // 'blocks' mode samples eth_getBlockReceipts for txs to the oracle and
+    // scales by the stride. Sound here precisely BECAUSE the cadence is
+    // one-per-block (verified over 400 consecutive blocks); the UI shows ≈.
+    gasSources() {
+      if (!clapOracle) throw new Error('POE oracle not resolved yet'); // hold the gas cursor
+      return [{ mode: 'blocks' as const, address: clapOracle }];
     },
 
     decode(_ctx: AdapterContext, logs: LogBundle, tsOf) {

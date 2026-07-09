@@ -28,6 +28,16 @@ export const liquidityVaultAbi = parseAbi([
   'event Open(bytes32 indexed key, uint192 indexed bookIdA, uint192 indexed bookIdB, bytes32 salt, address strategy)',
 ]);
 
+// Clober V2 — SimpleOracleStrategy (clober-dex/clober-liquidity-vault
+// src/SimpleOracleStrategy.sol). updatePosition is onlyOperator: the keeper
+// pushes the oracle price + ticks in calldata and the vault's book orders are
+// re-placed in the same tx — one event per quote update (QUOTE_UPDATE_BURN).
+// Tick is a wrapped int24; the emitted rate widens to uint256 (topic0 verified
+// against live logs: 0x6bfe82e0…18f9).
+export const simpleOracleStrategyAbi = parseAbi([
+  'event UpdatePosition(bytes32 indexed key, uint256 oraclePrice, int24 tickA, int24 tickB, uint256 rate)',
+]);
+
 export const erc20Abi = parseAbi([
   'function decimals() view returns (uint8)',
   'function symbol() view returns (string)',

@@ -32,6 +32,7 @@ interface VenueAdapter {
   backfill?(ctx, sinceUtc): Promise<AdapterBackfill>;      // OPTIONAL closed-day seed
   quote?(ctx, sizesUsd): Promise<QuoteRow[]>;              // OPTIONAL live bid/ask (Execution tab)
   logSources(): LogSource[];                               // contracts/events the core getLogs's for you
+  gasSources?(): GasSource[];                              // OPTIONAL: where the venue's own quote-update txs live (QUOTE_UPDATE_BURN)
   decode(ctx, logs, tsOf): Fill[] | Promise<Fill[]>;       // your logs → normalized fills
 }
 ```
@@ -65,6 +66,7 @@ Everything you need is on `ctx` (`AdapterContext`) — **use it instead of impor
 - **Stateful discovery:** `discover()` and `decode()` may mutate closure state (e.g. fold newly-`Open`ed pools from a log source into your cache) — see `clober.ts`'s `mergeVaultBooks`.
 - **Degrade intentionally:** quote-only failures can return empty rows. Fill/state discovery, required log fetches, timestamp lookup, and unsafe decode states must throw/hold the cursor so volume and fills are never silently undercounted.
 - **The CEX references** live in the `ReferenceRegistry` (`reference.ts`, `role: 'reference'`), not in venue adapters: one per base asset (Bybit `MONUSDT` for MON, Binance for BTC/ETH), each converted into the pair's own terms (stable `USDCUSDT` cross + `WBTCBTC` wrap basis — spec §5.5).
+- **`gasSources()` (QUOTE_UPDATE_BURN, Volume tab):** declare WHERE the venue's *own keeper* pays gas to keep quotes fresh — the tracker (`server/src/gas.ts`) owns cursors, the shallow first-run history (`GAS_BACKFILL_DAYS`) and forward accrual into `daily_gas`. **Destination-keyed** (contract that *receives* the update), so keeper/sender rotation never breaks tracking. Two modes: `'logs'` when updates emit an event (`events` ABI, or a raw `topic0` for an unverified contract — counts exact, cost receipt-sampled; Clober's strategy `UpdatePosition`, Hanji's price-store pushes) and `'blocks'` when they don't (sampled `eth_getBlockReceipts` scaled by stride — an **estimate**, served in `GET /api/gas` `approx` and shown with ≈; only sound for a near-constant cadence, e.g. POE's one-`setData`-per-block). Throw while discovery hasn't resolved the destination (the tracker retries). **Omit the hook entirely when the venue doesn't self-fund its updates** (external oracle like Metric, taker-paid JIT) — absence is the honest value; the UI shows no row. Monad charges `gas_limit` (receipts report `gasUsed == limit`), so cost is exactly `gasUsed × effectiveGasPrice`. Known blind spot: logs-mode misses *reverted* keeper txs (they still pay the full limit) — a small undercount.
 
 ## Scope & limits
 Both **venues** and the **pair/asset universe** are registry-driven (`@shared`):

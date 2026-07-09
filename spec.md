@@ -82,6 +82,8 @@ Mark `filledFull = false` when the pool/book exhausts before the full notional (
 ### 4.2 Volume (`[2]`)
 Stacked daily-notional-by-venue. Each landed swap contributes the USD value of its **stable quote leg**, bucketed by UTC day; today's bucket is partial and ticks up live. Because every tracked pair is **base vs a USD stable**, the quote leg *is* the stable amount → **exact USD with no price oracle**, for both history and live. A per-venue summary (all-time, share, swaps) sits beside the chart.
 
+**QUOTE_UPDATE_BURN** (below DAILY_VOLUME, same stacked-day chart + window — no brush of its own): the MON each venue's **own keeper** spends keeping its quotes fresh (price pushes / book rebalances), with per-venue window totals, update-tx counts, and a `burn per $1M volume` efficiency line. Monad charges **`gas_limit`** (receipts report `gasUsed == limit`), so cost is exactly `gasUsed × effectiveGasPrice`. Sources are **destination-keyed** per venue (adapter `gasSources()`; `server/src/gas.ts` owns cursors + the shallow `GAS_BACKFILL_DAYS` history + forward accrual into `daily_gas`): Clober = strategy `UpdatePosition` events (keeper tx through the operator, flat 1.7M limit every ~21s); Hanji = its price-store pushes (~1.1s cadence; the on-book JIT repricing is **taker-paid** and deliberately not counted); POE = no-event `setData` every block → sampled block receipts, an **estimate** rendered with ≈ (`approx` in `GET /api/gas`). **Metric has no series on purpose** — its providers read a third-party multi-chain push oracle (not self-funded; pending a fuller understanding of their oracle architecture); a venue that doesn't self-fund updates shows no row rather than a fabricated zero.
+
 ### 4.3 Markouts (`[3]`)
 Live normalized fill tape + post-trade markouts: each fill's realized price vs its pair's CEX mid at T+{0s…}, aging in as it crosses each horizon. Fills whose realized price is approximated (no true execPx) are excluded from markouts rather than fabricating ~0 edge. Rows link to the tx on the explorer.
 
@@ -204,6 +206,7 @@ daily_volume(utc_day, venue_id, usd, swaps)        -- PK (utc_day, venue_id)
 day_meta(utc_day, partial)
 fills(id, venue_id, …, markouts…)                  -- upsert-by-id; ~35-day retention prune
 mid_history(market, ts, mid)                       -- per-pair reference-mid curve (~5s cadence, fills' retention)
+daily_gas(utc_day, venue_id, mon, txs)             -- PK (utc_day, venue_id); QUOTE_UPDATE_BURN — additive accrual committed atomically with the venue's gas cursor
 ```
 `markout_model_version` gates a **markout-model migration**: when the benchmark's meaning changes, retained fills keep their volume/tape data and their markouts are either **replayed** from `mid_history` (when the stored pair-terms curve is still a valid mark — `REMARK_FROM_MID_HISTORY`) or reset to null (when the mid definition itself changed) — old-model and new-model bps never mix.
 Adding/removing a venue never changes the table shape (just different `venue_id` values), so it is **non-destructive**: on boot `reconcileVenues()` prunes only rows whose venue left the registry, keeping every other venue's history. `schema_version` gates a full fresh-start reset **only** on a true STRUCTURAL change (columns / PK).
@@ -216,6 +219,7 @@ GET  /api/quotes                        latest quote matrix (incl. per-pair "vs 
 GET  /api/volume?from=&to=              daily series (DailyVolume.byVenue)
 GET  /api/fills?days=&limit=            recent fill window (the live tape)
 GET  /api/leaderboard?days=1|7|30       full-window aggregated leaderboard/markout stats (§4.4)
+GET  /api/gas                           QUOTE_UPDATE_BURN: per-venue quote-update gas per UTC day (+ `approx` venue ids, shown with ≈)
 WS   /stream                            channels: state, quotes, fill, volume
 ```
 Frontend renders purely off these — never touches the RPC, subgraph, or CEX feeds directly.

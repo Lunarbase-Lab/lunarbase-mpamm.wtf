@@ -1,7 +1,7 @@
 import { createContext, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import type { MarketState, QuoteSnapshot, QuoteRow, Fill, DailyVolume, VenueMeta, LeaderboardResponse } from '@shared';
+import type { MarketState, QuoteSnapshot, QuoteRow, Fill, DailyVolume, VenueMeta, LeaderboardResponse, GasResponse } from '@shared';
 import { pairOf, cexForBase } from '@shared';
-import { fetchMarkets, fetchFills, fetchLeaderboard, fetchQuoteHistory, connectStream } from './lib/api';
+import { fetchMarkets, fetchFills, fetchLeaderboard, fetchGas, fetchQuoteHistory, connectStream } from './lib/api';
 import type { Theme } from './theme';
 
 /** Read the persisted theme, matching the pre-paint script in index.html.
@@ -44,6 +44,8 @@ interface Dashboard extends UiState {
   lb: LeaderboardResponse | null;
   /** the 24h aggregate (outlier feed) — polled while the Markouts tab is open. */
   lbDay: LeaderboardResponse | null;
+  /** QUOTE_UPDATE_BURN series — polled while the Volume tab is open. */
+  gas: GasResponse | null;
   frame: number;
   // venue registry (from state.venues) + derived views. Everything venue-related
   // in the UI reads these; nothing about a venue is hardcoded client-side.
@@ -93,6 +95,7 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
   const [fills, setFills] = useState<Fill[]>([]);
   const [lb, setLb] = useState<LeaderboardResponse | null>(null);
   const [lbDay, setLbDay] = useState<LeaderboardResponse | null>(null);
+  const [gas, setGas] = useState<GasResponse | null>(null);
   const [frame, setFrame] = useState(0);
 
   const seriesRef = useRef<Record<string, Series>>({});
@@ -290,6 +293,16 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
     const id = setInterval(load, 30_000);
     return () => { on = false; clearInterval(id); };
   }, [ui.tab]);
+  // QUOTE_UPDATE_BURN accrues slowly (keeper cadence) — poll every 60s while
+  // the Volume tab is open.
+  useEffect(() => {
+    if (ui.tab !== 'volume') return;
+    let on = true;
+    const load = () => { fetchGas().then((d) => { if (on) setGas(d); }).catch(() => { /* retried on the next poll */ }); };
+    load();
+    const id = setInterval(load, 60_000);
+    return () => { on = false; clearInterval(id); };
+  }, [ui.tab]);
 
   // reseed when the selected pair/size changes
   useEffect(() => { reseed(); setFrame((f) => f + 1); /* eslint-disable-next-line */ }, [ui.pair, ui.size]);
@@ -317,7 +330,7 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
   }, [venuesById, reference]);
 
   const api = useMemo<Dashboard>(() => ({
-    ...ui, conn, state, quotes, volume, fills, lb, lbDay, frame,
+    ...ui, conn, state, quotes, volume, fills, lb, lbDay, gas, frame,
     venues, displayVenues, baselines, reference, references, referenceFor, venuesById,
     series: seriesRef.current, samples: samplesRef.current,
     set: (k, v) => setUi((s) => ({ ...s, [k]: v })),
@@ -334,7 +347,7 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
       setFrame((f) => f + 1);
     },
     resetLb: () => setUi((s) => ({ ...s, lbWin: '24H', lbGroup: 'PROTOCOL', lbHz: 'T+0S', lbMk: 'MAKER', lbWinners: true, lbTop: 25 })),
-  }), [ui, conn, state, quotes, volume, fills, lb, lbDay, frame, venues, displayVenues, baselines, reference, references, referenceFor, venuesById]);
+  }), [ui, conn, state, quotes, volume, fills, lb, lbDay, gas, frame, venues, displayVenues, baselines, reference, references, referenceFor, venuesById]);
 
   return <Ctx.Provider value={api}>{children}</Ctx.Provider>;
 }

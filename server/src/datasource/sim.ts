@@ -3,10 +3,11 @@ import {
   MARKETS, SIZES_USD, HISTORY_START_UTC, ASSETS, pairOf, cexForBase,
   type DataSourceMode, type MarketState, type QuoteSnapshot, type QuoteRow,
   type Fill, type DailyVolume, type VenueMeta, type Side, type FillCategory,
+  type GasResponse, type VenueGasDaily,
 } from '@shared';
 import { config } from '../config.js';
 import { clamp, utcDay, nextId, annotateCex } from '../util.js';
-import { venueMeta, validateRegistry } from '../venues/registry.js';
+import { ADAPTERS, venueMeta, validateRegistry } from '../venues/registry.js';
 
 /**
  * SimDataSource — a venue-agnostic simulator for offline/dev (`DATA_SOURCE=sim`).
@@ -24,6 +25,12 @@ interface SimFill extends Fill { bornMs: number; }
 interface Param { offset: number; half: number; slip: number; markoutBias: number; weight: number }
 
 function rnd(): number { return Math.random() * 2 - 1; }
+/** deterministic string → [0,1) — stable per-(day,venue) sim jitter. */
+function hash01(s: string): number {
+  let h = 2166136261;
+  for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); }
+  return ((h >>> 0) % 10_000) / 10_000;
+}
 function wpick<T>(a: T[], w: number[]): T {
   const r = Math.random() * w.reduce((x, y) => x + y, 0);
   let c = 0;
@@ -100,6 +107,43 @@ export class SimDataSource extends BaseSource {
   getQuotes(): QuoteSnapshot { return { block: this.block, monUsd: this.mon, ts: Date.now(), rows: this.buildMatrix() }; }
   getFills(): Fill[] { return this.fills.map(stripFill); }
   getVolume(): DailyVolume[] { return this.days.map((d) => ({ ...d, byVenue: { ...d.byVenue } })); }
+
+  /** QUOTE_UPDATE_BURN, simulated. Which venues have a series mirrors live
+   *  exactly: the adapters that declare gasSources() (venue-agnostic — a venue
+   *  with an external oracle simply never declares the hook). Values are
+   *  deterministic per (day, venue) so polls don't flicker; today's partial
+   *  bucket scales with the elapsed day fraction like real accrual. */
+  gasSeries(): GasResponse {
+    const gasAdapters = ADAPTERS.filter((a) => typeof a.gasSources === 'function');
+    const vids: string[] = [];
+    const approx: string[] = [];
+    for (const a of gasAdapters) {
+      const v = a.venues()[0];
+      if (!v) continue;
+      vids.push(v.id);
+      // 'blocks'-mode venues are estimates (≈). Before discovery the source
+      // can't be enumerated (throws) — those are exactly the sampled ones.
+      try { if (a.gasSources!().some((s) => s.mode === 'blocks')) approx.push(v.id); }
+      catch { approx.push(v.id); }
+    }
+    const sinceOf = new Map(this.venues.map((v) => [v.id, v.sinceUtc ?? '']));
+    const horizon = utcDay(Date.now() - config.gasBackfillDays * 86_400_000);
+    const dayFrac = Math.max(0.02, (Date.now() - Date.parse(`${utcDay()}T00:00:00Z`)) / 86_400_000);
+    const days = this.days
+      .filter((d) => d.utcDay >= horizon)
+      .map((d) => {
+        const byVenue: Record<string, VenueGasDaily> = {};
+        vids.forEach((vid, i) => {
+          const since = sinceOf.get(vid) ?? '';
+          if (since && d.utcDay < since) return; // venue didn't exist yet
+          const j = 0.94 + 0.12 * hash01(d.utcDay + vid);
+          const scale = (d.partial ? dayFrac : 1) * j;
+          byVenue[vid] = { mon: (820 - i * 185) * scale, txs: Math.round((3300 - i * 740) * scale) };
+        });
+        return { utcDay: d.utcDay, partial: d.partial, byVenue };
+      });
+    return { days, approx };
+  }
 
   // ── quote model ─────────────────────────────────────────────────────────────
   private quoteAt(id: string, market: string, size: number): { bidBps: number; askBps: number; bidPx: number; askPx: number } {

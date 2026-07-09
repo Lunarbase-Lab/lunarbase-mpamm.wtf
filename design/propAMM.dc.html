@@ -9,8 +9,8 @@
 <x-dc>
 <helmet>
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&amp;family=JetBrains+Mono:wght@400;500;600;700&amp;display=swap" rel="stylesheet">
 <style>
   * { box-sizing: border-box; }
   /* ===== BRIGHT (default) — Category Labs: warm cream, near-black ink, brand orange ===== */
@@ -54,7 +54,7 @@
   <!-- ===================== TOP BAR ===================== -->
   <div style="display:flex; align-items:center; gap:16px; height:42px; padding:0 16px; border-bottom:1px solid var(--border); position:sticky; top:0; z-index:50; background:var(--panel)">
     <div style="display:flex; align-items:center; gap:9px">
-      <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="10.5" stroke="#836EF9" stroke-width="1.3" data-comment-anchor="218671af9a-circle"/><polygon points="12,6 18,12 12,18 6,12" stroke="#836EF9" stroke-width="1.3" fill="none"/><circle cx="12" cy="12" r="1.7" fill="#836EF9"/></svg>
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="10.5" stroke="#836EF9" stroke-width="1.3" data-comment-anchor="218671af9a-circle"></circle><polygon points="12,6 18,12 12,18 6,12" stroke="#836EF9" stroke-width="1.3" fill="none"></polygon><circle cx="12" cy="12" r="1.7" fill="#836EF9"></circle></svg>
       <span style="font-weight:700; font-size:13px; letter-spacing:.01em; font-family:'Space Grotesk',sans-serif">propAMM</span>
       <span style="font-size:8.5px; color:var(--accent2); border:1px solid var(--accent-border); border-radius:3px; padding:2px 6px; letter-spacing:.08em">MONAD MAINNET</span>
     </div>
@@ -64,7 +64,7 @@
       </sc-for>
     </div>
     <div style="margin-left:auto; display:flex; align-items:center; gap:15px; font-size:10px; color:var(--dim2)">
-      <div onClick="{{ toggleTheme }}" style="display:flex; align-items:center; gap:5px; border:1px solid var(--pill-border); border-radius:4px; padding:3px 8px; cursor:pointer; letter-spacing:.06em; user-select:none" style-hover="color:var(--text); border-color:var(--border)">&#9680; {{ themeLabel }}</div>
+      <div onClick="{{ toggleTheme }}" style="display:flex; align-items:center; gap:5px; border:1px solid var(--pill-border); border-radius:4px; padding:3px 8px; cursor:pointer; letter-spacing:.06em; user-select:none" style-hover="color:var(--text); border-color:var(--border)">◐ {{ themeLabel }}</div>
       <span style="display:flex; align-items:center; gap:5px; color:var(--green)"><span style="width:6px; height:6px; border-radius:50%; background:var(--green); animation:blink 1.6s infinite"></span>live</span>
       <span>MON <span style="color:var(--text)">${{ monPx }}</span></span>
       <span>BLOCK <span style="color:var(--text)">{{ block }}</span></span>
@@ -77,7 +77,7 @@
   <div>
     <div style="padding:18px 18px 10px">
       <div style="font-size:14px; font-weight:600; letter-spacing:.06em; color:var(--text)">REALTIME EXECUTION COMPARISON</div>
-      <div style="font-size:11px; color:var(--dim); margin-top:6px; line-height:1.55; max-width:880px">Last 60s of quotes for the selected pair at the chosen notional. Spreads are quoted vs the Bybit <span style="color:var(--text3)">MONUSDT</span> BBO mid. <span style="color:var(--text3)">Bybit (taker)</span> walks the live book for the requested size and overlays the configured taker fee ({{ taker }} bps each side) &mdash; realized-vs-realized, the only honest comparison for size-sensitive flow.</div>
+      <div style="font-size:11px; color:var(--dim); margin-top:6px; line-height:1.55; max-width:880px">Last 60s of quotes for the selected pair at the chosen notional. Spreads are quoted vs the Bybit <span style="color:var(--text3)">MONUSDT</span> BBO mid. <span style="color:var(--text3)">Bybit (taker)</span> walks the live book for the requested size and overlays the configured taker fee ({{ taker }} bps each side) — realized-vs-realized, the only honest comparison for size-sensitive flow.</div>
     </div>
 
     <!-- controls -->
@@ -107,8 +107,8 @@
       <div style="position:absolute; top:-1px; left:-1px; width:8px; height:8px; border-top:1px solid var(--accent); border-left:1px solid var(--accent)"></div>
       <div style="position:absolute; bottom:-1px; right:-1px; width:8px; height:8px; border-bottom:1px solid var(--accent); border-right:1px solid var(--accent)"></div>
       <div style="display:flex; align-items:center; justify-content:space-between; padding:9px 12px; border-bottom:1px solid var(--border2)">
-        <div style="font-size:11px; letter-spacing:.03em"><span style="color:var(--accent)">~</span> <span style="color:var(--text); font-weight:600">QUOTE</span> <span style="color:var(--dim2)">{{ pairSel }} &middot; {{ sizeLabelSel }} &middot; last 60s</span></div>
-        <div style="font-size:9px; color:var(--faint)">solid = ask &middot; dashed = bid &middot; &#9733; = tightest spread</div>
+        <div style="font-size:11px; letter-spacing:.03em"><span style="color:var(--accent)">~</span> <span style="color:var(--text); font-weight:600">QUOTE</span> <span style="color:var(--dim2)">{{ pairSel }} · {{ sizeLabelSel }} · last 60s</span></div>
+        <div style="font-size:9px; color:var(--faint)">solid = ask · dashed = bid · ★ = tightest spread</div>
       </div>
       <div style="display:flex; align-items:flex-start; padding:8px 8px 4px">
         <div style="flex:1; min-width:0">
@@ -121,7 +121,7 @@
           </div>
           <sc-for list="{{ legend }}" as="r" hint-placeholder-count="4">
             <div style="display:grid; grid-template-columns:1fr 54px 50px 50px; gap:2px 8px; font-size:11px; padding:4px 0; align-items:center">
-              <div style="display:flex; align-items:center; gap:6px"><span style="width:8px; height:8px; border-radius:2px; background:{{ r.color }}"></span><span style="color:var(--text2)">{{ r.name }}</span><span style="{{ r.starcss }}">&#9733;</span></div>
+              <div style="display:flex; align-items:center; gap:6px"><span style="width:8px; height:8px; border-radius:2px; background:{{ r.color }}"></span><span style="color:var(--text2)">{{ r.name }}</span><span style="{{ r.starcss }}">★</span></div>
               <div style="text-align:right; {{ r.spreadcss }}">{{ r.spread }}</div>
               <div style="text-align:right; color:var(--red)">{{ r.bid }}</div>
               <div style="text-align:right; color:var(--green)">{{ r.ask }}</div>
@@ -135,11 +135,11 @@
     <div style="position:relative; border:1px solid var(--border); background:var(--panel); margin:0 18px 14px">
       <div style="position:absolute; top:-1px; left:-1px; width:8px; height:8px; border-top:1px solid var(--accent); border-left:1px solid var(--accent)"></div>
       <div style="position:absolute; bottom:-1px; right:-1px; width:8px; height:8px; border-bottom:1px solid var(--accent); border-right:1px solid var(--accent)"></div>
-      <div style="padding:9px 12px; border-bottom:1px solid var(--border2); font-size:11px; letter-spacing:.03em"><span style="color:var(--accent)">&#8801;</span> <span style="color:var(--text); font-weight:600">BID_ASK_DEPTH</span> <span style="color:var(--dim2)">{{ pairSel }} &middot; spread vs Bybit mid (bps) by trade size</span></div>
+      <div style="padding:9px 12px; border-bottom:1px solid var(--border2); font-size:11px; letter-spacing:.03em"><span style="color:var(--accent)">≡</span> <span style="color:var(--text); font-weight:600">BID_ASK_DEPTH</span> <span style="color:var(--dim2)">{{ pairSel }} · spread vs Bybit mid (bps) by trade size</span></div>
       <div style="padding:16px 18px 8px">
         <div style="display:flex; padding-left:64px; margin-bottom:10px">
-          <div style="flex:1; text-align:center; font-size:9px; color:var(--faint); letter-spacing:.1em">BIDS &mdash; below mid</div>
-          <div style="flex:1; text-align:center; font-size:9px; color:var(--faint); letter-spacing:.1em">ASKS &mdash; above mid</div>
+          <div style="flex:1; text-align:center; font-size:9px; color:var(--faint); letter-spacing:.1em">BIDS — below mid</div>
+          <div style="flex:1; text-align:center; font-size:9px; color:var(--faint); letter-spacing:.1em">ASKS — above mid</div>
         </div>
         <sc-for list="{{ depth }}" as="row" hint-placeholder-count="4">
           <div style="display:flex; align-items:center; gap:10px; height:34px; {{ row.rowcss }}">
@@ -164,14 +164,14 @@
     <div style="position:relative; border:1px solid var(--border); background:var(--panel); margin:0 18px 14px">
       <div style="position:absolute; top:-1px; left:-1px; width:8px; height:8px; border-top:1px solid var(--accent); border-left:1px solid var(--accent)"></div>
       <div style="position:absolute; bottom:-1px; right:-1px; width:8px; height:8px; border-bottom:1px solid var(--accent); border-right:1px solid var(--accent)"></div>
-      <div style="padding:9px 12px; border-bottom:1px solid var(--border2); font-size:11px; letter-spacing:.03em"><span style="color:var(--accent)">#</span> <span style="color:var(--text); font-weight:600">ROLLING_STATS</span> <span style="color:var(--dim2)">last 5m &middot; spread distribution by venue &middot; {{ sizeLabelSel }} &middot; {{ pairSel }}</span></div>
+      <div style="padding:9px 12px; border-bottom:1px solid var(--border2); font-size:11px; letter-spacing:.03em"><span style="color:var(--accent)">#</span> <span style="color:var(--text); font-weight:600">ROLLING_STATS</span> <span style="color:var(--dim2)">last 5m · spread distribution by venue · {{ sizeLabelSel }} · {{ pairSel }}</span></div>
       <div style="padding:6px 14px 12px">
         <div style="display:grid; grid-template-columns:1.4fr repeat(7, 1fr) 0.8fr; gap:6px; padding:9px 6px; font-size:9px; color:var(--faint); letter-spacing:.05em; border-bottom:1px solid var(--border)">
-          <div>VENUE</div><div style="text-align:right">P5</div><div style="text-align:right">P25</div><div style="text-align:right">P50</div><div style="text-align:right">P75</div><div style="text-align:right">P95</div><div style="text-align:right">AVG</div><div style="text-align:right">&#963;</div><div style="text-align:right">N</div>
+          <div>VENUE</div><div style="text-align:right">P5</div><div style="text-align:right">P25</div><div style="text-align:right">P50</div><div style="text-align:right">P75</div><div style="text-align:right">P95</div><div style="text-align:right">AVG</div><div style="text-align:right">σ</div><div style="text-align:right">N</div>
         </div>
         <sc-for list="{{ statRows }}" as="r" hint-placeholder-count="4">
           <div style="display:grid; grid-template-columns:1.4fr repeat(7, 1fr) 0.8fr; gap:6px; padding:8px 6px; font-size:11.5px; border-bottom:1px solid var(--border-soft); align-items:center">
-            <div style="display:flex; align-items:center; gap:7px"><span style="width:8px; height:8px; border-radius:2px; background:{{ r.color }}"></span><span style="color:var(--text2)">{{ r.name }}</span><span style="{{ r.starcss }}">&#9733;</span></div>
+            <div style="display:flex; align-items:center; gap:7px"><span style="width:8px; height:8px; border-radius:2px; background:{{ r.color }}"></span><span style="color:var(--text2)">{{ r.name }}</span><span style="{{ r.starcss }}">★</span></div>
             <div style="text-align:right; color:var(--text4)">{{ r.p5 }}</div>
             <div style="text-align:right; color:var(--text4)">{{ r.p25 }}</div>
             <div style="text-align:right; {{ r.p50css }}">{{ r.p50 }}</div>
@@ -182,7 +182,7 @@
             <div style="text-align:right; color:var(--faint)">{{ r.n }}</div>
           </div>
         </sc-for>
-        <div style="font-size:9px; color:var(--faint2); margin-top:9px">p50 = median spread (bps vs same-source mid) &middot; &#963; = spread stdev &middot; &#9733; = tightest p50 in window</div>
+        <div style="font-size:9px; color:var(--faint2); margin-top:9px">p50 = median spread (bps vs same-source mid) · σ = spread stdev · ★ = tightest p50 in window</div>
       </div>
     </div>
   </div>
@@ -235,10 +235,11 @@
     <div style="position:relative; border:1px solid var(--border); background:var(--panel); margin:0 18px 14px">
       <div style="position:absolute; top:-1px; left:-1px; width:8px; height:8px; border-top:1px solid var(--accent); border-left:1px solid var(--accent)"></div>
       <div style="position:absolute; bottom:-1px; right:-1px; width:8px; height:8px; border-bottom:1px solid var(--accent); border-right:1px solid var(--accent)"></div>
-      <div style="padding:9px 12px; border-bottom:1px solid var(--border2); font-size:11px; letter-spacing:.03em"><span style="color:var(--accent)">~</span> <span style="color:var(--text); font-weight:600">DAILY_VOLUME</span> <span style="color:var(--dim2)">USD notional by protocol &middot; UTC days &middot; {{ volScopeNote }}</span></div>
-      <div style="position:relative; padding:16px 18px 8px">
-        <div style="position:absolute; top:14px; left:18px; font-size:8.5px; color:var(--faint)">{{ volMaxLabel }}</div>
-        <div style="position:absolute; top:88px; left:18px; font-size:8.5px; color:var(--faint)">{{ volMidLabel }}</div>
+      <div style="padding:9px 12px; border-bottom:1px solid var(--border2); font-size:11px; letter-spacing:.03em"><span style="color:var(--accent)">~</span> <span style="color:var(--text); font-weight:600">DAILY_VOLUME</span> <span style="color:var(--dim2)">USD notional by protocol · UTC days · {{ volScopeNote }}</span></div>
+      <div style="display:flex; align-items:flex-start; gap:16px; padding:16px 18px 8px">
+       <div style="position:relative; flex:1; min-width:0">
+        <div style="position:absolute; top:-2px; left:0; font-size:8.5px; color:var(--faint)">{{ volMaxLabel }}</div>
+        <div style="position:absolute; top:72px; left:0; font-size:8.5px; color:var(--faint)">{{ volMidLabel }}</div>
         <div onMouseLeave="{{ volLeave }}" style="display:flex; align-items:flex-end; gap:1.5px; height:150px; padding-left:42px; border-bottom:1px solid var(--border)">
           <sc-for list="{{ volBars }}" as="b" hint-placeholder-count="47">
             <div onMouseEnter="{{ b.onEnter }}" style="display:flex; flex-direction:column-reverse; justify-content:flex-start; align-self:stretch; flex:1; gap:1px; opacity:{{ b.op }}; background:{{ b.bg }}">
@@ -275,11 +276,12 @@
           </div>
         </div>
         <div style="display:flex; justify-content:space-between; margin:4px 2px 0 42px; font-size:8.5px; color:var(--faint)">
-          <span>window: {{ brushStartLbl }} &rarr; {{ brushEndLbl }}</span>
-          <span>drag to pan &middot; edges to resize &middot; click outside to jump</span>
+          <span>window: {{ brushStartLbl }} → {{ brushEndLbl }}</span>
+          <span>drag to pan · edges to resize · click outside to jump</span>
         </div>
-        <!-- legend box -->
-        <div style="position:absolute; top:14px; right:16px; background:var(--overlay); border:1px solid var(--border); padding:8px 10px; min-width:200px">
+       </div>
+        <!-- legend column (dedicated, never overlaps the chart) -->
+        <div style="flex:none; width:248px; background:var(--overlay); border:1px solid var(--border); padding:8px 10px">
           <div style="display:grid; grid-template-columns:1fr 70px 44px; gap:3px 8px; font-size:8.5px; color:var(--faint); letter-spacing:.05em; padding-bottom:5px; border-bottom:1px solid var(--border)"><div>PROTOCOL</div><div style="text-align:right">ALL-TIME</div><div style="text-align:right">SHARE</div></div>
           <sc-for list="{{ legRows }}" as="r" hint-placeholder-count="3">
             <div style="display:grid; grid-template-columns:1fr 70px 44px; gap:3px 8px; font-size:10.5px; padding:4px 0; align-items:center"><div style="display:flex; align-items:center; gap:6px"><span style="width:8px;height:8px;border-radius:2px;background:{{ r.color }}"></span><span style="color:var(--text2)">{{ r.name }}</span></div><div style="text-align:right; color:var(--text)">{{ r.vol }}</div><div style="text-align:right; color:var(--text4)">{{ r.share }}</div></div>
@@ -289,14 +291,68 @@
       </div>
     </div>
 
+    <!-- QUOTE_UPDATE_BURN -->
+    <div style="position:relative; border:1px solid var(--border); background:var(--panel); margin:0 18px 14px">
+      <div style="position:absolute; top:-1px; left:-1px; width:8px; height:8px; border-top:1px solid var(--accent); border-left:1px solid var(--accent)"></div>
+      <div style="position:absolute; bottom:-1px; right:-1px; width:8px; height:8px; border-bottom:1px solid var(--accent); border-right:1px solid var(--accent)"></div>
+      <div style="padding:9px 12px; border-bottom:1px solid var(--border2); font-size:11px; letter-spacing:.03em"><span style="color:var(--accent)">~</span> <span style="color:var(--text); font-weight:600">QUOTE_UPDATE_BURN</span> <span style="color:var(--dim2)">gas burned keeping quotes fresh · MON · UTC days · tracked venues</span></div>
+      <div style="display:flex; align-items:flex-start; gap:16px; padding:16px 18px 8px">
+       <div style="position:relative; flex:1; min-width:0">
+        <div style="position:absolute; top:-2px; left:0; font-size:8.5px; color:var(--faint)">{{ burnMaxLabel }}</div>
+        <div style="position:absolute; top:72px; left:0; font-size:8.5px; color:var(--faint)">{{ burnMidLabel }}</div>
+        <div onMouseLeave="{{ volLeave }}" style="display:flex; align-items:flex-end; gap:1.5px; height:150px; padding-left:42px; border-bottom:1px solid var(--border)">
+          <sc-for list="{{ burnBars }}" as="b" hint-placeholder-count="47">
+            <div onMouseEnter="{{ b.onEnter }}" style="display:flex; flex-direction:column-reverse; justify-content:flex-start; align-self:stretch; flex:1; gap:1px; opacity:{{ b.op }}; background:{{ b.bg }}">
+              <sc-for list="{{ b.segs }}" as="s" hint-placeholder-count="3"><div style="height:{{ s.h }}px; background:{{ s.color }}"></div></sc-for>
+            </div>
+          </sc-for>
+        </div>
+        <sc-if value="{{ burnTipShow }}" hint-placeholder-val="{{ false }}">
+          <div style="position:absolute; top:12px; left:{{ burnTip.left }}%; transform:translateX(-50%); background:var(--overlay); border:1px solid var(--border); padding:8px 10px; z-index:10; pointer-events:none; min-width:180px">
+            <div style="font-size:9px; color:var(--faint); letter-spacing:.05em; padding-bottom:5px; border-bottom:1px solid var(--border2)">{{ burnTip.date }}</div>
+            <sc-for list="{{ burnTip.rows }}" as="r" hint-placeholder-count="3">
+              <div style="display:flex; align-items:center; gap:6px; font-size:10.5px; padding:4px 0 0">
+                <span style="width:8px; height:8px; border-radius:2px; background:{{ r.color }}; flex:none"></span>
+                <span style="color:var(--text2)">{{ r.name }}</span>
+                <span style="margin-left:auto; color:var(--text)">{{ r.val }}</span>
+              </div>
+            </sc-for>
+            <div style="display:flex; align-items:center; gap:6px; font-size:10.5px; padding:4px 0 0">
+              <span style="width:8px; height:8px; border-radius:2px; background:var(--faint2); flex:none"></span>
+              <span style="color:var(--text2)">Metric</span>
+              <span style="margin-left:auto; color:var(--faint); font-size:9px">external oracle</span>
+            </div>
+            <div style="display:flex; align-items:baseline; font-size:10.5px; padding-top:5px; margin-top:5px; border-top:1px solid var(--border2)">
+              <span style="color:var(--dim)">TOTAL</span><span style="margin-left:auto; color:var(--text); font-weight:600">{{ burnTip.total }}</span><span style="color:var(--faint); font-size:9px; margin-left:6px">{{ burnTip.usd }}</span>
+            </div>
+          </div>
+        </sc-if>
+        <div style="position:relative; height:14px; margin-top:4px; margin-left:42px">
+          <sc-for list="{{ volAxis }}" as="a" hint-placeholder-count="5"><div style="position:absolute; left:{{ a.left }}; transform:translateX(-50%); font-size:8.5px; color:var(--faint)">{{ a.label }}</div></sc-for>
+        </div>
+        <div style="margin:8px 2px 4px 42px; font-size:10px; color:var(--faint)"><br></div>
+       </div>
+        <!-- summary column (dedicated, never overlaps the chart) -->
+        <div style="flex:none; width:248px; background:var(--overlay); border:1px solid var(--border); padding:8px 10px">
+          <div style="display:grid; grid-template-columns:1fr 84px 58px; gap:3px 8px; font-size:8.5px; color:var(--faint); letter-spacing:.05em; padding-bottom:5px; border-bottom:1px solid var(--border)"><div>VENUE</div><div style="text-align:right">{{ burnColHdr }}</div><div style="text-align:right">UPDATES</div></div>
+          <sc-for list="{{ burnRows }}" as="r" hint-placeholder-count="3">
+            <div style="display:grid; grid-template-columns:1fr 84px 58px; gap:3px 8px; font-size:10.5px; padding:4px 0; align-items:center"><div style="display:flex; align-items:center; gap:6px"><span style="width:8px;height:8px;border-radius:2px;background:{{ r.color }}"></span><span style="color:var(--text2)">{{ r.name }}</span></div><div style="text-align:right; color:var(--text)">{{ r.burn }}</div><div style="text-align:right; color:var(--text4)">{{ r.updates }}</div></div>
+          </sc-for>
+          <div style="display:grid; grid-template-columns:1fr 84px 58px; gap:3px 8px; font-size:10.5px; padding:4px 0; align-items:center"><div style="display:flex; align-items:center; gap:6px"><span style="width:8px;height:8px;border-radius:2px;background:var(--faint2)"></span><span style="color:var(--text2)">Metric</span></div><div style="text-align:right; color:var(--faint); font-size:9px">external oracle</div><div style="text-align:right; color:var(--faint)">—</div></div>
+          <div style="display:grid; grid-template-columns:1fr 84px 58px; gap:3px 8px; font-size:10.5px; padding-top:6px; margin-top:3px; border-top:1px solid var(--border)"><div style="color:var(--dim)">TOTAL</div><div style="text-align:right; color:var(--text); font-weight:600">{{ burnTotal }}</div><div style="text-align:right; color:var(--text4)">{{ burnUpdatesTotal }}</div></div>
+          <div style="font-size:9px; color:var(--faint); margin-top:5px; text-align:right">burn per $1M volume: {{ burnPerM }} MON</div>
+        </div>
+      </div>
+    </div>
+
     <!-- CUMULATIVE + MARKET SHARE -->
     <div style="display:grid; grid-template-columns:1fr 1fr; gap:14px; margin:0 18px 14px">
       <div style="position:relative; border:1px solid var(--border); background:var(--panel)">
         <div style="position:absolute; top:-1px; left:-1px; width:8px; height:8px; border-top:1px solid var(--accent); border-left:1px solid var(--accent)"></div>
-        <div style="padding:9px 12px; border-bottom:1px solid var(--border2); font-size:11px; letter-spacing:.03em"><span style="color:var(--accent)">&#9632;</span> <span style="color:var(--text); font-weight:600">CUMULATIVE_VOLUME</span></div>
+        <div style="padding:9px 12px; border-bottom:1px solid var(--border2); font-size:11px; letter-spacing:.03em"><span style="color:var(--accent)">■</span> <span style="color:var(--text); font-weight:600">CUMULATIVE_VOLUME</span></div>
         <div onMouseMove="{{ cumMove }}" onMouseLeave="{{ volLeave }}" style="position:relative; padding:14px 14px 10px">
           <svg viewBox="0 0 1000 260" preserveAspectRatio="none" style="display:block; width:100%; height:230px">
-            <defs><linearGradient id="cumg" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" style="stop-color:var(--accent)" stop-opacity="0.32"/><stop offset="100%" style="stop-color:var(--accent)" stop-opacity="0.02"/></linearGradient></defs>
+            <defs><linearGradient id="cumg" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" style="stop-color:var(--accent)" stop-opacity="0.32"></stop><stop offset="100%" style="stop-color:var(--accent)" stop-opacity="0.02"></stop></linearGradient></defs>
             <path d="{{ cumArea }}" fill="url(#cumg)" data-comment-anchor="e74b0437c3-path"></path>
             <path d="{{ cumLine }}" fill="none" style="stroke:var(--accent2); stroke-width:2" vector-effect="non-scaling-stroke"></path>
           </svg>
@@ -308,12 +364,12 @@
               <div style="display:flex; font-size:10.5px; padding-top:4px"><span style="color:var(--dim)">DAY VOL</span><span style="margin-left:auto; color:var(--text)">{{ cumTip.day }}</span></div>
             </div>
           </sc-if>
-          <div style="position:absolute; top:14px; right:16px; font-size:11px; color:var(--accent2)">&#931; {{ cumSigma }}</div>
+          <div style="position:absolute; top:14px; right:16px; font-size:11px; color:var(--accent2)">Σ {{ cumSigma }}</div>
         </div>
       </div>
       <div style="position:relative; border:1px solid var(--border); background:var(--panel)">
         <div style="position:absolute; top:-1px; left:-1px; width:8px; height:8px; border-top:1px solid var(--accent); border-left:1px solid var(--accent)"></div>
-        <div style="padding:9px 12px; border-bottom:1px solid var(--border2); font-size:11px; letter-spacing:.03em"><span style="color:var(--accent)">&#9670;</span> <span style="color:var(--text); font-weight:600">MARKET_SHARE</span> <span style="color:var(--dim2)">% of daily volume</span></div>
+        <div style="padding:9px 12px; border-bottom:1px solid var(--border2); font-size:11px; letter-spacing:.03em"><span style="color:var(--accent)">◆</span> <span style="color:var(--text); font-weight:600">MARKET_SHARE</span> <span style="color:var(--dim2)">% of daily volume</span></div>
         <div onMouseMove="{{ msMove }}" onMouseLeave="{{ volLeave }}" style="position:relative; padding:14px 14px 10px">
           <svg viewBox="0 0 1000 260" preserveAspectRatio="none" style="display:block; width:100%; height:230px">
             <sc-for list="{{ msBands }}" as="band" hint-placeholder-count="2"><path d="{{ band.path }}" fill="{{ band.color }}" fill-opacity="0.82" data-comment-anchor="47079c0a3f-path"></path></sc-for>
@@ -355,7 +411,7 @@
             <div style="text-align:right; color:var(--dim)">{{ r.first }}</div>
           </div>
         </sc-for>
-        <div style="display:grid; grid-template-columns:1.4fr 1fr 1.4fr 1fr 1.2fr 1fr; gap:8px; padding:10px 6px; font-size:11.5px; align-items:center"><div style="color:var(--dim)">TOTAL</div><div style="text-align:right; color:var(--text); font-weight:600">{{ brkTotalVol }}</div><div style="color:var(--text4)">100%</div><div style="text-align:right; color:var(--text4)">{{ brkTotalSwaps }}</div><div style="text-align:right; color:var(--faint)">&mdash;</div><div style="text-align:right; color:var(--dim)">2026-05-13</div></div>
+        <div style="display:grid; grid-template-columns:1.4fr 1fr 1.4fr 1fr 1.2fr 1fr; gap:8px; padding:10px 6px; font-size:11.5px; align-items:center"><div style="color:var(--dim)">TOTAL</div><div style="text-align:right; color:var(--text); font-weight:600">{{ brkTotalVol }}</div><div style="color:var(--text4)">100%</div><div style="text-align:right; color:var(--text4)">{{ brkTotalSwaps }}</div><div style="text-align:right; color:var(--faint)">—</div><div style="text-align:right; color:var(--dim)">2026-05-13</div></div>
       </div>
     </div>
   </div>
@@ -411,7 +467,7 @@
     <div style="position:relative; border:1px solid var(--border); background:var(--panel); margin:0 18px 14px">
       <div style="position:absolute; top:-1px; left:-1px; width:8px; height:8px; border-top:1px solid var(--accent); border-left:1px solid var(--accent)"></div>
       <div style="position:absolute; bottom:-1px; right:-1px; width:8px; height:8px; border-bottom:1px solid var(--accent); border-right:1px solid var(--accent)"></div>
-      <div style="padding:9px 12px; border-bottom:1px solid var(--border2); font-size:11px; letter-spacing:.03em"><span style="color:var(--red)">!</span> <span style="color:var(--text); font-weight:600">OUTLIER_FEED</span> <span style="color:var(--dim2)">sorted by |mk-0s P&amp;L| desc &middot; last 24h</span></div>
+      <div style="padding:9px 12px; border-bottom:1px solid var(--border2); font-size:11px; letter-spacing:.03em"><span style="color:var(--red)">!</span> <span style="color:var(--text); font-weight:600">OUTLIER_FEED</span> <span style="color:var(--dim2)">sorted by |mk-0s P&amp;L| desc · last 24h</span></div>
       <div style="display:grid; grid-template-columns:84px 88px 96px 56px 100px 110px 120px 1fr 1fr; gap:0 8px; padding:9px 14px; font-size:8.5px; color:var(--faint); letter-spacing:.04em; border-bottom:1px solid var(--border)">
         <div>WHEN</div><div>BLOCK</div><div>PAIR</div><div>SIDE</div><div style="text-align:right">USD</div><div style="text-align:right">MK-0S (BPS)</div><div style="text-align:right">MK-0S P&amp;L</div><div>TX</div><div>TO</div>
       </div>
@@ -436,7 +492,7 @@
     <div style="display:flex; align-items:flex-start; justify-content:space-between; padding:18px 18px 12px">
       <div>
         <div style="font-size:14px; font-weight:600; letter-spacing:.06em; color:var(--text)">MARKOUT LEADERBOARD</div>
-        <div style="font-size:11px; color:var(--dim); margin-top:6px; line-height:1.55; max-width:760px">Percentile distribution of markouts and the biggest single-swap winners / losers, per group, over the selected window. Markouts vs Bybit MONUSDT BBO mid; pool PnL = &#931;(markout_bps &times; size_usd / 10000).</div>
+        <div style="font-size:11px; color:var(--dim); margin-top:6px; line-height:1.55; max-width:760px">Percentile distribution of markouts and the biggest single-swap winners / losers, per group, over the selected window. Markouts vs Bybit MONUSDT BBO mid; pool PnL = Σ(markout_bps × size_usd / 10000).</div>
       </div>
       <div style="display:flex; gap:3px"><sc-for list="{{ lbWinPills }}" as="p" hint-placeholder-count="3"><div onClick="{{ p.onClick }}" style="{{ p.style }}">{{ p.label }}</div></sc-for></div>
     </div>
@@ -454,7 +510,7 @@
     <div style="position:relative; border:1px solid var(--border); background:var(--panel); margin:0 18px 14px">
       <div style="position:absolute; top:-1px; left:-1px; width:8px; height:8px; border-top:1px solid var(--accent); border-left:1px solid var(--accent)"></div>
       <div style="position:absolute; bottom:-1px; right:-1px; width:8px; height:8px; border-bottom:1px solid var(--accent); border-right:1px solid var(--accent)"></div>
-      <div style="padding:9px 12px; border-bottom:1px solid var(--border2); font-size:11px; letter-spacing:.03em"><span style="color:var(--accent)">$</span> <span style="color:var(--text); font-weight:600">LEADERBOARD_{{ lbWinLbl }}</span> <span style="color:var(--dim2)">grouped by {{ lbGroupLbl }} &middot; markout {{ lbHzLbl }}</span></div>
+      <div style="padding:9px 12px; border-bottom:1px solid var(--border2); font-size:11px; letter-spacing:.03em"><span style="color:var(--accent)">$</span> <span style="color:var(--text); font-weight:600">LEADERBOARD_{{ lbWinLbl }}</span> <span style="color:var(--dim2)">grouped by {{ lbGroupLbl }} · markout {{ lbHzLbl }}</span></div>
       <div style="padding:4px 14px 12px; overflow-x:auto">
         <div style="display:grid; grid-template-columns:34px 1.7fr 96px 64px 58px 58px 58px 58px 58px 1.5fr; gap:0 8px; padding:9px 6px; font-size:9px; color:var(--faint); letter-spacing:.04em; border-bottom:1px solid var(--border); min-width:980px">
           <div>#</div><div>{{ lbColHdr }}</div><div style="text-align:right">VOLUME</div><div style="text-align:right">SWAPS</div><div style="text-align:right">P5</div><div style="text-align:right">P25</div><div style="text-align:right">P50</div><div style="text-align:right">P75</div><div style="text-align:right">P95</div><div style="text-align:right">POOL PNL</div>
@@ -481,7 +537,7 @@
       <div style="position:absolute; top:-1px; left:-1px; width:8px; height:8px; border-top:1px solid var(--accent); border-left:1px solid var(--accent)"></div>
       <div style="position:absolute; bottom:-1px; right:-1px; width:8px; height:8px; border-bottom:1px solid var(--accent); border-right:1px solid var(--accent)"></div>
       <div style="display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; padding:9px 12px; border-bottom:1px solid var(--border2)">
-        <div style="font-size:11px; letter-spacing:.03em"><span style="color:var(--accent)">&minus;</span> <span style="color:var(--text); font-weight:600">TOP_SWAPS_BY_MARKOUT_USD</span> <span style="color:var(--dim2)">{{ lbHzLbl }} markout &middot; {{ lbWinLbl }} window</span></div>
+        <div style="font-size:11px; letter-spacing:.03em"><span style="color:var(--accent)">−</span> <span style="color:var(--text); font-weight:600">TOP_SWAPS_BY_MARKOUT_USD</span> <span style="color:var(--dim2)">{{ lbHzLbl }} markout · {{ lbWinLbl }} window</span></div>
         <div style="display:flex; gap:10px">
           <div style="display:flex; gap:3px"><div onClick="{{ lbWinnersOn }}" style="{{ lbWinnersStyle }}">WINNERS</div><div onClick="{{ lbLosersOn }}" style="{{ lbLosersStyle }}">LOSERS</div></div>
           <div style="display:flex; gap:3px"><sc-for list="{{ lbTopPills }}" as="p" hint-placeholder-count="3"><div onClick="{{ p.onClick }}" style="{{ p.style }}">{{ p.label }}</div></sc-for></div>
@@ -801,7 +857,14 @@ class Component extends DCLogic {
       const vault = total * sv, clob = total * sc, lfj = total - vault - clob;
       const sw = Math.round(total * (95 + Math.random() * 45));
       swaps += sw;
-      days.push({ mmdd, total, lfj, clob, vault, sw, partial });
+      // quote-update burn (MON) — near-constant day to day, unlike spiky volume
+      const j = () => 0.94 + Math.random() * 0.12;
+      const onr = Math.min(1, (i + 1) / 4);                    // short come-online ramp
+      const hanjiOn = i >= 8;                                   // Hanji tracked from 2026-05-21
+      let bPoe = 810 * j() * onr, bClob = 660 * j() * onr, bHanji = hanjiOn ? 425 * j() : 0;
+      let uPoe = Math.round(3100 * j() * onr), uClob = Math.round(2600 * j() * onr), uHanji = hanjiOn ? Math.round(1700 * j()) : 0;
+      if (partial) { bPoe *= 0.42; bClob *= 0.42; bHanji *= 0.42; uPoe = Math.round(uPoe * 0.42); uClob = Math.round(uClob * 0.42); uHanji = Math.round(uHanji * 0.42); }
+      days.push({ mmdd, total, lfj, clob, vault, sw, partial, bPoe, bClob, bHanji, uPoe, uClob, uHanji, hanjiOn });
     }
     this.vol = { days, swaps };
   }
@@ -812,6 +875,9 @@ class Component extends DCLogic {
     const v = add * (0.14 + Math.random() * 0.12), c = add * (0.24 + Math.random() * 0.06), l = add - v - c;
     d.vault += v; d.clob += c; d.lfj += l; d.total += add; d.sw += Math.round(1 + Math.random() * 2);
     this.vol.swaps += Math.round(1 + Math.random() * 2);
+    // burn ticks up steadily with each quote refresh
+    d.bPoe += 0.006; d.bClob += 0.005; d.bHanji += 0.003;
+    if (Math.random() < 0.5) { d.uPoe += 1; } if (Math.random() < 0.4) { d.uClob += 1; } if (Math.random() < 0.3) { d.uHanji += 1; }
   }
   f$(m) { return m >= 1 ? '$' + m.toFixed(2) + 'M' : '$' + (m * 1000).toFixed(0) + 'k'; }
   volWin() {
@@ -924,6 +990,41 @@ class Component extends DCLogic {
         msTip = { left: tipLeft(hi), guide: guideLeft(hi), date: dateOf(d), rows: series.map(s => ({ name: s.name, color: s.color, pct: (s.val(d) / t * 100).toFixed(1) + '%', val: f(s.val(d)) })) };
       }
     }
+    // ---- QUOTE_UPDATE_BURN (MON, not USD) ----
+    const fMON = m => (m >= 1000 ? (m / 1000).toFixed(1) + 'K' : Math.round(m).toLocaleString()) + ' MON';
+    const C2 = this.COL;
+    const burnSeries = [
+      { name: 'LFJ POE', key: 'bPoe', ukey: 'uPoe', color: C2.LFJ, approx: true },
+      { name: 'Clober', key: 'bClob', ukey: 'uClob', color: C2.Clober, approx: false },
+      { name: 'Hanji', key: 'bHanji', ukey: 'uHanji', color: C2.Vault, approx: false },
+    ];
+    const bTot = days.map(d => burnSeries.reduce((a, s) => a + d[s.key], 0));
+    const bMax = Math.max(...bTot) || 1;
+    const BH = 150;
+    const burnBars = days.map((d, i) => ({
+      op: d.partial ? 0.5 : 1,
+      segs: burnSeries.filter(s => d[s.key] > 0).map(s => ({ h: (d[s.key] / bMax * BH).toFixed(1), color: s.color })),
+      bg: (hv && hv.c === 'burn' && hi === i) ? 'var(--accent-dim)' : 'transparent',
+      onEnter: () => this.setState({ volHover: { c: 'burn', i } }),
+    }));
+    let burnTip = null;
+    if (hv && hv.c === 'burn' && hi >= 0) {
+      const d = days[hi];
+      burnTip = {
+        left: tipLeft(hi), date: dateOf(d),
+        rows: burnSeries.filter(s => d[s.key] > 0).map(s => ({ name: s.name, color: s.color, val: (s.approx ? '\u2248' : '') + d[s.key].toFixed(1) + ' MON' })),
+        total: Math.round(bTot[hi]).toLocaleString() + ' MON',
+        usd: '~$' + (bTot[hi] * (this.mon || 0.0192)).toFixed(0),
+      };
+    }
+    const isWindowed = days.length < allDays.length;
+    const burnRows = burnSeries.map(s => {
+      const tot = days.reduce((a, d) => a + d[s.key], 0);
+      const ups = days.reduce((a, d) => a + d[s.ukey], 0);
+      return { name: s.name, color: s.color, burn: (s.approx ? '\u2248' : '') + fMON(tot), updates: ups.toLocaleString() };
+    });
+    const burnTotal = bTot.reduce((a, b) => a + b, 0);
+    const burnPerM = allTot > 0 ? (burnTotal / allTot).toFixed(1) : '0';
     const rOn = 'background:var(--accent);color:var(--accent-fg);border:1px solid var(--accent);padding:3px 8px;border-radius:4px;cursor:pointer;font-size:10px;white-space:nowrap';
     const rOff = 'background:transparent;color:var(--dim);border:1px solid var(--pill-border);padding:3px 8px;border-radius:4px;cursor:pointer;font-size:10px;white-space:nowrap';
     const volRangePills = ['7D', '14D', '30D', 'ALL'].map(o => ({ label: o, onClick: () => this.setState({ volRange: o, volStart: null, volEnd: null, volHover: null }), style: this.state.volRange === o ? rOn : rOff }));
@@ -940,6 +1041,11 @@ class Component extends DCLogic {
       brushBars, brushLeft, brushWidth, brushStartLbl, brushEndLbl,
       setBrush: this.setBrush, brushDown: this.brushDown,
       dailyTipShow: !!dailyTip, dailyTip: dailyTip || {}, cumTipShow: !!cumTip, cumTip: cumTip || {}, msTipShow: !!msTip, msTip: msTip || {},
+      burnBars, burnMaxLabel: fMON(bMax), burnMidLabel: fMON(bMax / 2),
+      burnTipShow: !!burnTip, burnTip: burnTip || {}, burnRows,
+      burnTotal: fMON(burnTotal), burnUpdatesTotal: burnSeries.reduce((a, s) => a + days.reduce((x, d) => x + d[s.ukey], 0), 0).toLocaleString(),
+      burnColHdr: isWindowed ? 'WINDOW BURN' : 'ALL-TIME BURN',
+      burnPerM,
       volBars, volMaxLabel: f(maxT), volMidLabel: f(maxT / 2), volAxis: axis,
       kAll: f(allTot), k7: f(last7), k7chg: (chg7 >= 0 ? '\u25B2 ' : '\u25BC ') + Math.abs(chg7).toFixed(0) + '%', k7css: 'color:' + (chg7 >= 0 ? 'var(--green)' : 'var(--red)'),
       kSwaps: swaps.toLocaleString(), kPeak: f(peakV), kPeakDay: peakDay,

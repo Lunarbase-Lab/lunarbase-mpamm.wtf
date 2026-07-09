@@ -368,6 +368,37 @@ export interface DailyVolume {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
+// Quote-update gas burn ("QUOTE_UPDATE_BURN", Volume tab) — the MON each
+// propAMM's own keeper spends keeping its quotes fresh (price pushes / book
+// rebalances). Monad charges gas_limit (receipts report gasUsed == limit), so
+// per-tx cost is exactly receipt.gasUsed × effectiveGasPrice. Venues whose
+// quoting cost is NOT self-funded (external oracle, taker-paid JIT) simply
+// have no series here.
+// ──────────────────────────────────────────────────────────────────────────
+
+/** One venue's quote-update burn for one UTC day. */
+export interface VenueGasDaily {
+  /** MON charged (gas_limit × effective price, summed over update txs). */
+  mon: number;
+  /** number of quote-update transactions. */
+  txs: number;
+}
+
+export interface GasDay {
+  utcDay: string;
+  byVenue: Record<string, VenueGasDaily>;
+  /** true for today's still-accumulating bucket. */
+  partial: boolean;
+}
+
+export interface GasResponse {
+  days: GasDay[];
+  /** venue ids whose numbers are sampled estimates (block-sampling mode, no
+   *  update events on-chain) — the UI prefixes them with ≈. */
+  approx: string[];
+}
+
+// ──────────────────────────────────────────────────────────────────────────
 // Leaderboard aggregates (spec §4.4) — computed SERVER-side over the FULL
 // window. Shipping raw fills to the browser silently truncated the 7D/30D
 // windows at the fetch cap (~20k fills ≈ <2 days at Metric's rate); the

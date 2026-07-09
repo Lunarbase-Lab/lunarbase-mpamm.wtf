@@ -88,6 +88,19 @@ export function createTemplateAdapter(): VenueAdapter {
       return [];
     },
 
+    // OPTIONAL — QUOTE_UPDATE_BURN (Volume tab): where does this venue's OWN
+    // keeper pay gas to keep quotes fresh? Destination-keyed (the contract the
+    // update tx goes TO — sender rotation never matters). 'logs' when updates
+    // emit an event (exact counts; use raw `topic0` if the contract is
+    // unverified); 'blocks' when they don't (sampled estimate, UI shows ≈ —
+    // only sound for a near-constant keeper cadence). Throw while discovery
+    // hasn't resolved the destination. OMIT THE HOOK ENTIRELY when the venue
+    // doesn't self-fund its updates (external oracle / taker-paid JIT) —
+    // absence is the honest value, not zero.
+    // gasSources() {
+    //   return [{ mode: 'logs', address: MY_STRATEGY, events: [ev(myAbi, 'UpdatePrice')] }];
+    // },
+
     // Turn your fetched logs into normalized fills. `logs[key]` matches your
     // logSources keys; `tsOf(blockNumber)` → block timestamp (ms). Own any
     // venue-specific correlation here (router maps, mid-run pool discovery, …).

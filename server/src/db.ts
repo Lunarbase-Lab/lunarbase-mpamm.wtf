@@ -1,7 +1,7 @@
 import { DatabaseSync } from 'node:sqlite';
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
-import { MARKOUT_HORIZONS, type DailyVolume, type Fill } from '@shared';
+import { MARKOUT_HORIZONS, type DailyVolume, type Fill, type GasDay } from '@shared';
 
 type Stmt = ReturnType<DatabaseSync['prepare']>;
 
@@ -63,6 +63,7 @@ export class VolumeStore {
   private metaStmt: Stmt;
   private fillStmt: Stmt;
   private midStmt: Stmt;
+  private gasStmt: Stmt;
 
   constructor(path = 'data/mpamm.db') {
     mkdirSync(dirname(path), { recursive: true });
@@ -74,7 +75,9 @@ export class VolumeStore {
     if (ver !== SCHEMA_VERSION) {
       // start fresh on a schema change: drop the data tables and clear the cursor
       // so the indexer cold-starts (the venue registry defines the new shape).
-      this.db.exec(`DROP TABLE IF EXISTS daily_volume; DROP TABLE IF EXISTS fills; DROP TABLE IF EXISTS day_meta; DROP TABLE IF EXISTS mid_history; DELETE FROM meta;`);
+      // daily_gas included: clearing meta clears the gas cursors, and additive
+      // accrual over surviving rows would double-count on the re-scan.
+      this.db.exec(`DROP TABLE IF EXISTS daily_volume; DROP TABLE IF EXISTS fills; DROP TABLE IF EXISTS day_meta; DROP TABLE IF EXISTS mid_history; DROP TABLE IF EXISTS daily_gas; DELETE FROM meta;`);
     }
 
     this.db.exec(`
@@ -116,6 +119,18 @@ export class VolumeStore {
         mid    REAL    NOT NULL,
         PRIMARY KEY (market, ts)
       ) WITHOUT ROWID;
+      -- QUOTE_UPDATE_BURN: per-venue quote-update gas per UTC day. mon is the
+      -- MON actually charged (Monad charges gas_limit; receipts report
+      -- gasUsed == limit, so gasUsed × effectiveGasPrice is exact). Additive
+      -- accrual — rows only ever grow, committed atomically with the venue's
+      -- gas cursor (applyGas) so a crash can never double-count.
+      CREATE TABLE IF NOT EXISTS daily_gas (
+        utc_day  TEXT    NOT NULL,
+        venue_id TEXT    NOT NULL,
+        mon      REAL    NOT NULL DEFAULT 0,
+        txs      INTEGER NOT NULL DEFAULT 0,
+        PRIMARY KEY (utc_day, venue_id)
+      );
     `);
     // additive migration (PRAGMA-guarded, no reset): fills gained px_approx so a
     // persisted approximate-price fill keeps its exclusion flag across restarts —
@@ -162,6 +177,9 @@ export class VolumeStore {
     this.midStmt = this.db.prepare(`
       INSERT INTO mid_history (market, ts, mid) VALUES (?, ?, ?)
       ON CONFLICT(market, ts) DO UPDATE SET mid = excluded.mid`);
+    this.gasStmt = this.db.prepare(`
+      INSERT INTO daily_gas (utc_day, venue_id, mon, txs) VALUES (?, ?, ?, ?)
+      ON CONFLICT(utc_day, venue_id) DO UPDATE SET mon = mon + excluded.mon, txs = txs + excluded.txs`);
   }
 
   private runDay(d: DailyVolume): void {
@@ -194,7 +212,38 @@ export class VolumeStore {
     const q = keepIds.map(() => '?').join(',');
     const v = this.db.prepare(`DELETE FROM daily_volume WHERE venue_id NOT IN (${q})`).run(...keepIds);
     const f = this.db.prepare(`DELETE FROM fills WHERE venue_id NOT IN (${q})`).run(...keepIds);
+    this.db.prepare(`DELETE FROM daily_gas WHERE venue_id NOT IN (${q})`).run(...keepIds);
     return { volume: Number(v.changes), fills: Number(f.changes) };
+  }
+
+  // ── quote-update gas (QUOTE_UPDATE_BURN) ──────────────────────────────────
+  /**
+   * Accrue gas increments AND advance the venue's cursor in ONE transaction —
+   * the additive UPDATE is only safe because a crash can never separate the
+   * rows from the cursor that says they were counted.
+   */
+  applyGas(rows: Array<{ utcDay: string; venueId: string; mon: number; txs: number }>, cursorKey: string, cursorVal: string): void {
+    this.db.exec('BEGIN');
+    try {
+      for (const r of rows) this.gasStmt.run(r.utcDay, r.venueId, r.mon, r.txs);
+      this.metaStmt.run(cursorKey, cursorVal);
+      this.db.exec('COMMIT');
+    } catch (e) {
+      this.db.exec('ROLLBACK');
+      throw e;
+    }
+  }
+
+  /** Reconstruct GasDay[] (ascending). `today` marks the partial bucket. */
+  gasDays(today: string): GasDay[] {
+    const rows = this.db.prepare(`SELECT utc_day, venue_id, mon, txs FROM daily_gas ORDER BY utc_day ASC`).all() as Array<Record<string, any>>;
+    const byDay = new Map<string, GasDay>();
+    for (const r of rows) {
+      let d = byDay.get(r.utc_day);
+      if (!d) { d = { utcDay: r.utc_day, partial: r.utc_day === today, byVenue: {} }; byDay.set(r.utc_day, d); }
+      d.byVenue[r.venue_id] = { mon: r.mon, txs: r.txs };
+    }
+    return [...byDay.values()].sort((a, b) => (a.utcDay < b.utcDay ? -1 : 1));
   }
 
   /** Reconstruct DailyVolume[] from the long (day, venue) rows + partial flags. */
