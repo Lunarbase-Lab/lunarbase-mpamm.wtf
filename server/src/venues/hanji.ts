@@ -39,6 +39,16 @@ const HANJI_VENUE: VenueMeta = { id: 'hanji', name: 'Hanji', color: { light: '#A
 
 const FAST_QUOTER_HELPER = '0x237dB58fea34A35A8543b44C217d221606cE7788' as const;
 
+/** The FastQuoter — Hanji's propAMM engine (team brief). Its quotes are priced
+ *  off `externalPrices` (FP24-packed bid/ask ×5 pairs + expiry) that Hanji's
+ *  keeper writes via `updatePrices(uint256)` (sel 0xae7e8d81) every ~1s from
+ *  HEAVILY ROTATING EOAs (87 senders observed in 4 min) — which is exactly why
+ *  gas tracking is destination-keyed. Updates emit NO logs (45k flat limit),
+ *  and every direct tx to this contract is a price update (254/254 sampled),
+ *  so blocks-mode tx counting is exact-in-kind. Provenance: team-provided
+ *  update tx 0x2b17b095… decoded against their published packing. */
+const FAST_QUOTER = '0x04fdEAC24E4e57364B4F22844106583d88F747d7' as const;
+
 /** Hanji markets (team-provided, tokens verified on-chain via getConfig).
  *  `market` is the @shared pair symbol; base/quote are TOKENS registry keys. */
 const KNOWN_MARKETS = [
@@ -197,15 +207,17 @@ export function createHanjiAdapter(): VenueAdapter {
       return [{ key: 'orderPlaced', address: markets.map((m) => m.clob), events: [ev(lobAbi, 'OrderPlaced')], kind: 'fills' as const }];
     },
 
-    // NO gasSources — Hanji self-funds NOTHING on-chain (verified by call
-    // trace, 2026-07-10): on-book quoting is JIT inside each TAKER's tx, and
-    // even price freshness is taker-delivered — the tx calldata carries a
-    // Hanji-signed price that the proxy writes into the price store
-    // (0x95959adf…) in-trade. That store receives zero dedicated keeper txs
-    // and emits zero logs. Absence is the honest series (spec D8). NB: an
-    // earlier build tracked 0x0000a8fd…8888 here — that contract is another
-    // protocol's pool (mistaken trace inference); the gas tracker auto-wipes
-    // the misattributed rows when a venue stops declaring gasSources.
+    // QUOTE_UPDATE_BURN: Hanji's keeper pays to keep quotes fresh by writing
+    // externalPrices into the FastQuoter (~1 updatePrices/s, log-less) — see
+    // the FAST_QUOTER note for the verified mechanism. 'blocks' mode because
+    // updates emit no events; the near-constant cadence (median gap 3 blocks)
+    // makes the sampled estimate sound, same as POE. On-book JIT quoting
+    // remains taker-paid and is deliberately not counted. NB: an earlier
+    // build tracked 0x0000a8fd…8888 — another protocol's pool (mistaken
+    // trace inference, since replaced by this team-confirmed destination).
+    gasSources() {
+      return [{ mode: 'blocks' as const, address: FAST_QUOTER }];
+    },
 
     async decode(ctx: AdapterContext, logs: LogBundle, tsOf) {
       // keep only real trades first (the aggressive portion of an order);
