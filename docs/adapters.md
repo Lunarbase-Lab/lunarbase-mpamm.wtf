@@ -100,6 +100,8 @@ Fixture-based decode tests run in CI (`npm -w server run test`, vitest). Record 
 
 ## PR checklist
 
+(The PR template pre-fills this — [.github/PULL_REQUEST_TEMPLATE.md](../.github/PULL_REQUEST_TEMPLATE.md).)
+
 - [ ] One adapter file + one `registry.ts` line (+ `@shared` pair/token entries if you add markets); no core edits.
 - [ ] `venues()` meta: unique kebab-case `id`, both theme colors, `sinceUtc` = real first-activity day, `backfillFromUtc` set.
 - [ ] Only registered pairs emitted; deterministic fill ids; `pxApprox` where realized price isn't real.
