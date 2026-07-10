@@ -39,15 +39,6 @@ const HANJI_VENUE: VenueMeta = { id: 'hanji', name: 'Hanji', color: { light: '#A
 
 const FAST_QUOTER_HELPER = '0x237dB58fea34A35A8543b44C217d221606cE7788' as const;
 
-/** Hanji's price store (unverified EIP-1967 proxy): a Hanji-side keeper EOA
- *  pushes to it every ~1.1s (flat 54.7k gas), and swaps CALL it in-path
- *  (verified by call trace). Its push event's topic0 is known from live logs;
- *  the ABI isn't published, so the gas source filters on the raw topic.
- *  Identity ("your ProxyPyth?") is on the Hanji-team confirmation list — if it
- *  turns out to be shared third-party infra, drop this gasSource (like Metric). */
-const HANJI_PRICE_STORE = '0x0000a8fd148694aE3E17c079Ce4BBF8187758888' as const;
-const HANJI_PRICE_PUSH_TOPIC = '0x8acb811d2c5106785f847faf03ce160d2eb124b8632eb42d466f46c087033d61' as const;
-
 /** Hanji markets (team-provided, tokens verified on-chain via getConfig).
  *  `market` is the @shared pair symbol; base/quote are TOKENS registry keys. */
 const KNOWN_MARKETS = [
@@ -206,14 +197,15 @@ export function createHanjiAdapter(): VenueAdapter {
       return [{ key: 'orderPlaced', address: markets.map((m) => m.clob), events: [ev(lobAbi, 'OrderPlaced')], kind: 'fills' as const }];
     },
 
-    // QUOTE_UPDATE_BURN: Hanji's on-book quoting is JIT — the quote is placed,
-    // filled and cancelled inside each TAKER's tx (takers pay that gas), so the
-    // venue's own spend is the keeper's price pushes to its price store. Those
-    // DO emit an event, so counts are exact. Fill-side repricing is deliberately
-    // NOT counted — tx-level gas is the atom of cost and those txs are taker-paid.
-    gasSources() {
-      return [{ mode: 'logs' as const, address: HANJI_PRICE_STORE, topic0: HANJI_PRICE_PUSH_TOPIC }];
-    },
+    // NO gasSources — Hanji self-funds NOTHING on-chain (verified by call
+    // trace, 2026-07-10): on-book quoting is JIT inside each TAKER's tx, and
+    // even price freshness is taker-delivered — the tx calldata carries a
+    // Hanji-signed price that the proxy writes into the price store
+    // (0x95959adf…) in-trade. That store receives zero dedicated keeper txs
+    // and emits zero logs. Absence is the honest series (spec D8). NB: an
+    // earlier build tracked 0x0000a8fd…8888 here — that contract is another
+    // protocol's pool (mistaken trace inference); the gas tracker auto-wipes
+    // the misattributed rows when a venue stops declaring gasSources.
 
     async decode(ctx: AdapterContext, logs: LogBundle, tsOf) {
       // keep only real trades first (the aggressive portion of an order);

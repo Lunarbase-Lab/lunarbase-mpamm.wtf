@@ -69,12 +69,43 @@ export class GasTracker {
     if (this.running || this.stopped) return;
     this.running = true;
     try {
+      // a venue whose adapter no longer declares gasSources must not keep a
+      // stale (possibly misattributed) series — wipe rows + cursor once, so
+      // dropping a wrong source self-heals on deploy.
+      for (const a of this.adapters) {
+        const vid = a.venues()[0]?.id ?? '';
+        if (!vid || a.gasSources) continue;
+        if (this.store.getMeta(`gas_cursor_${vid}`)) {
+          this.store.resetGas(vid);
+          this.store.setMeta(`gas_approx_${vid}`, '');
+          this.approx.delete(vid);
+          this.note(`${a.venues()[0]?.name ?? vid}: gas series removed — venue no longer declares quote-update sources`);
+        }
+      }
+      // destination ownership: the SAME contract claimed by two venues would
+      // double-count every update tx — first declarer wins, the rest are
+      // skipped LOUDLY (this is exactly how a misattributed address surfaces).
+      const owner = new Map<string, string>();
       for (const a of this.adapters) {
         if (this.stopped) return;
         if (!a.gasSources) continue;
         const vid = a.venues()[0]?.id ?? '';
         const name = a.venues()[0]?.name ?? vid;
         if (!vid) continue;
+        let conflict = false;
+        try {
+          for (const s of a.gasSources()) {
+            for (const addr of Array.isArray(s.address) ? s.address : [s.address]) {
+              const key = addr.toLowerCase();
+              const held = owner.get(key);
+              if (held && held !== vid) {
+                this.noteOnce(`${name}: gas destination ${addr.slice(0, 10)}… already tracked by '${held}' — venue skipped until the collision is resolved`);
+                conflict = true;
+              } else owner.set(key, vid);
+            }
+          }
+        } catch { /* sources unresolved (pre-discovery) — tailVenue defers anyway */ }
+        if (conflict) continue;
         try { await this.tailVenue(a, vid, name); }
         catch (e) { this.note(`${name}: quote-update gas tail paused (${(e as Error).message}); retried next pass`); }
       }
