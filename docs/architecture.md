@@ -1,6 +1,6 @@
 # Architecture
 
-How the dashboard works end to end: what counts as a propAMM, how quotes/fills/history flow through the system, how the CEX reference is constructed, and what is persisted. For **adding a venue**, read [adapters.md](adapters.md); for hosting, [deploy.md](deploy.md).
+How the dashboard works end to end **as built** — which venues, which feeds, how quotes/fills/history flow, and what is persisted. The venue-agnostic design (invariants, contracts, decisions) lives in [spec.md](spec.md); for **adding a venue**, read [adapters.md](adapters.md); for hosting, [deploy.md](deploy.md).
 
 ## What counts as a propAMM
 
