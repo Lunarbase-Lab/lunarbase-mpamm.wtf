@@ -34,8 +34,18 @@ export class BybitFeed {
   private ws?: WebSocket;
   private backoff = 500;
   private stopped = false;
+  private watchdog?: ReturnType<typeof setInterval>;
   ready = false;
   lastMsgTs = 0;
+
+  /** A book that stops TICKING is worse than one that disconnects: a half-open
+   *  TCP connection keeps the last mids "fresh" forever and every downstream
+   *  number (markout anchors, quote comparisons) silently drifts. Reads return
+   *  0 (unavailable — pairs hide, markouts stay null) once no message has
+   *  arrived for STALE_MS, and the watchdog force-terminates the socket so the
+   *  normal reconnect + re-snapshot path runs. */
+  private static readonly STALE_MS = 30_000;
+  private fresh(): boolean { return Date.now() - this.lastMsgTs <= BybitFeed.STALE_MS; }
 
   /** `crossSymbols`: additional spot symbols to track at BBO/mid level (used to
    *  convert the USDT-quoted reference into a pair's stable terms, docs/architecture.md: pair-terms reference). */
@@ -45,16 +55,22 @@ export class BybitFeed {
 
   async start(): Promise<void> {
     await this.snapshotRest().catch(() => undefined);
+    this.lastMsgTs = Date.now(); // grace: don't declare stale before the first message
     this.connect();
+    this.watchdog = setInterval(() => {
+      if (!this.stopped && !this.fresh()) { this.lastMsgTs = Date.now(); this.ws?.terminate(); }
+    }, 10_000);
   }
 
   stop(): void {
     this.stopped = true;
+    if (this.watchdog) clearInterval(this.watchdog);
     this.ws?.close();
   }
 
   // ── public reads ─────────────────────────────────────────────────────────
   mid(): number {
+    if (!this.fresh()) return 0; // frozen book = unavailable, never "current"
     if (this.bestBid && this.bestAsk) return (this.bestBid + this.bestAsk) / 2;
     return this.last || this.bestBid || this.bestAsk || 0;
   }
@@ -66,6 +82,7 @@ export class BybitFeed {
   }
   /** BBO mid of a tracked cross symbol (0 until its ticker is warm). */
   crossMid(symbol: string): number {
+    if (!this.fresh()) return 0; // frozen cross = unavailable (pair hides)
     const c = this.crossMids.get(symbol.toUpperCase());
     if (!c) return 0;
     if (c.bid && c.ask) return (c.bid + c.ask) / 2;
@@ -75,6 +92,7 @@ export class BybitFeed {
   /** Walk the maintained book for `baseSize` MON. side='buy' consumes asks
    *  (taker buys MON), side='sell' consumes bids (taker sells MON). */
   walk(side: 'buy' | 'sell', baseSize: number): WalkResult {
+    if (!this.fresh()) return { price: 0, filledBase: 0, filledFull: false }; // frozen book ⇒ no reference row
     const levels: Level[] = side === 'buy'
       ? [...this.asks.entries()].sort((a, b) => a[0] - b[0])
       : [...this.bids.entries()].sort((a, b) => b[0] - a[0]);

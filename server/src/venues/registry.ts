@@ -50,9 +50,18 @@ export function venueMeta(): VenueMeta[] {
   return [...ADAPTERS.flatMap((a) => a.venues()), ...REFERENCES.metas()];
 }
 
-/** The set of all registered venue ids (adapters + references). */
+/** The set of ACTIVE venue ids (VENUES-filtered adapters + references). */
 export function venueIds(): Set<string> {
   return new Set(venueMeta().map((v) => v.id));
+}
+
+/** Every venue id in the CODE registry, ignoring the VENUES runtime filter.
+ *  DB reconciliation prunes against THIS set: a venue is "removed" only when
+ *  it leaves the code, never because a dev loop filtered it out for a boot —
+ *  pruning on the filtered set would silently delete the other venues'
+ *  volume/fills/gas history. */
+export function allVenueIds(): Set<string> {
+  return new Set([...ALL_ADAPTERS.flatMap((a) => a.venues().map((v) => v.id)), ...REFERENCES.metas().map((v) => v.id)]);
 }
 
 /**

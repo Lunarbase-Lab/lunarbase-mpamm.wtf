@@ -90,9 +90,12 @@ export function createReferenceRegistry(): ReferenceRegistry {
       return m > 0 ? m : 0;
     }
     const sym = TOKENS[pair.quote]?.usdtCross;
-    if (!sym) return 1;
+    if (!sym) return 1; // ≡ USDT by design (USDT0), not "unavailable"
     const m = cexForBase(pair.base) === 'binance' ? binance.mid(sym) : bybit.crossMid(sym);
-    return m > 0 ? m : 1;
+    // unwarm cross ⇒ the pair is UNAVAILABLE (mid 0, quotes/markouts skip) —
+    // falling back to 1 would anchor to raw USDT, the exact ~10bps error the
+    // pair-terms construction exists to remove.
+    return m > 0 ? m : 0;
   };
   /** full pair conversion: USDT terms → the pair's own (wrapped, quote) terms.
    *  0 = unavailable (asset quote leg not warm). */

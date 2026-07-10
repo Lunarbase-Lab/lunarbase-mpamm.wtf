@@ -21,7 +21,15 @@ export class BinanceFeed {
   private ws?: WebSocket;
   private backoff = 500;
   private stopped = false;
+  private watchdog?: ReturnType<typeof setInterval>;
   ready = false;
+  lastMsgTs = 0;
+
+  /** see BybitFeed: a frozen-but-connected book must read as UNAVAILABLE, not
+   *  current. This feed had no liveness signal at all — a half-open socket
+   *  froze BTC/ETH mids indefinitely with nothing to notice. */
+  private static readonly STALE_MS = 30_000;
+  private fresh(): boolean { return Date.now() - this.lastMsgTs <= BinanceFeed.STALE_MS; }
 
   constructor(private readonly symbols: string[]) {
     for (const s of symbols) this.books.set(s.toUpperCase(), freshBook());
@@ -29,12 +37,21 @@ export class BinanceFeed {
 
   async start(): Promise<void> {
     await Promise.all(this.symbols.map((s) => this.snapshotRest(s).catch(() => undefined)));
+    this.lastMsgTs = Date.now(); // grace: don't declare stale before the first message
     this.connect();
+    this.watchdog = setInterval(() => {
+      if (!this.stopped && !this.fresh()) { this.lastMsgTs = Date.now(); this.ws?.terminate(); }
+    }, 10_000);
   }
-  stop(): void { this.stopped = true; this.ws?.close(); }
+  stop(): void {
+    this.stopped = true;
+    if (this.watchdog) clearInterval(this.watchdog);
+    this.ws?.close();
+  }
 
   has(symbol: string): boolean { return this.books.has(symbol.toUpperCase()); }
   mid(symbol: string): number {
+    if (!this.fresh()) return 0; // frozen book = unavailable, never "current"
     const b = this.books.get(symbol.toUpperCase());
     if (!b) return 0;
     if (b.bestBid && b.bestAsk) return (b.bestBid + b.bestAsk) / 2;
@@ -45,6 +62,7 @@ export class BinanceFeed {
 
   /** Walk the maintained book for `baseSize` base units. side='buy' consumes asks. */
   walk(symbol: string, side: 'buy' | 'sell', baseSize: number): WalkResult {
+    if (!this.fresh()) return { price: 0, filledBase: 0, filledFull: false }; // frozen book ⇒ no reference row
     const b = this.books.get(symbol.toUpperCase());
     if (!b) return { price: 0, filledBase: 0, filledFull: false };
     const levels: Level[] = side === 'buy'
@@ -94,6 +112,7 @@ export class BinanceFeed {
   }
 
   private onMessage(raw: string): void {
+    this.lastMsgTs = Date.now();
     let msg: any;
     try { msg = JSON.parse(raw); } catch { return; }
     const stream: string | undefined = msg.stream;

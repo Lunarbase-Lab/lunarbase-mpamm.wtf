@@ -44,11 +44,19 @@ export async function probeChain(): Promise<{ ok: boolean; block: number; reason
  *  pruned/missing block just pushes the search higher. */
 export async function blockAtOrAfter(targetSec: number, hi: bigint): Promise<bigint> {
   let lo = 0n, h = hi, ans = hi;
+  // a single failed probe usually IS a pruned block (search higher), but a
+  // string of failures is an RPC brownout — converging to `hi` then would hand
+  // callers a head-anchored "start", which they make PERMANENT (backfill
+  // done-flags, gas_from). Fail loud instead; every caller retries later.
+  let failures = 0;
   while (lo <= h) {
     const mid = lo + (h - lo) / 2n;
     let ts: number | undefined;
     try { ts = Number((await publicClient.getBlock({ blockNumber: mid })).timestamp); }
-    catch { lo = mid + 1n; continue; }
+    catch {
+      if (++failures > 8) throw new Error(`blockAtOrAfter: ${failures} probe failures — RPC unhealthy, not converging to head`);
+      lo = mid + 1n; continue;
+    }
     if (ts >= targetSec) { ans = mid; h = mid - 1n; } else { lo = mid + 1n; }
   }
   return ans;

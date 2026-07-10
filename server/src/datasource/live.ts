@@ -12,7 +12,7 @@ import { publicClient, getLogsChunked, probeChain, blockAtOrAfter } from '../cha
 import { UsdPricer } from '../pricer.js';
 import { VolumeStore } from '../db.js';
 import { utcDay, annotateCex } from '../util.js';
-import { ADAPTERS, REFERENCES, venueMeta, venueIds, validateRegistry } from '../venues/registry.js';
+import { ADAPTERS, REFERENCES, venueMeta, venueIds, allVenueIds, validateRegistry } from '../venues/registry.js';
 import type { AdapterContext, LogBundle, LogSource, VenueAdapter } from '../venues/adapter.js';
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
@@ -169,7 +169,10 @@ export class LiveDataSource extends BaseSource {
     // 0. prune any venue that left the registry (non-destructive — every
     //    remaining venue's history is kept, unlike a schema reset). Runs before
     //    we load days so a removed venue's stale rows never reach the UI/totals.
-    const pruned = this.store.reconcileVenues([...this.knownVenueIds]);
+    // prune against the UNFILTERED registry: a VENUES=subset dev boot must not
+    // delete the filtered-out venues' history (their done-flags would survive
+    // and block any re-backfill — unrecoverable without a manual reset).
+    const pruned = this.store.reconcileVenues([...allVenueIds()]);
     if (pruned.volume || pruned.fills) this.note(`pruned ${pruned.volume} volume row(s) + ${pruned.fills} fill(s) for removed venue(s)`);
     // 1. authoritative persisted history
     this.days = this.store.all();
@@ -221,7 +224,10 @@ export class LiveDataSource extends BaseSource {
       }
     }
     if (seededFills.length) {
-      this.store.upsertFills(seededFills);
+      // insert-if-absent: backfill() re-runs every boot, and an upsert would
+      // reset already-remarked markouts to the adapter's nulls — permanently
+      // (the remark cursor never revisits walked days).
+      this.store.insertFillsIfAbsent(seededFills);
       // Backfill-fills markout contract (review #3): only a fill whose horizons are
       // still in the FUTURE may be aged against the live mid. Historical closed-day
       // fills (horizons elapsed) are NOT queued — their markouts stay as the adapter
@@ -240,13 +246,17 @@ export class LiveDataSource extends BaseSource {
     this.block = Number(head);
     this.bootHead = head; // upper bound for the background backfill (tail owns > head)
     const lpb = this.store.getMeta('lastProcessedBlock');
-    const lpd = this.store.getMeta('lastProcessedDay');
-    if (lpb && lpd === today && head - BigInt(lpb) <= BigInt(config.gapFillMaxBlocks)) {
+    // gap-fill ANY bounded gap — including across UTC midnight: decoded fills
+    // carry real block timestamps and dayFor() buckets them onto the right
+    // (possibly just-closed) day; countedIds/fill-id dedup keeps it idempotent.
+    // The old same-day condition silently dropped the gap's fills on every
+    // midnight-crossing restart.
+    if (lpb && head - BigInt(lpb) <= BigInt(config.gapFillMaxBlocks)) {
       this.lastBlock = BigInt(lpb);
       this.note(`resuming: gap-filling ${head - BigInt(lpb)} block(s) since last run`);
     } else {
       this.lastBlock = head;
-      this.note(lpb ? 'restart across day boundary — today builds forward' : 'cold start — today builds forward from now');
+      this.note(lpb ? `gap exceeds ${config.gapFillMaxBlocks} blocks — resuming at tip (interim fills not decoded)` : 'cold start — today builds forward from now');
     }
   }
 
@@ -268,7 +278,11 @@ export class LiveDataSource extends BaseSource {
         mids,
       );
       this.dirty.clear();
-    } catch { /* non-fatal — dirty retained, retried next tick */ }
+    } catch (e) {
+      // retained + retried next tick, but say so — a broken disk otherwise
+      // looks healthy while the cursor silently stops advancing.
+      this.noteOnce(`persist failed (${(e as Error).message}); retrying`);
+    }
   }
 
   /** A fresh zeroed daily bucket (venue slices fill in as fills land). */
@@ -873,7 +887,10 @@ export class LiveDataSource extends BaseSource {
     // Defer the tail until at least one CEX reference is warm so markout anchors are
     // sound; lastBlock is not advanced, so the range is re-decoded once warm (audit C3).
     if (!Object.keys(ASSETS).some((k) => REFERENCES.assetUsd(k) > 0)) return;
-    const head = await publicClient.getBlockNumber();
+    // finality margin: Monad logs/receipts can mutate for ~2 blocks (~800ms).
+    // A speculative log that mutates away after ingest would be PERMANENT
+    // phantom volume — there is no un-count path. Same margin as the gas tracker.
+    const head = (await publicClient.getBlockNumber()) - 5n;
     if (head <= this.lastBlock) return;
     const from = this.lastBlock + 1n;
 
@@ -1029,31 +1046,46 @@ export class LiveDataSource extends BaseSource {
         if (now < at) { complete = false; continue; }   // horizon not reached yet
         if (at < earliestMid) continue;                  // elapsed unobserved → leave null
         const mid = this.midNear(f.market, at);
-        f.markoutsBps[i] = mid <= 0 || f.execPx <= 0 ? 0 : ss * (mid / f.execPx - 1) * 1e4;
-        changed = true;
+        // no near-enough mid ⇒ the horizon stays null (elapsed-unobservable),
+        // and the fill still leaves the pending queue below — never a 0.
+        if (mid > 0 && f.execPx > 0) {
+          f.markoutsBps[i] = ss * (mid / f.execPx - 1) * 1e4;
+          changed = true;
+        }
       }
       if (changed) { this.dirty.add(f); this.emitMsg({ ch: 'fill', data: f }); }
       if (complete) this.pending.delete(f);
     }
   }
+  /** the pair mid within ±MID_NEAR_TOL_MS of `t`, else 0 (unmarkable). The
+   *  history is length-capped, not time-capped, and poll() can starve during a
+   *  long catch-up tail — an uncapped "nearest" sample could be minutes off. */
+  private static readonly MID_NEAR_TOL_MS = 6_000;
   private midNear(market: string, t: number): number {
     const hist = this.midHist.get(market) ?? [];
     let best = 0, bestDt = Infinity;
     for (const s of hist) { const dt = Math.abs(s.t - t); if (dt < bestDt) { bestDt = dt; best = s.mid; } }
-    return best || REFERENCES.midForPair(market);
+    if (bestDt <= LiveDataSource.MID_NEAR_TOL_MS) return best;
+    // live fallback only when NOW is an honest mark for t
+    return Math.abs(Date.now() - t) <= LiveDataSource.MID_NEAR_TOL_MS ? REFERENCES.midForPair(market) : 0;
   }
 
   private cloneDay(d: DailyVolume): DailyVolume { return { ...d, byVenue: { ...d.byVenue } }; }
 
-  /** Today's bucket — rolls the previous day closed at UTC midnight. */
+  /** Today's bucket — find-or-create BY DAY KEY (a proposer-clock-skewed block
+   *  can create tomorrow's row a moment early; assuming "last row = today"
+   *  then spawned a duplicate today that broadcast as $0). Rolls every older
+   *  partial closed. */
   private today(): DailyVolume {
     const day = utcDay();
-    let d = this.days[this.days.length - 1];
-    if (!d || d.utcDay !== day) {
-      if (d) d.partial = false;
+    let d = this.days.find((x) => x.utcDay === day);
+    if (!d) {
       d = this.emptyDay(day, true);
       this.days.push(d);
+      this.days.sort((a, b) => (a.utcDay < b.utcDay ? -1 : 1));
     }
+    d.partial = true;
+    for (const x of this.days) if (x !== d && x.partial && x.utcDay < day) x.partial = false;
     return d;
   }
 }

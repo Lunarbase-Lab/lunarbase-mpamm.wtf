@@ -288,6 +288,7 @@ export class GasTracker {
 
   private noteOnce(m: string): void {
     if (this.noted.has(m)) return;
+    if (this.noted.size >= 300) this.noted.clear(); // cursor-stamped messages are unique — bound the set
     this.noted.add(m);
     this.note(m);
   }
