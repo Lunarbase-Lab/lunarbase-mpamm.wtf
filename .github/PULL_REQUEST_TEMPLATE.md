@@ -11,7 +11,7 @@
 
 **About the venue** (helps review go fast):
 
-- Venue type (AMM / CLOB / vault) and how quoting works:
+- How the venue qualifies as a **propAMM** — who sets the price (the maker/oracle mechanism), and its structure (oracle-anchored AMM / vault-quoted order book / JIT vault). Passive curve DEXes and raw CLOBs are out of scope (docs/spec.md D3):
 - Who runs the quoting keeper (and who pays for quote updates):
 - Docs / audits / contract source:
 
