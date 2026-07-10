@@ -102,7 +102,9 @@ export function MarkoutsTab() {
             <Pills options={['ALL', ...displayVenues.map((v) => v.name.toUpperCase())]} value={d.mkProto} onChange={(v) => d.set('mkProto', v)} sm />
             <Pills options={['ALL', 'BUYS', 'SELLS']} value={d.mkSide} onChange={(v) => d.set('mkSide', v)} sm />
             <Pills options={['ANY', '≥10K', '≥100K', '≥500K']} value={d.mkSize} onChange={(v) => d.set('mkSize', v)} sm />
-            <div
+            <button
+              type="button" aria-pressed={d.mkPaused}
+              aria-label={d.mkPaused ? 'Resume the live tape' : 'Pause the live tape'}
               onClick={() => d.set('mkPaused', !d.mkPaused)}
               style={{
                 padding: '3px 9px', borderRadius: 4, cursor: 'pointer', fontSize: 10, userSelect: 'none', whiteSpace: 'nowrap',
@@ -112,7 +114,7 @@ export function MarkoutsTab() {
               }}
             >
               {d.mkPaused ? '▶ RESUME' : '⏸ PAUSE'}
-            </div>
+            </button>
           </div>
         </div>
 

@@ -178,12 +178,12 @@ export function ExecutionTab() {
       <div style={{ display: 'flex', alignItems: 'center', gap: 22, flexWrap: 'wrap', padding: '6px 18px 16px' }}>
         <Field label="ASSET">
           <div style={{ display: 'flex', gap: 4 }}>
-            {markets.map((p) => <div key={p} onClick={() => d.set('pair', p)} style={pill(pair === p)}>{p}</div>)}
+            {markets.map((p) => <button key={p} type="button" aria-pressed={pair === p} onClick={() => d.set('pair', p)} style={pill(pair === p)}>{p}</button>)}
           </div>
         </Field>
         <Field label="SIZE">
           <div style={{ display: 'flex', gap: 4 }}>
-            {SIZES_USD.map((s) => <div key={s} onClick={() => d.set('size', s)} style={pill(size === s)}>{sizeLabel(s)}</div>)}
+            {SIZES_USD.map((s) => <button key={s} type="button" aria-pressed={size === s} onClick={() => d.set('size', s)} style={pill(size === s)}>{sizeLabel(s)}</button>)}
           </div>
         </Field>
         <div style={{ marginLeft: 'auto' }}>
@@ -194,7 +194,7 @@ export function ExecutionTab() {
                 const color = venueColor(v, d.theme);
                 const label = displayName(v).toUpperCase();
                 return (
-                  <div key={v.id} onClick={() => d.toggleVenue(v.id)} style={{
+                  <button key={v.id} type="button" aria-pressed={!!on} onClick={() => d.toggleVenue(v.id)} style={{
                     display: 'flex', alignItems: 'center', gap: 6, padding: '4px 9px', borderRadius: 4, cursor: 'pointer',
                     fontSize: 11, whiteSpace: 'nowrap',
                     border: `1px solid ${on ? hexA(color, 0.5) : 'var(--pill-border)'}`,
@@ -202,7 +202,7 @@ export function ExecutionTab() {
                   }}>
                     <span style={{ width: 7, height: 7, borderRadius: '50%', background: on ? color : C.ghost }} />
                     {label}
-                  </div>
+                  </button>
                 );
               })}
             </div>

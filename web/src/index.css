@@ -30,6 +30,26 @@
   --dim3: rgb(122,124,132); --faint3: rgb(74,76,84);
 }
 
+/* Interactive controls are real <button>s (keyboard + assistive tech).
+   Reset the UA chrome so the existing inline styles render them exactly like
+   the divs they replaced; give KEYBOARD focus a visible ring (mouse clicks
+   don't trigger :focus-visible). */
+button {
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: none;
+  padding: 0;
+  margin: 0;
+  letter-spacing: inherit;
+  text-align: inherit;
+}
+button:focus-visible, a:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
 html, body { margin: 0; background: var(--bg); }
 #root {
   background: var(--bg);

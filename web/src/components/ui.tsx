@@ -42,9 +42,10 @@ export function Pills({ options, value, onChange, sm = false }: {
       {options.map((o) => {
         const opt = typeof o === 'string' ? { label: o, value: o } : o;
         return (
-          <div key={String(opt.value)} onClick={() => onChange(opt.value)} style={pill(value === opt.value, sm)}>
+          <button key={String(opt.value)} type="button" aria-pressed={value === opt.value}
+            onClick={() => onChange(opt.value)} style={pill(value === opt.value, sm)}>
             {opt.label}
-          </div>
+          </button>
         );
       })}
     </div>

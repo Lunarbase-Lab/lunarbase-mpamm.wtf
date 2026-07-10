@@ -108,10 +108,10 @@ export function LeaderboardTab() {
           <span style={{ letterSpacing: '.06em' }}>MARKOUTS</span>
           <Pills options={['TAKER', 'MAKER']} value={lbMk} onChange={(v) => d.set('lbMk', v)} sm />
         </div>
-        <div onClick={() => d.resetLb()} style={{
+        <button type="button" onClick={() => d.resetLb()} style={{
           marginLeft: 'auto', padding: '3px 9px', border: '1px solid var(--pill-border)', borderRadius: 4,
           cursor: 'pointer', fontSize: 10, color: C.dim2,
-        }}>RESET FILTERS</div>
+        }}>RESET FILTERS</button>
       </div>
 
       {/* PROTOCOL_LEADERBOARD */}
@@ -169,8 +169,8 @@ export function LeaderboardTab() {
           </div>
           <div style={{ display: 'flex', gap: 10 }}>
             <div style={{ display: 'flex', gap: 3 }}>
-              <div onClick={() => d.set('lbWinners', true)} style={wlBtn(lbWinners, SEM[d.theme].green)}>WINNERS</div>
-              <div onClick={() => d.set('lbWinners', false)} style={wlBtn(!lbWinners, SEM[d.theme].red)}>LOSERS</div>
+              <button type="button" aria-pressed={lbWinners} onClick={() => d.set('lbWinners', true)} style={wlBtn(lbWinners, SEM[d.theme].green)}>WINNERS</button>
+              <button type="button" aria-pressed={!lbWinners} onClick={() => d.set('lbWinners', false)} style={wlBtn(!lbWinners, SEM[d.theme].red)}>LOSERS</button>
             </div>
             <Pills
               options={[{ label: 'TOP 10', value: 10 }, { label: 'TOP 25', value: 25 }, { label: 'TOP 50', value: 50 }]}

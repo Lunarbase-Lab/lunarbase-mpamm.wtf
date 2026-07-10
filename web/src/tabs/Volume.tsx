@@ -442,7 +442,7 @@ export function VolumeTab() {
           <span style={{ color: C.faint2, letterSpacing: '.06em' }}>RANGE</span>
           <div style={{ display: 'flex', gap: 3 }}>
             {RANGE_PRESETS.map((r) => (
-              <div key={r} onClick={() => pickRange(r)} style={pill(d.volRange === r, true)}>{r}</div>
+              <button key={r} type="button" aria-pressed={d.volRange === r} onClick={() => pickRange(r)} style={pill(d.volRange === r, true)}>{r}</button>
             ))}
           </div>
         </div>

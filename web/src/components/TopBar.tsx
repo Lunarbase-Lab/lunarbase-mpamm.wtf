@@ -43,19 +43,22 @@ export function TopBar() {
       <div style={{ display: 'flex', gap: 1, marginLeft: 8 }}>
         {/* the labels advertise [1]-[4] — wired globally in App (keydown) */}
         {TABS.map((t, i) => (
-          <div key={t.id} onClick={() => d.set('tab', t.id)} style={{
-            fontSize: 11, padding: '6px 12px', cursor: 'pointer', whiteSpace: 'nowrap',
-            borderBottom: `2px solid ${d.tab === t.id ? C.accent : 'transparent'}`,
-            color: d.tab === t.id ? C.textStrong : C.dim2,
-          }}>[{i + 1}] {t.label}</div>
+          <button key={t.id} type="button" aria-current={d.tab === t.id ? 'page' : undefined}
+            onClick={() => d.set('tab', t.id)} style={{
+              fontSize: 11, padding: '6px 12px', cursor: 'pointer', whiteSpace: 'nowrap',
+              borderBottom: `2px solid ${d.tab === t.id ? C.accent : 'transparent'}`,
+              color: d.tab === t.id ? C.textStrong : C.dim2,
+            }}>[{i + 1}] {t.label}</button>
         ))}
       </div>
 
       <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 15, fontSize: 10, color: C.dim2 }}>
-        <div onClick={d.toggleTheme} title="Toggle theme" style={{
-          display: 'flex', alignItems: 'center', gap: 5, border: `1px solid var(--pill-border)`,
-          borderRadius: 4, padding: '3px 8px', cursor: 'pointer', letterSpacing: '.06em', userSelect: 'none',
-        }}>◐ {d.theme === 'dark' ? 'BRIGHT' : 'DARK'}</div>
+        <button type="button" onClick={d.toggleTheme} title="Toggle theme"
+          aria-label={`Switch to ${d.theme === 'dark' ? 'bright' : 'dark'} theme`} style={{
+            display: 'flex', alignItems: 'center', gap: 5, border: `1px solid var(--pill-border)`,
+            borderRadius: 4, padding: '3px 8px', cursor: 'pointer', letterSpacing: '.06em', userSelect: 'none',
+            whiteSpace: 'nowrap',
+          }}>◐ {d.theme === 'dark' ? 'BRIGHT' : 'DARK'}</button>
         <span style={{ display: 'flex', alignItems: 'center', gap: 5, color: liveColor }}>
           <span style={{ width: 6, height: 6, borderRadius: '50%', background: liveColor, animation: 'blink 1.6s infinite' }} />
           {d.conn === 'live' ? 'live' : d.conn === 'reconnecting' ? 'reconnecting' : 'connecting'}
