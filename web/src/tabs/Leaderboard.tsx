@@ -44,7 +44,8 @@ export function LeaderboardTab() {
   const lbRows = useMemo(() => {
     const rows = current?.groups[GROUP_ID[lbGroup] ?? 'protocol']?.[String(hzIdx)] ?? [];
     const labelFor = (k: string): string =>
-      lbGroup === 'PROTOCOL' ? (venuesById[k]?.name ?? k) : k;
+      lbGroup === 'PROTOCOL' ? (venuesById[k]?.name ?? k)
+        : lbGroup === 'CATEGORY' && k === 'direct' ? '—' : k;
     const colorFor = (k: string): string =>
       lbGroup === 'PROTOCOL' ? venueColor(venuesById[k], d.theme)
         : lbGroup === 'CATEGORY' ? catCol(k === 'direct' ? '—' : k)

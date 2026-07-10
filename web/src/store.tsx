@@ -231,12 +231,14 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
   // and a reconnect re-syncs history/fills (gap-fill replay — docs/architecture.md: history).
   useEffect(() => {
     const mounted = { v: true };
+    const wasDropped = { v: false };
     // The WS streams volume DELTAS (today's bucket) every tick, and it usually
     // wins the race against the full REST snapshot. Merging a delta into the
     // initial empty array made the page render a one-day "history" ($X all-time,
     // "since today") until the snapshot landed. Gate deltas on the snapshot: the
     // snapshot carries today's bucket anyway, and the next tick re-syncs it.
     const snapshotLoaded = { v: false };
+    const pendingFills: { current: Fill[] } = { current: [] };
     const loadSnapshot = async () => {
       try {
         // markets snapshot + the persisted historical fills window (the tape /
@@ -254,7 +256,11 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
         adoptVenues(m.state.venues ?? []);
         // /api/fills is newest-first; store oldest-first so the cap in
         // upsertFill drops the genuine oldest, not the newest (audit B4).
-        setFills(hist && hist.length ? [...hist].reverse() : m.fills);
+        // Fills broadcast while the snapshot was in flight are NOT in the
+        // response — re-apply them on top instead of discarding.
+        const base = hist && hist.length ? [...hist].reverse() : m.fills;
+        setFills(pendingFills.current.reduce((acc, f) => upsertFill(acc, f), base));
+        pendingFills.current = [];
         quotesRef.current = m.quotes;
         reseed();
         setFrame((f) => f + 1);
@@ -266,8 +272,17 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
       if (msg.ch === 'state') { setState(msg.data); adoptVenues(msg.data.venues ?? []); }
       else if (msg.ch === 'quotes') { setQuotes(msg.data); pushSnapshot(msg.data); setFrame((f) => f + 1); }
       else if (msg.ch === 'volume') { if (snapshotLoaded.v) setVolume((prev) => mergeDay(prev, msg.data)); }
-      else if (msg.ch === 'fill') setFills((prev) => upsertFill(prev, msg.data));
-    }, (s) => { setConn(s); if (s === 'live') loadSnapshot(); });
+      else if (msg.ch === 'fill') {
+        if (!snapshotLoaded.v) pendingFills.current.push(msg.data);
+        setFills((prev) => upsertFill(prev, msg.data));
+      }
+    }, (s) => {
+      setConn(s);
+      // mount already fetched the snapshot; re-fetch only after a DROP (missed
+      // WS deltas), not on the initial open racing that first fetch.
+      if (s === 'reconnecting') wasDropped.v = true;
+      if (s === 'live' && wasDropped.v) { wasDropped.v = false; loadSnapshot(); }
+    });
 
     return () => { mounted.v = false; dispose(); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -353,9 +368,13 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
 }
 
 function mergeDay(days: DailyVolume[], d: DailyVolume): DailyVolume[] {
+  // the WS only ever carries TODAY's bucket — when a delta for a NEW day
+  // arrives (first tick after UTC midnight), close every older partial flag,
+  // or an overnight session renders yesterday dimmed as "(today, partial)".
+  const closeOld = (x: DailyVolume) => (x.partial && x.utcDay < d.utcDay ? { ...x, partial: false } : x);
   const i = days.findIndex((x) => x.utcDay === d.utcDay);
-  if (i === -1) return [...days, d];
-  const next = days.slice();
+  if (i === -1) return [...days.map(closeOld), d];
+  const next = days.map(closeOld);
   next[i] = d;
   return next;
 }

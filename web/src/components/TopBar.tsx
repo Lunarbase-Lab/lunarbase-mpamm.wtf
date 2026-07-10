@@ -41,6 +41,7 @@ export function TopBar() {
       </div>
 
       <div style={{ display: 'flex', gap: 1, marginLeft: 8 }}>
+        {/* the labels advertise [1]-[4] — wired globally in App (keydown) */}
         {TABS.map((t, i) => (
           <div key={t.id} onClick={() => d.set('tab', t.id)} style={{
             fontSize: 11, padding: '6px 12px', cursor: 'pointer', whiteSpace: 'nowrap',

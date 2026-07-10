@@ -231,7 +231,8 @@ export function VolumeTab() {
     allDays.forEach((x, i) => { if (aTot[i] > peakV) { peakV = aTot[i]; peakDay = mmdd(x.utcDay); } });
 
     const todayT = aTot[nd - 1], prevT = aTot[nd - 2];
-    const todayChg = prevT ? (todayT - prevT) / prevT * 100 : 0;
+    // % vs prev day; null when the base is 0/absent (▲ ∞%, matching chg7)
+    const todayChg = prevT ? (todayT - prevT) / prevT * 100 : null;
 
     // KPI "total swaps" sums the real per-venue swap counts across shown venues
     // (no USD proration); seeded days that carry usd but swaps:0 add nothing here.
@@ -243,7 +244,7 @@ export function VolumeTab() {
     const W = 1000, HC = 260;
     let cum = 0;
     const pts = pDays.map((_, i) => { cum += pTot[i]; return [ndP > 1 ? i / (ndP - 1) * W : 0, cum] as [number, number]; });
-    const cy = (y: number) => HC - (cum ? y / cum * HC : HC);
+    const cy = (y: number) => (cum ? HC - y / cum * HC : HC); // zero window ⇒ flat at the BOTTOM
     const cumLine = 'M' + pts.map((p) => p[0].toFixed(1) + ',' + cy(p[1]).toFixed(1)).join(' L');
     const cumArea = cumLine + ' L' + W + ',' + HC + ' L0,' + HC + ' Z';
 
@@ -382,8 +383,8 @@ export function VolumeTab() {
       k7css: chg7 == null ? (last7 > 0 ? C.green : C.faint2) : (chg7 >= 0 ? C.green : C.red),
       kSwaps: swaps.toLocaleString(), kPeak: f(peakV), kPeakDay: peakDay,
       kToday: f(todayT),
-      kTodayChg: (todayChg >= 0 ? '▲ ' : '▼ ') + Math.abs(todayChg).toFixed(0) + '%',
-      kTodaycss: todayChg >= 0 ? C.green : C.red,
+      kTodayChg: todayChg == null ? (todayT > 0 ? '▲ ∞%' : '▲ 0%') : (todayChg >= 0 ? '▲ ' : '▼ ') + Math.abs(todayChg).toFixed(0) + '%',
+      kTodaycss: todayChg == null ? (todayT > 0 ? C.green : C.faint2) : (todayChg >= 0 ? C.green : C.red),
       since,
       legRows: totals.map((t) => ({ name: t.name, color: t.color, vol: f(t.tot), share: share(t.tot) })),
       legTotal: f(winTot), cumLine, cumArea, cumSigma: f(cum || winTot),
