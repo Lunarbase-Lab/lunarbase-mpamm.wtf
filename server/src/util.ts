@@ -5,7 +5,7 @@ import type { QuoteRow } from '@shared';
 /**
  * Annotate each venue quote row with its realized cost vs the CEX-as-taker row
  * at the same market+size, sign-normalized so positive = on-chain executes worse
- * (spec §4.2 — the realized-vs-realized comparison). Mutates `venueRows`.
+ * (docs/architecture.md: fill stream — the realized-vs-realized comparison). Mutates `venueRows`.
  */
 export function annotateCex(venueRows: QuoteRow[], cexRows: QuoteRow[]): void {
   const cex = new Map<string, QuoteRow>();

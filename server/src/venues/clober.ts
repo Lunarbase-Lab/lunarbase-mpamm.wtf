@@ -20,14 +20,14 @@ import type { VenueAdapter, AdapterContext, LogBundle } from './adapter.js';
 const CLOBER_VAULT_VENUE: VenueMeta = { id: 'clober-vault', name: 'Clober', color: { light: '#0284C7', dark: '#0284C7' }, kind: 'vault', role: 'venue', sinceUtc: '2025-10-28' };
 
 /**
- * Clober V2 — best-effort live integration (spec §3, §5.1, §5.2), generic over
+ * Clober V2 — best-effort live integration (docs/architecture.md: propAMM scope, quote poller, fill stream), generic over
  * base/quote (MON/USDC, BTC/USDC, ETH/USDC — the vault runs mirror books for each).
  *
  * A Clober "market" (base/stable) is a pair of one-directional books; quoting
  * targets the book whose base == the input token. Deep discovery from the deploy
  * block is impractical on the public RPC (getLogs is range-capped), so this scans
  * recent Open logs to build a book cache + vault-bookId set; if that yields
- * nothing, Clober rows are simply absent (allowFailure, spec §8). MON uses NATIVE
+ * nothing, Clober rows are simply absent (allowFailure, docs/architecture.md: operations). MON uses NATIVE
  * MON (zero address) on Clober; BTC/ETH use their ERC-20 (WBTC/WETH).
  */
 
@@ -140,7 +140,7 @@ export async function discoverClober(client: PublicClient, getLogs: AdapterConte
 }
 
 /**
- * Discover Clober books from the subgraph (spec Appendix B) — the public RPC
+ * Discover Clober books from the subgraph (docs/architecture.md: history) — the public RPC
  * can't enumerate them. Yields each base/stable book's id + base/quote + unitSize,
  * and `Book.pool != null` marks vault (propAMM) books. Live quotes and fills then
  * hit the chain (getExpectedOutput / Take logs).
@@ -363,7 +363,7 @@ function registeredBookPair(book: CloberBook): { pair: Pair; baseIsBookBase: boo
 }
 
 /**
- * Decode a Clober Take into a Fill (spec §5.2). The quote leg is exact
+ * Decode a Clober Take into a Fill (docs/architecture.md: fill stream). The quote leg is exact
  * (unit × unitSize); the realized price + base leg come from the resting tick, so
  * the fill carries a true execution price and real markouts (audit B1-real).
  */

@@ -4,7 +4,7 @@ import type { VenueAdapter, AdapterContext, LogBundle } from './adapter.js';
 /**
  * ADAPTER TEMPLATE — copy this file, rename it (e.g. `myvenue.ts`), fill in the
  * TODOs, and add one line to `registry.ts`. Nothing else in the core changes.
- * Delete the methods/patterns you don't need. Full guide: ADAPTERS.md.
+ * Delete the methods/patterns you don't need. Full guide: docs/adapters.md.
  *
  * Three sourcing patterns (mix freely):
  *   A. on-chain only  — discover + logSources + decode, NO backfill (like POE / Metric).

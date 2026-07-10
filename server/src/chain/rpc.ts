@@ -15,7 +15,7 @@ export const monad = defineChain({
 });
 
 /** HTTP public client. JSON-RPC batching is enabled so the quote poller's
- *  per-market reads collapse toward a single round-trip (spec §5.1). */
+ *  per-market reads collapse toward a single round-trip (docs/architecture.md: quote poller). */
 export const publicClient: PublicClient = createPublicClient({
   chain: monad,
   transport: http(config.rpcHttp, {
@@ -25,7 +25,7 @@ export const publicClient: PublicClient = createPublicClient({
   }),
 });
 
-/** Quick liveness probe — confirms chain id 143 (spec §8 sanity check). */
+/** Quick liveness probe — confirms chain id 143 (boot sanity check — docs/architecture.md: operations). */
 export async function probeChain(): Promise<{ ok: boolean; block: number; reason?: string }> {
   try {
     const [id, block] = await Promise.all([
@@ -55,7 +55,7 @@ export async function blockAtOrAfter(targetSec: number, hi: bigint): Promise<big
 }
 
 /** getLogs with automatic range-chunking — the public RPC 413s past ~100
- *  blocks (spec §8 "chunk getLogs ranges"). Returns logs across [from,to]. */
+ *  blocks (docs/architecture.md: operations). Returns logs across [from,to]. */
 export async function getLogsChunked(
   params: { address: `0x${string}` | `0x${string}`[]; fromBlock: bigint; toBlock: bigint; events?: readonly unknown[] },
   chunk = BigInt(config.getLogsChunk),

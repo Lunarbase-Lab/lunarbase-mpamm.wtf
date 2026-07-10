@@ -33,6 +33,9 @@ jobs:
       - name: Typecheck (server + web)
         run: npm run typecheck
 
+      - name: Tests (server — fixture-based, no network)
+        run: npm -w server run test
+
       - name: Build frontend
         run: npm -w web run build
 

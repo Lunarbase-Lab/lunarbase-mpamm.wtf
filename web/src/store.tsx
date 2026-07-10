@@ -228,7 +228,7 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
 
   // cold start + stream. The snapshot is (re)loaded both on mount and on every
   // WS (re)connect, so an initial fetch that races a backend restart is healed,
-  // and a reconnect re-syncs history/fills (spec §8 replay).
+  // and a reconnect re-syncs history/fills (gap-fill replay — docs/architecture.md: history).
   useEffect(() => {
     const mounted = { v: true };
     // The WS streams volume DELTAS (today's bucket) every tick, and it usually

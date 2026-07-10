@@ -1,7 +1,7 @@
 import { TOKENS, assetForToken } from '@shared';
 
 /**
- * UsdPricer (spec §5.5) — shared by the poller (USD→token notional sizing) and
+ * UsdPricer (docs/architecture.md: pair-terms reference) — shared by the poller (USD→token notional sizing) and
  * the stream (token→USD volume). Stables peg to $1; a base asset (MON/BTC/ETH)
  * is priced by its CEX via `assetUsd(assetKey)` (Bybit for MON, Binance for the
  * rest — routed through the reference registry). Fully asset-generic: it maps a

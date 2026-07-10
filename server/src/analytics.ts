@@ -4,7 +4,7 @@ import {
 } from '@shared';
 
 /**
- * Server-side leaderboard aggregation (spec §4.4).
+ * Server-side leaderboard aggregation (docs/architecture.md: API).
  *
  * The tabs used to ship raw fills to the browser and aggregate there — which
  * silently truncated the 7D/30D windows at the fetch cap (~20k fills ≈ <2 days

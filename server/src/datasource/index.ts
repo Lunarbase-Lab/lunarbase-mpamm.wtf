@@ -8,7 +8,7 @@ import { computeLeaderboard } from '../analytics.js';
 /**
  * A DataSource produces the entire dashboard data model and streams updates.
  * LiveDataSource builds it from Monad RPC + Bybit; SimDataSource simulates it.
- * The server and frontend are identical across both (spec D1).
+ * The server and frontend are identical across both (single-service — docs/architecture.md: system shape).
  */
 export interface DataSource {
   readonly mode: DataSourceMode;

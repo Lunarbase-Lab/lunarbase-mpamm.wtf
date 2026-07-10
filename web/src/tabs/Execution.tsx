@@ -73,7 +73,7 @@ export function ExecutionTab() {
       return {
         id: v.id, name: displayName(v), color: venueColor(v, d.theme), baseline: v.role === 'baseline',
         spread: r?.spreadBps ?? 0, bid: r?.bidBps ?? 0, ask: r?.askBps ?? 0,
-        // realized buy-MON cost vs the reference-as-taker, + = on-chain worse (spec §4.2)
+        // realized buy-MON cost vs the reference-as-taker, + = on-chain worse (docs/architecture.md: fill stream)
         vsCex: r?.cexAskBps, has: !!r,
         // a one-sided quote has only one executable side (the other is thin/backstop);
         // a partial quote (filledFull=false) exhausts before the full notional.

@@ -1,7 +1,7 @@
 /**
  * @mpamm/shared — the contract between the backend service and the frontend.
  *
- * Everything the frontend renders flows through these types (spec §6, D1). The
+ * Everything the frontend renders flows through these types (docs/architecture.md: data model + system shape). The
  * backend produces them from either real chain/Bybit data (LiveDataSource) or
  * the simulator (SimDataSource); the frontend never knows which.
  */
@@ -54,7 +54,7 @@ export interface VenueMeta {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// Constants — verified contracts & token universe (spec Appendix A)
+// Constants — verified contracts & token universe (verified on-chain; the registry is the source of truth)
 // ──────────────────────────────────────────────────────────────────────────
 
 export const MONAD_CHAIN_ID = 143;
@@ -84,7 +84,7 @@ export interface TokenInfo {
   symbol: string;
   address: `0x${string}`;
   decimals: number;
-  /** USD stablecoin pegged to $1 (spec §5.5). */
+  /** USD stablecoin pegged to $1 (docs/architecture.md: pair-terms reference). */
   stable: boolean;
   /** CEX `<STABLE>USDT` cross symbol used to convert a USDT-quoted reference
    *  into THIS stable's terms (e.g. USDC → 'USDCUSDT', ~±10bps of real basis).
@@ -98,7 +98,7 @@ export interface TokenInfo {
 }
 
 /**
- * MON has two on-chain representations and venues differ (spec §8, §9.4):
+ * MON has two on-chain representations and venues differ (docs/architecture.md):
  *  - ERC-20 AMM pools (POE, Metric) use the WMON wrapper.
  *  - Clober (V4-style) books + the LiquidityVault use NATIVE MON (the zero
  *    address, via isNative()).
@@ -266,11 +266,11 @@ export function cexForBase(baseKey: string): CexId {
 /** Notional sizes (USD) probed per pair×side in the exec matrix. */
 export const SIZES_USD = [100, 1000, 10000, 100000] as const;
 
-/** Markout horizons (seconds) joined to each pair's CEX reference (spec §4.2/4.3). */
+/** Markout horizons (seconds) joined to each pair's CEX reference (docs/architecture.md: fill stream). */
 export const MARKOUT_HORIZONS = [0, 5, 10, 30, 60] as const;
 
 // ──────────────────────────────────────────────────────────────────────────
-// Quotes (Execution view, spec §4.2 / §6.1)
+// Quotes (Execution view, docs/architecture.md: quote poller)
 // ──────────────────────────────────────────────────────────────────────────
 
 /** One realized quote for (venue, market, size). bid/ask are in bps vs the
@@ -297,7 +297,7 @@ export interface QuoteRow {
   /** venue fee in bps (e.g. POE getQuote fee); 0 for CLOB venues. */
   feeBps: number;
   /** realized cost vs the pair's CEX-AS-TAKER at this size, sign-normalized so
-   *  positive = on-chain executes worse (spec §4.2): cexAskBps for buying the
+   *  positive = on-chain executes worse (docs/architecture.md: fill stream): cexAskBps for buying the
    *  base, cexBidBps for selling. The honest realized-vs-realized comparison.
    *  Undefined for the CEX benchmark row itself. */
   cexAskBps?: number;
@@ -314,7 +314,7 @@ export interface QuoteSnapshot {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// Fills (Tape, Markouts, Leaderboard — spec §4.3 / §6.1)
+// Fills (Tape, Markouts, Leaderboard — docs/architecture.md: fill stream)
 // ──────────────────────────────────────────────────────────────────────────
 
 export interface Fill {
@@ -331,7 +331,7 @@ export interface Fill {
   /** realized execution price, quote-per-base. */
   execPx: number;
   /** true when execPx/baseAmount are NOT a realized price (e.g. Clober's base
-   *  leg needs the deferred tick→price; spec §5.2). Such fills carry exact USD
+   *  leg needs the deferred tick→price; docs/architecture.md: fill stream). Such fills carry exact USD
    *  but no fill-quality markouts — consumers must not treat their markouts as
    *  real execution edge. */
   pxApprox?: boolean;
@@ -347,7 +347,7 @@ export interface Fill {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// Volume (spec §4.1 / §6.2)
+// Volume (docs/architecture.md: data model)
 // ──────────────────────────────────────────────────────────────────────────
 
 /** One venue's slice of a day: USD notional + forward-indexed swap count.
@@ -399,7 +399,7 @@ export interface GasResponse {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// Leaderboard aggregates (spec §4.4) — computed SERVER-side over the FULL
+// Leaderboard aggregates (docs/architecture.md: API) — computed SERVER-side over the FULL
 // window. Shipping raw fills to the browser silently truncated the 7D/30D
 // windows at the fetch cap (~20k fills ≈ <2 days at Metric's rate); the
 // aggregation now runs where all the rows are. Windows align with pamm.wtf

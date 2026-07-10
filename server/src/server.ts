@@ -10,7 +10,7 @@ import { config } from './config.js';
 import { venueMeta } from './venues/registry.js';
 
 /**
- * Thin transport over a DataSource (spec §6.3, D1): REST snapshots + a WS
+ * Thin transport over a DataSource (docs/architecture.md: API + system shape): REST snapshots + a WS
  * stream. The frontend renders purely off these and never touches the chain,
  * subgraph, or CEX feeds directly.
  */

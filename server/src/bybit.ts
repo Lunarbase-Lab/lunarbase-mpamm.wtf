@@ -2,7 +2,7 @@ import WebSocket from 'ws';
 import { config } from './config.js';
 
 /**
- * Bybit V5 spot feed for MONUSDT (spec §5.5 / Appendix D).
+ * Bybit V5 spot feed for MONUSDT (docs/architecture.md: pair-terms reference + CEX feeds).
  *
  * Maintains a snapshot+delta order book and the BBO, exposes:
  *  - mid()                  → (bestBid+bestAsk)/2, the fee-agnostic reference
@@ -38,7 +38,7 @@ export class BybitFeed {
   lastMsgTs = 0;
 
   /** `crossSymbols`: additional spot symbols to track at BBO/mid level (used to
-   *  convert the USDT-quoted reference into a pair's stable terms, spec §5.5). */
+   *  convert the USDT-quoted reference into a pair's stable terms, docs/architecture.md: pair-terms reference). */
   constructor(private readonly crossSymbols: string[] = []) {
     for (const s of crossSymbols) this.crossMids.set(s.toUpperCase(), { bid: 0, ask: 0, last: 0 });
   }

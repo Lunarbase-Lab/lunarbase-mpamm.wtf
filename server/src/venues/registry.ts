@@ -14,15 +14,31 @@ import { createReferenceRegistry } from './reference.js';
  * passive curve DEXes or raw CLOBs. To plug in a protocol: drop an adapter file
  * next to poe.ts / metric.ts, then add one line to ADAPTERS below. Nothing else
  * in the core changes — the indexer, DB, API and frontend are all venue-agnostic
- * and read everything (name, color, output) from the adapter. See ADAPTERS.md.
+ * and read everything (name, color, output) from the adapter. See docs/adapters.md.
  */
-export const ADAPTERS: VenueAdapter[] = [
+const ALL_ADAPTERS: VenueAdapter[] = [
   createPoeAdapter(),
   createCloberVaultAdapter(),
   createMetricAdapter(),
   createHanjiAdapter(),
   createUniswapAdapter(), // baseline (quote-only) — the standard-DEX band
 ];
+
+/** VENUES=id[,id] runs a SUBSET of the registry — the adapter-development loop
+ *  (docs/adapters.md): a contributor exercises just their venue against the
+ *  chain without paying for everyone else's polling/backfills. References stay
+ *  on regardless (the Execution comparison needs them). An unknown id fails
+ *  loud — a typo must not silently run the full registry. */
+function filterAdapters(all: VenueAdapter[]): VenueAdapter[] {
+  const want = (process.env.VENUES ?? '').trim();
+  if (!want) return all;
+  const ids = new Set(want.split(',').map((s) => s.trim()).filter(Boolean));
+  const known = new Set(all.flatMap((a) => a.venues().map((v) => v.id)));
+  for (const id of ids) if (!known.has(id)) throw new Error(`VENUES: unknown venue id '${id}' (known: ${[...known].join(', ')})`);
+  return all.filter((a) => a.venues().some((v) => ids.has(v.id)));
+}
+
+export const ADAPTERS: VenueAdapter[] = filterAdapters(ALL_ADAPTERS);
 
 /** The CEX reference registry — the markout + Execution benchmarks, routed per
  *  base asset (Bybit for MON, Binance for BTC/ETH). At least one, all reference. */

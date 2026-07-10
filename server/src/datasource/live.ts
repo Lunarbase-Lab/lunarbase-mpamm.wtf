@@ -85,7 +85,7 @@ export class LiveDataSource extends BaseSource {
     // touching the network — a colliding id would silently merge two venues.
     validateRegistry();
     this.knownVenueIds = venueIds();
-    // Fail fast on an unreachable/wrong chain (spec §8) rather than half-start.
+    // Fail fast on an unreachable/wrong chain (docs/architecture.md: operations) rather than half-start.
     const probe = await probeChain();
     if (!probe.ok) throw new Error(`Monad RPC sanity check failed (${probe.reason}). Set DATA_SOURCE=sim to run offline.`);
 
@@ -862,7 +862,7 @@ export class LiveDataSource extends BaseSource {
     }))).flat();
     // benchmark rows for every pair, each routed to + tagged with its CEX (Bybit/Binance).
     const refRows = REFERENCES.quote(config.sizesUsd);
-    annotateCex(venueRows, refRows); // spec §4.2 — matched per market, so each venue row hits its pair's CEX
+    annotateCex(venueRows, refRows); // docs/architecture.md: fill stream — matched per market, so each venue row hits its pair's CEX
     this.quotes = { block: this.block, monUsd, ts: now, rows: [...venueRows, ...refRows] };
     this.emitMsg({ ch: 'state', data: this.getState() });
     this.emitMsg({ ch: 'quotes', data: this.quotes });

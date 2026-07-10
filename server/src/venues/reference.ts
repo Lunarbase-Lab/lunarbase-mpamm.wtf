@@ -17,7 +17,7 @@ const BINANCE_VENUE: VenueMeta = { id: 'binance', name: 'Binance (VIP9)', color:
  * The CEX reference registry: Bybit (MON) + Binance (BTC/ETH, VIP9 taker),
  * routed per base asset via the @shared ASSETS registry.
  *
- * The reference for a pair is expressed IN THE PAIR'S OWN TERMS (spec §5.5) —
+ * The reference for a pair is expressed IN THE PAIR'S OWN TERMS (docs/architecture.md: pair-terms reference) —
  * two unit conversions on top of the deep `<BASE>USDT` book, both from live CEX
  * crosses (never assumed):
  *

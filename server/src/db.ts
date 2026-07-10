@@ -6,7 +6,7 @@ import { MARKOUT_HORIZONS, type DailyVolume, type Fill, type GasDay } from '@sha
 type Stmt = ReturnType<DatabaseSync['prepare']>;
 
 /**
- * SQLite persistence (spec §6.2). The DB is the source of truth for history:
+ * SQLite persistence (docs/architecture.md: data model). The DB is the source of truth for history:
  * daily-volume aggregates + the lastProcessedBlock cursor, and decoded fills
  * (the tape/markouts/leaderboard are expensive to re-derive — log decode + a
  * pair-CEX-mid join — so they're stored, not just held in a live window). The

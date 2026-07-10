@@ -13,7 +13,7 @@ import type { Config } from '../config.js';
  * `registry.ts` — no core edits. An adapter can source its data fully on-chain,
  * from a subgraph, or a mix; it just has to return the shared shapes.
  *
- * See ADAPTERS.md for a walkthrough and `_template.ts` for a copy-paste stub.
+ * See docs/adapters.md for a walkthrough and `_template.ts` for a copy-paste stub.
  */
 
 /** Shared infrastructure handed to every adapter — use these instead of importing
@@ -138,7 +138,7 @@ export interface ReferenceRegistry {
   /** the CEX reference mid for a PAIR, expressed in the pair's own terms:
    *  baseUSDT mid × wrap basis (WBTCBTC for wrapped BTC) ÷ the stable's USDT
    *  cross (USDCUSDT for USDC pairs). This is the bps anchor + markout mark —
-   *  like-for-like with what actually trades on-chain (spec §5.5). */
+   *  like-for-like with what actually trades on-chain (docs/architecture.md: pair-terms reference). */
   midForPair(market: string): number;
   /** 24h change % for a base asset. */
   changePctFor(base: string): number;

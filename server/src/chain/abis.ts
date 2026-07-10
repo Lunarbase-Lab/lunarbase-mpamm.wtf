@@ -1,7 +1,7 @@
 import { parseAbi } from 'viem';
 
 /**
- * Verified ABI fragments (spec Appendix C). Human-readable form — viem parses
+ * Verified ABI fragments (verified on-chain). Human-readable form — viem parses
  * structs from the inline tuple syntax.
  */
 
@@ -43,5 +43,5 @@ export const erc20Abi = parseAbi([
   'function symbol() view returns (string)',
 ]);
 
-/** Clober walk-whole-book sentinel (spec §5.1). */
+/** Clober walk-whole-book sentinel (docs/architecture.md: quote poller). */
 export const CLOBER_MIN_PRICE = 1350587n;
