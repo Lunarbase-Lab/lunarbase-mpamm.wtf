@@ -204,11 +204,18 @@ export function createPoeAdapter(): VenueAdapter {
       return [{ key: 'swap', address: pairs, events: [ev(poePoolAbi, 'Swap')], kind: 'fills' as const }];
     },
 
-    // QUOTE_UPDATE_BURN: LFJ's keeper pushes setData() to the ClapOracle every
-    // block (~400ms) with NO event, so updates can't be enumerated from logs —
-    // 'blocks' mode samples eth_getBlockReceipts for txs to the oracle and
-    // scales by the stride. Sound here precisely BECAUSE the cadence is
-    // one-per-block (verified over 400 consecutive blocks); the UI shows ≈.
+    // QUOTE_UPDATE_BURN: the oracle operator pushes setData() to the
+    // ClapOracle every block (~400ms) with NO event, so updates can't be
+    // enumerated from logs — 'blocks' mode samples eth_getBlockReceipts for
+    // txs to the oracle and scales by the stride. Sound here precisely
+    // BECAUSE the cadence is one-per-block; the UI shows ≈.
+    // PROVENANCE (deep-reviewed 2026-07-10): the oracle address is listed on
+    // LFJ's own contracts page (developers.lfj.gg/poe/poe-contracts) AND
+    // re-derived on-chain from pool.getOracle() at every discovery; their
+    // "Tracking Price" doc describes the operator-push model. COMPLETENESS:
+    // 400/400 sampled txs to the oracle are setData (no admin noise), and
+    // the docs route price/fee/alpha exclusively through it — no other
+    // POE-funded update destination exists.
     gasSources() {
       if (!clapOracle) throw new Error('POE oracle not resolved yet'); // hold the gas cursor
       return [{ mode: 'blocks' as const, address: clapOracle }];
