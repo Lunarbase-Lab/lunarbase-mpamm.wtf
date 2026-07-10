@@ -73,7 +73,7 @@ SQLite is the source of truth. On boot the service loads persisted days + the `l
 
 The Volume tab's second panel tracks the MON each venue's **own keeper** spends keeping its quotes fresh. Monad charges **`gas_limit`** (receipts report `gasUsed == limit`), so a tx's cost is exactly `gasUsed × effectiveGasPrice`. Sources are **destination-keyed** per venue (adapter `gasSources()`, see [adapters.md](adapters.md)); `server/src/gas.ts` owns cursors, the venue-lifetime first scan (same anchor as the volume backfill), and real-time forward accrual into `daily_gas` — committed atomically with the cursor so a crash never double-counts. Two modes: `'logs'` (updates emit an event — exact counts, receipt-sampled cost) and `'blocks'` (no events — sampled `eth_getBlockReceipts`, an estimate served in `GET /api/gas` `approx` and rendered with ≈). A venue that doesn't self-fund its updates (external oracle, taker-paid JIT) has **no series on purpose** — absence, not a fabricated zero.
 
-## The reference is in the pair's own terms {#pair-terms-reference}
+## The reference is in the pair's own terms
 
 The deep CEX books are USDT-quoted and native-asset; the on-chain pairs trade **wrapped assets in USD stables**. Both mismatches are real, live-priced markets — never assumed away:
 
@@ -113,6 +113,7 @@ daily_gas(utc_day, venue_id, mon, txs)         -- QUOTE_UPDATE_BURN; additive, a
 REST + WS contract (the frontend renders purely off these):
 
 ```
+GET /api/health                    liveness (mode + block) — deploy health checks hit this
 GET /api/venues                    the venue registry (VenueMeta[])
 GET /api/markets                   state snapshot (incl. venues + notes)
 GET /api/quotes                    latest quote matrix

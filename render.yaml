@@ -17,6 +17,8 @@ services:
     envVars:
       - key: DATA_SOURCE
         value: live
+      - key: NODE_OPTIONS      # cap the JS heap well under the instance limit
+        value: --max-old-space-size=320
       - key: RPC_HTTP_URL    # trusted Monad node (Multicall3 + getLogs)
         sync: false
       - key: RPC_WS_URL

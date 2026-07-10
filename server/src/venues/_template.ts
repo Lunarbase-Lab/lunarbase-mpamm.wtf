@@ -22,6 +22,10 @@ const MY_VENUE: VenueMeta = {
   color: { light: '#3366FF', dark: '#88AAFF' },
   kind: 'amm',      // 'amm' | 'clob' | 'vault' | 'cex'
   role: 'venue',    // 'venue' for a propAMM/on-chain venue ('reference' is CEX-only)
+  // TODO: your venue's on-chain deploy / first-activity day. Per-day UI views
+  // omit the venue before it, and the gas-burn history anchors on it.
+  // verify-adapter FAILS a display venue without it.
+  sinceUtc: '2026-01-01',
 };
 
 /** viem AbiEvent lookup helper (for logSources). */
@@ -34,6 +38,9 @@ export function createTemplateAdapter(): VenueAdapter {
 
   return {
     venues: () => [MY_VENUE],
+    // TODO (recommended): the core replays your fill logs from this day for
+    // venue-LIFETIME volume + swap counts. Usually equals sinceUtc.
+    // backfillFromUtc: '2026-01-01',
 
     // Find your markets/pools. Use ctx.client (viem read/multicall) and/or fetch
     // a subgraph. Stash what you need on the closure state above.

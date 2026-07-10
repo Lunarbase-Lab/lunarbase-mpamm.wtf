@@ -14,10 +14,10 @@ The shipped adapters are the reference implementations (`server/src/venues/`):
 ## Quick start
 
 1. `cp server/src/venues/_template.ts server/src/venues/myvenue.ts` and fill in the TODOs.
-2. Register it in `registry.ts`:
+2. Register it in `registry.ts` (the editable list is `ALL_ADAPTERS`; the exported `ADAPTERS` is the `VENUES`-filtered view of it):
    ```ts
    import { createMyVenueAdapter } from './myvenue.js';
-   export const ADAPTERS: VenueAdapter[] = [ /* …existing… */, createMyVenueAdapter() ];
+   const ALL_ADAPTERS: VenueAdapter[] = [ /* …existing… */, createMyVenueAdapter() ];
    ```
 3. `npm -w server run typecheck`, then run it against the chain (see **Developing locally** below).
 
@@ -74,7 +74,8 @@ DB_PATH=./data/scratch.db npm run dev
 ```
 
 - `VENUES=<id,id>` filters the adapter registry — run just your venue against the chain (references stay on; the Execution comparison works).
-- The default public RPC works for quotes + live fill tailing but caps `getLogs` ranges — set `RPC_HTTP_URL` to a higher-limit node to exercise the lifetime backfill (`BACKFILL=on`, the default).
+- Every server script auto-loads a repo-root **`.env`** (`--env-file-if-exists=../.env`, already gitignored) — copy `.env.example` and put `RPC_HTTP_URL` there instead of exporting it per command.
+- The default public RPC works for quotes + live fill tailing but caps `getLogs` ranges — set `RPC_HTTP_URL` to a higher-limit/archive node to exercise the lifetime backfill (`BACKFILL=on`, the default). Monad's docs list providers: https://docs.monad.xyz/tooling-and-infra/rpc-providers.
 - `DATA_SOURCE=sim npm run dev` runs the offline simulator — your venue appears automatically (the sim is registry-driven). Good for UI wiring; **useless for decode correctness** — verify against the real chain.
 - Watch `state.notes` on `/api/markets` (also shown in the UI footer): adapter errors, discovery failures and degradations surface there.
 
@@ -120,4 +121,4 @@ Both **venues** and the **pair/asset universe** are registry-driven (`@shared`):
 - A new **venue** on existing pairs = one adapter file + one `registry.ts` line.
 - A new **pair** on an existing base/quote = one `PAIRS` entry (adapters pick it up at the next discovery).
 - A new **base asset** = an `ASSETS` entry (CEX routing + symbols, optional wrap-basis symbol) + its wrapper in `TOKENS` + `PAIRS` entries. A new **quote stable** = a `TOKENS` entry (+ `usdtCross` where the CEX lists it).
-- The CEX references live in the `ReferenceRegistry` (`reference.ts`, `role: 'reference'`) — one per base asset, converted into each pair's own terms ([architecture.md](architecture.md#pair-terms-reference)). Venue adapters never talk to a CEX.
+- The CEX references live in the `ReferenceRegistry` (`reference.ts`, `role: 'reference'`) — one per base asset, converted into each pair's own terms ([architecture.md](architecture.md#the-reference-is-in-the-pairs-own-terms)). Venue adapters never talk to a CEX.

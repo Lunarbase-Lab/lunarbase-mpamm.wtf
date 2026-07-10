@@ -31,6 +31,7 @@ All optional (defaults in [`server/src/config.ts`](../server/src/config.ts)):
 | `DATA_SOURCE=sim` | offline simulator instead of live |
 | `VENUES=id,id` | run a subset of the adapter registry (adapter development) |
 | `API_PORT` | HTTP/WS port (default 8787) |
+| `BACKEND_URL` | dev only: where the Vite proxy targets `/api` + `/stream` (default `http://localhost:8787` — set it when you change `API_PORT`) |
 | `DB_PATH` | SQLite path (default `data/mpamm.db`) |
 | `TAKER_BPS` / `BINANCE_TAKER_BPS` | CEX benchmark taker fees (defaults: Bybit Supreme VIP 4.5, Binance VIP9 2.25) |
 | `BACKFILL=off` · `BACKFILL_CHUNK` · `BACKFILL_PACE_MS` | venue-lifetime volume backfill |

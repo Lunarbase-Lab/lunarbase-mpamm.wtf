@@ -31,7 +31,7 @@ Follow **[docs/adapters.md](docs/adapters.md)** exactly — interface, correctne
 
 - **Comments explain constraints, not narration.** Match the existing density/voice — most files open with a "why it is this way" header comment.
 - **Monad gas rule**: the chain charges `gas_limit`, and receipts report `gasUsed == limit`. `receipt.gasUsed × effectiveGasPrice` is the exact MON charged; real execution gas is unavailable via RPC.
-- **References are pair-terms** ([docs/architecture.md](docs/architecture.md#pair-terms-reference)): never compare an on-chain USDC price to a raw USDT CEX price; use `ctx.pricer.pairMid(market)` as the bps anchor.
+- **References are pair-terms** ([docs/architecture.md](docs/architecture.md#the-reference-is-in-the-pairs-own-terms)): never compare an on-chain USDC price to a raw USDT CEX price; use `ctx.pricer.pairMid(market)` as the bps anchor.
 - **SQLite schema is long-format** (`(utc_day, venue_id)` rows) — venue changes never alter the shape. Additive migrations only (`CREATE TABLE IF NOT EXISTS` / PRAGMA-guarded `ALTER`); bumping `SCHEMA_VERSION` wipes prod history on deploy, so treat it as a last resort.
 - **Cursors commit atomically with their data** (one transaction) everywhere — volume, fills, gas. Keep that invariant in anything new; it's what makes every background job crash-safe and restart-resumable.
 - **`state.notes` is public** (`/api/markets`): anything noted must go through the sanitizer (URLs stripped — RPC keys must never leak). Note degradations loudly, once (`noteOnce`).
