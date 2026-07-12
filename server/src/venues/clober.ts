@@ -492,10 +492,16 @@ export function createCloberVaultAdapter(): VenueAdapter {
     },
     // QUOTE_UPDATE_BURN: the vault's quotes live on the books, and every
     // repricing is one keeper tx through the operator contract that emits
-    // SimpleOracleStrategy.UpdatePosition (verified on-chain: ~1 update/21s,
-    // flat 1.7M gas limit — which Monad charges in full). One event per
-    // (key, update); the tracker dedupes to unique txs, so a multi-pair
-    // update tx is counted once with its real cost.
+    // SimpleOracleStrategy.UpdatePosition. One event per (key, update); the
+    // tracker dedupes to unique txs, so a multi-pair update is counted once.
+    // PROVENANCE (deep-reviewed 2026-07-10): strategy + operator + vault are
+    // the official Monad deployments in clober-dex/clober-liquidity-vault's
+    // README; updatePosition is onlyOperator in source and the event topic0
+    // is keccak-matched. COMPLETENESS: operator↔UpdatePosition txs are 1:1
+    // on-chain (no non-emitting keeper path), and the strategy's
+    // referenceOracle (their README ChainlinkOracle) is a read-through feed —
+    // zero dedicated txs/logs, so no Clober-funded update gas exists outside
+    // this destination. Blind spot: reverted keeper txs (no logs) undercount.
     gasSources() {
       return [{ mode: 'logs' as const, address: ADDR.simpleOracleStrategy as `0x${string}`, events: [ev(simpleOracleStrategyAbi, 'UpdatePosition')] }];
     },
