@@ -12,7 +12,6 @@
     "verify-adapter": "tsx --env-file-if-exists=../.env scripts/verify-adapter.ts"
   },
   "dependencies": {
-    "@lunarbase-lab/pmm-math": "0.2.5",
     "@mpamm/shared": "*",
     "cors": "^2.8.5",
     "express": "^4.21.2",

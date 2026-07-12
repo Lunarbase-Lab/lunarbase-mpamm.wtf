@@ -2,10 +2,14 @@ import { describe, expect, it } from 'vitest';
 import {
   LUNARBASE_POOLS,
   applyLunarbaseStateLogs,
+  createLunarbaseAdapter,
   decodeLunarbaseSwap,
   lunarbaseQuoteDirection,
+  quoteLunarbaseXToY,
+  quoteLunarbaseYToX,
   quoteLunarbaseLeg,
   type LunarbaseCachedPool,
+  type LunarbasePmmParams,
 } from '../lunarbase.js';
 
 /**
@@ -72,6 +76,63 @@ const CBBTC_SELL = {
   transactionHash: '0x6c6bd9ed3e8168a3cb7734a90597ca92127fb8b569ca6020ad1827b820f02044',
   logIndex: 88,
 };
+
+/** Real whitelisted eth_call results at fixed Monad blocks. Each vector locks
+ * the raw PMM return values — output, pNext and fee — rather than a rounded UI
+ * price. This is the reviewable parity contract for the inline bigint port. */
+const MON_PMM_AT_86814203: LunarbasePmmParams = {
+  sqrtPriceX96: 11_933_797_043_800_708_743_168n,
+  feeAskX24: 1_582,
+  feeBidX24: 4_441,
+  reserveX: 269_345_554_971_310_134_626_149n,
+  reserveY: 4_991_698_028n,
+  concentrationK: 400,
+};
+const CBBTC_PMM_AT_86814205: LunarbasePmmParams = {
+  sqrtPriceX96: 3_121_435_775_563_248_879_477_456_896n,
+  feeAskX24: 40_453,
+  feeBidX24: 369,
+  reserveX: 277_668_751n,
+  reserveY: 38_585n,
+  concentrationK: 16_000,
+};
+
+function expectRawQuote(
+  result: ReturnType<typeof quoteLunarbaseXToY>,
+  amountOut: bigint,
+  sqrtPriceNext: bigint,
+  fee: bigint,
+) {
+  expect(result).toEqual({ amountOut, sqrtPriceNext, fee });
+}
+
+describe('Lunarbase inline PMM parity (real whitelisted contract calls)', () => {
+  it('matches MON at block 86814203 for both directions and sizes', () => {
+    expectRawQuote(quoteLunarbaseXToY(MON_PMM_AT_86814203, 1n * 10n ** 18n), 22_682n, 11_933_797_043_797_475_721_804n, 6n);
+    expectRawQuote(quoteLunarbaseXToY(MON_PMM_AT_86814203, 100n * 10n ** 18n), 2_268_209n, 11_933_797_043_477_406_606_775n, 600n);
+    expectRawQuote(quoteLunarbaseYToX(MON_PMM_AT_86814203, 1n * 10n ** 6n), 44_071_813_216_552_635_073n, 11_933_797_043_917_108_161_803n, 4_156_123_608_120_341n);
+    expectRawQuote(quoteLunarbaseYToX(MON_PMM_AT_86814203, 100n * 10n ** 6n), 4_407_181_033_704_561_620_515n, 11_933_797_823_676_813_600_589n, 415_612_333_657_292_265n);
+  });
+
+  it('matches cbBTC at block 86814205, including the rejected-size path', () => {
+    expectRawQuote(quoteLunarbaseXToY(CBBTC_PMM_AT_86814205, 1n * 10n ** 6n), 1_552n, 3_121_433_096_096_964_440_252_808_149n, 0n);
+    expectRawQuote(quoteLunarbaseXToY(CBBTC_PMM_AT_86814205, 100n * 10n ** 6n), 0n, 3_121_435_775_563_248_879_477_456_896n, 0n);
+    expectRawQuote(quoteLunarbaseYToX(CBBTC_PMM_AT_86814205, 100_000n), 62_913_174n, 3_188_707_897_884_366_635_740_212_998n, 152_062n);
+    expectRawQuote(quoteLunarbaseYToX(CBBTC_PMM_AT_86814205, 1_000_000n), 0n, 3_121_435_775_563_248_879_477_456_896n, 0n);
+  });
+
+  it('retains the integer-square-root rounding boundary from the PMM fuzz suite', () => {
+    const params: LunarbasePmmParams = {
+      sqrtPriceX96: 79_228_162_514_264_337_593_547n,
+      feeAskX24: 1_267,
+      feeBidX24: 0,
+      reserveX: 1_000_000_000_024_439n,
+      reserveY: 0n,
+      concentrationK: 59_617,
+    };
+    expectRawQuote(quoteLunarbaseYToX(params, 197n), 184_607_377_735_615n, 84_540_333_700_582_260_956_920n, 13_942_433_157n);
+  });
+});
 
 describe('decodeLunarbaseSwap (real Monad fixtures)', () => {
   it('decodes MON X→Y as a base sell with 18/6 decimals', () => {
@@ -206,6 +267,43 @@ describe('Lunarbase monotonic state cache', () => {
     expect(updated.snapshot.paused).toBe(true);
     expect(updated.needsRediscovery).toBe(true);
     expect(updated.lastApplied).toEqual({ blockNumber: 104n, logIndex: 4 });
+  });
+});
+
+describe('Lunarbase per-pool discovery quarantine', () => {
+  it('keeps validated pools tailing when another proxy has an unknown implementation', async () => {
+    const [mon, cbbtc] = LUNARBASE_POOLS;
+    const slotFor = (address: string) => `0x${'0'.repeat(24)}${address.slice(2).toLowerCase()}`;
+    const client = {
+      getBlockNumber: async () => 100n,
+      getStorageAt: async ({ address }: { address: string }) =>
+        slotFor(address.toLowerCase() === mon.pool.toLowerCase() ? '0x0000000000000000000000000000000000000001' : cbbtc.expectedImplementation),
+      multicall: async ({ contracts }: { contracts: Array<{ address: string; functionName: string }> }) => contracts.map((call) => {
+        const pool = LUNARBASE_POOLS.find((candidate) => candidate.pool.toLowerCase() === call.address.toLowerCase());
+        switch (call.functionName) {
+          case 'X': return { status: 'success', result: pool!.expectedX };
+          case 'Y': return { status: 'success', result: pool!.expectedY };
+          case 'state': return { status: 'success', result: [1n << 96n, 100, 100, 100n] };
+          case 'getXReserve': case 'getYReserve': return { status: 'success', result: 1_000_000n };
+          case 'concentrationK': return { status: 'success', result: 4_000 };
+          case 'blockDelay': return { status: 'success', result: 10n };
+          case 'paused': return { status: 'success', result: false };
+          case 'blacklistFeeMultiplier': return { status: 'success', result: 100n };
+          case 'isWhitelisted': return { status: 'success', result: true };
+          case 'decimals': return { status: 'success', result: call.address.toLowerCase() === cbbtc.expectedY.toLowerCase() ? 8 : 6 };
+          default: throw new Error(`unexpected read ${call.functionName}`);
+        }
+      }),
+    };
+    const notes: string[] = [];
+    const adapter = createLunarbaseAdapter();
+    await adapter.discover({ client, log: (message: string) => notes.push(message) } as any);
+
+    const sources = adapter.logSources();
+    expect(sources).toHaveLength(2);
+    expect(sources[0].address).toEqual([cbbtc.pool]);
+    expect(adapter.gasSources!()[0].address).toEqual([cbbtc.pool]);
+    expect(notes.some((message) => message.includes('MON/USDC quarantined: unvalidated implementation'))).toBe(true);
   });
 });
 

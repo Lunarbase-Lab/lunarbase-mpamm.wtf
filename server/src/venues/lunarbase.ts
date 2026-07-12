@@ -1,5 +1,3 @@
-import { quoteXToY, quoteYToX } from '@lunarbase-lab/pmm-math';
-import type { QuoteParams, QuoteResult } from '@lunarbase-lab/pmm-math';
 import { parseAbi } from 'viem';
 import type { Fill, QuoteRow, Side, VenueMeta } from '@shared';
 import { NATIVE_MON, TOKENS, pairFor, pairOf } from '@shared';
@@ -8,9 +6,10 @@ import type { AdapterContext, LogBundle, VenueAdapter } from './adapter.js';
 
 /**
  * Lunarbase adapter — quotes current Pool state locally with the canonical PMM
- * package. State events keep a monotonic recovery cache, but every live quote
- * is rebuilt from one atomic current-block snapshot: the core quotes before
- * tailing finalized logs, so an event-only cache would lag by several blocks.
+ * TypeScript bigint port of the deployed SwapLib. State events keep a monotonic
+ * recovery cache, but every live quote is rebuilt from one atomic current-block
+ * snapshot: the core quotes before tailing finalized logs, so an event-only
+ * cache would lag by several blocks.
  *
  * The displayed route is Lunarbase's production aggregator path. Aggregators
  * enter through whitelisted execution adapters, so feeMultiplier is always 1;
@@ -31,11 +30,152 @@ const CBBTC_POOL = '0xb1C8eAd40da9b6AfcB6f34B15e10123505c38888' as const;
 const WHITELIST_PROBE = '0x8f10b468b06c6fd214b65f87778827f7d113f996' as const;
 const ERC1967_IMPLEMENTATION_SLOT = '0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc' as const;
 const MAX_U128 = (1n << 128n) - 1n;
+const MAX_U256 = (1n << 256n) - 1n;
 const MAX_LOG_INDEX = Number.MAX_SAFE_INTEGER;
 const ZERO = '0x0000000000000000000000000000000000000000';
 
 const CURRENT_STATE_TOPIC = '0x8acb811d2c5106785f847faf03ce160d2eb124b8632eb42d466f46c087033d61' as const;
-const LEGACY_MON_STATE_TOPIC = '0xcde511305d043cb248593e7b0abb95a2ffc42c537f4435006a9e4018689f5174' as const;
+const Q12 = 1n << 12n;
+const Q24 = 1n << 24n;
+const Q48 = 1n << 48n;
+const Q96 = 1n << 96n;
+const PER_SIDE_BAND_BPS = 2_000;
+
+export interface LunarbasePmmParams {
+  sqrtPriceX96: bigint;
+  feeAskX24: number;
+  feeBidX24: number;
+  reserveX: bigint;
+  reserveY: bigint;
+  concentrationK: number;
+}
+
+export interface LunarbasePmmResult {
+  amountOut: bigint;
+  sqrtPriceNext: bigint;
+  fee: bigint;
+}
+
+const mulDiv = (x: bigint, y: bigint, denominator: bigint): bigint => denominator > 0n ? x * y / denominator : 0n;
+const divUp = (x: bigint, denominator: bigint): bigint => denominator > 0n ? (x + denominator - 1n) / denominator : 0n;
+const mulDivUp = (x: bigint, y: bigint, denominator: bigint): bigint => divUp(x * y, denominator);
+
+function integerSqrt(value: bigint): bigint {
+  if (value < 0n) throw new Error('square root of a negative integer');
+  if (value < 2n) return value;
+  // Start above √value so Newton iteration is monotone decreasing. Starting
+  // at floor(bitLength/2) is below the root for some odd-bit values and would
+  // silently truncate a concentration bound.
+  let x = 1n << BigInt((value.toString(2).length + 1) >> 1);
+  let y = (x + value / x) >> 1n;
+  while (y < x) { x = y; y = (x + value / x) >> 1n; }
+  return x;
+}
+
+/** Exact bigint port of the deployed SwapLib quote path. `mulDiv` retains the
+ * Solidity floor/ceil boundaries; all production inputs fit their on-chain
+ * widths, while bigint avoids an unreviewable native runtime dependency. */
+function concentrationQ48(params: LunarbasePmmParams, amountIn: bigint, xToY: boolean): bigint {
+  if (amountIn === 0n || params.concentrationK === 0 || params.sqrtPriceX96 === 0n) return 0n;
+  const sqrtP = params.sqrtPriceX96;
+  const xWealthInY = mulDiv(mulDiv(params.reserveX, sqrtP, Q96), sqrtP, Q96);
+  const totalWealthInY = xWealthInY + params.reserveY;
+  if (totalWealthInY === 0n) return 0n;
+  const amountInWealth = xToY ? mulDiv(mulDiv(amountIn, sqrtP, Q96), sqrtP, Q96) : amountIn;
+  const rQ48 = amountInWealth >= totalWealthInY ? Q48 : mulDiv(amountInWealth, Q48, totalWealthInY);
+  const rSquaredQ48 = mulDiv(rQ48, rQ48, Q48);
+  const concentration = mulDiv(BigInt(params.concentrationK), rSquaredQ48, Q12);
+  return concentration >= Q48 ? Q48 : concentration;
+}
+
+function lowerBound(sqrtPriceX96: bigint, concentration: bigint): bigint {
+  return mulDiv(sqrtPriceX96, integerSqrt(Q48 - concentration), Q24);
+}
+
+function upperBound(sqrtPriceX96: bigint, concentration: bigint): bigint {
+  const divisor = integerSqrt(Q48 - concentration);
+  return divisor > 0n ? mulDiv(sqrtPriceX96, Q24, divisor) : 0n;
+}
+
+const liquidityY = (sqrtPriceX96: bigint, pBid: bigint, reserveY: bigint): bigint =>
+  sqrtPriceX96 > pBid ? mulDiv(reserveY, Q96, sqrtPriceX96 - pBid) : 0n;
+const liquidityX = (sqrtPriceX96: bigint, pAsk: bigint, reserveX: bigint): bigint =>
+  pAsk > sqrtPriceX96 ? mulDiv(reserveX, mulDiv(sqrtPriceX96, pAsk, Q96), pAsk - sqrtPriceX96) : 0n;
+
+function amountXDelta(sqrtA: bigint, sqrtB: bigint, liquidity: bigint): bigint {
+  const [sa, sb] = sqrtA <= sqrtB ? [sqrtA, sqrtB] : [sqrtB, sqrtA];
+  return sa > 0n ? mulDiv(liquidity * Q96, sb - sa, sb) / sa : 0n;
+}
+
+function amountYDelta(sqrtA: bigint, sqrtB: bigint, liquidity: bigint): bigint {
+  const [sa, sb] = sqrtA <= sqrtB ? [sqrtA, sqrtB] : [sqrtB, sqrtA];
+  return mulDiv(liquidity, sb - sa, Q96);
+}
+
+function nextSqrtPriceFromX(sqrtPriceX96: bigint, liquidity: bigint, amountX: bigint): bigint {
+  if (amountX === 0n || sqrtPriceX96 === 0n || liquidity === 0n) return sqrtPriceX96;
+  const numerator = liquidity * Q96;
+  const product = amountX * sqrtPriceX96;
+  // Mirror the Solidity fast path; the fallback preserves its overflow branch
+  // for future larger quote sizes even though current USD notionals fit it.
+  if (product <= MAX_U256 && product / amountX === sqrtPriceX96 && numerator + product <= MAX_U256) {
+    return mulDivUp(numerator, sqrtPriceX96, numerator + product);
+  }
+  return divUp(numerator, numerator / sqrtPriceX96 + amountX);
+}
+
+function nextSqrtPriceFromY(sqrtPriceX96: bigint, liquidity: bigint, amountY: bigint): bigint {
+  if (liquidity === 0n) return sqrtPriceX96;
+  const quotient = amountY < (1n << 160n) ? (amountY << 96n) / liquidity : mulDiv(amountY, Q96, liquidity);
+  return sqrtPriceX96 + quotient;
+}
+
+function applyFee(grossOutput: bigint, feeX24: number, feeMultiplier: bigint): Pick<LunarbasePmmResult, 'amountOut' | 'fee'> {
+  const baseFee = mulDiv(grossOutput, BigInt(feeX24), Q24);
+  if (feeMultiplier <= 1n || baseFee === 0n) return { amountOut: grossOutput - baseFee, fee: baseFee };
+  if (feeMultiplier > MAX_U256 / baseFee) return { amountOut: 0n, fee: grossOutput };
+  const fee = baseFee * feeMultiplier;
+  return fee >= grossOutput ? { amountOut: 0n, fee: grossOutput } : { amountOut: grossOutput - fee, fee };
+}
+
+function rejected(params: LunarbasePmmParams): LunarbasePmmResult {
+  return { amountOut: 0n, sqrtPriceNext: params.sqrtPriceX96, fee: 0n };
+}
+
+export function quoteLunarbaseXToY(params: LunarbasePmmParams, amountIn: bigint, feeMultiplier = 1n): LunarbasePmmResult {
+  const concentration = concentrationQ48(params, amountIn, true);
+  if (concentration === 0n) {
+    const gross = mulDiv(mulDiv(amountIn, params.sqrtPriceX96, Q96), params.sqrtPriceX96, Q96);
+    if (gross === 0n || gross > params.reserveY) return rejected(params);
+    return { ...applyFee(gross, params.feeBidX24, feeMultiplier), sqrtPriceNext: params.sqrtPriceX96 };
+  }
+  if (concentration >= Q48) return rejected(params);
+  const pBid = lowerBound(params.sqrtPriceX96, concentration);
+  if (params.sqrtPriceX96 <= pBid) return rejected(params);
+  const liquidity = liquidityY(params.sqrtPriceX96, pBid, params.reserveY);
+  if (liquidity === 0n || amountIn > amountXDelta(pBid, params.sqrtPriceX96, liquidity)) return rejected(params);
+  const sqrtPriceNext = nextSqrtPriceFromX(params.sqrtPriceX96, liquidity, amountIn);
+  const gross = amountYDelta(params.sqrtPriceX96, sqrtPriceNext, liquidity);
+  return { ...applyFee(gross, params.feeBidX24, feeMultiplier), sqrtPriceNext };
+}
+
+export function quoteLunarbaseYToX(params: LunarbasePmmParams, amountIn: bigint, feeMultiplier = 1n): LunarbasePmmResult {
+  const concentration = concentrationQ48(params, amountIn, false);
+  if (concentration === 0n) {
+    if (params.sqrtPriceX96 === 0n) return rejected(params);
+    const gross = mulDiv(mulDiv(amountIn, Q96, params.sqrtPriceX96), Q96, params.sqrtPriceX96);
+    if (gross === 0n || gross > params.reserveX) return rejected(params);
+    return { ...applyFee(gross, params.feeAskX24, feeMultiplier), sqrtPriceNext: params.sqrtPriceX96 };
+  }
+  if (concentration >= Q48) return rejected(params);
+  const pAsk = upperBound(params.sqrtPriceX96, concentration);
+  if (params.sqrtPriceX96 >= pAsk) return rejected(params);
+  const liquidity = liquidityX(params.sqrtPriceX96, pAsk, params.reserveX);
+  if (liquidity === 0n || amountIn > amountYDelta(params.sqrtPriceX96, pAsk, liquidity)) return rejected(params);
+  const sqrtPriceNext = nextSqrtPriceFromY(params.sqrtPriceX96, liquidity, amountIn);
+  const gross = amountXDelta(params.sqrtPriceX96, sqrtPriceNext, liquidity);
+  return { ...applyFee(gross, params.feeAskX24, feeMultiplier), sqrtPriceNext };
+}
 
 const poolAbi = parseAbi([
   'function X() view returns (address)',
@@ -168,7 +308,6 @@ async function readPoolsAtBlock(
   ctx: AdapterContext,
   configs: readonly LunarbasePoolConfig[],
   blockNumber: bigint,
-  strict: boolean,
   onFailure: (config: LunarbasePoolConfig, reason: string) => void,
 ): Promise<LunarbaseCachedPool[]> {
   const calls: any[] = [];
@@ -202,7 +341,6 @@ async function readPoolsAtBlock(
   ]);
 
   const found: LunarbaseCachedPool[] = [];
-  const errors: string[] = [];
   for (let i = 0; i < configs.length; i++) {
     const config = configs[i];
     const ix = indexes.get(config.pool.toLowerCase())!;
@@ -260,11 +398,9 @@ async function readPoolsAtBlock(
       });
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error);
-      errors.push(`${config.market}: ${reason}`);
       onFailure(config, reason);
     }
   }
-  if (strict && errors.length) throw new Error(`Lunarbase discovery failed (${errors.join('; ')})`);
   return found;
 }
 
@@ -348,23 +484,20 @@ export function applyLunarbaseStateLogs(pools: ReadonlyMap<string, LunarbaseCach
   return staged;
 }
 
-function quoteParams(snapshot: LunarbaseSnapshot, amountIn: bigint): QuoteParams {
+function quoteParams(snapshot: LunarbaseSnapshot): LunarbasePmmParams {
   return {
-    sqrtPriceX96: snapshot.anchorPrice.toString(),
+    sqrtPriceX96: snapshot.anchorPrice,
     feeAskX24: snapshot.feeAskX24,
     feeBidX24: snapshot.feeBidX24,
-    reserveX: snapshot.reserveX.toString(),
-    reserveY: snapshot.reserveY.toString(),
+    reserveX: snapshot.reserveX,
+    reserveY: snapshot.reserveY,
     concentrationK: snapshot.concentrationK,
-    amountIn: amountIn.toString(),
-    feeMultiplier: '1',
   };
 }
 
-function feeBps(result: QuoteResult): number {
-  const output = BigInt(result.amountOut), fee = BigInt(result.fee);
-  const gross = output + fee;
-  return gross > 0n ? Number(fee * 1_000_000_000n / gross) / 100_000 : 0;
+function feeBps(result: LunarbasePmmResult): number {
+  const gross = result.amountOut + result.fee;
+  return gross > 0n ? Number(result.fee * 1_000_000_000n / gross) / 100_000 : 0;
 }
 
 export function lunarbaseQuoteDirection(pool: LunarbasePoolConfig, side: Side): 'quoteXToY' | 'quoteYToX' {
@@ -375,9 +508,9 @@ export function lunarbaseQuoteDirection(pool: LunarbasePoolConfig, side: Side): 
 export function quoteLunarbaseLeg(pool: LunarbaseCachedPool, side: Side, amountIn: bigint): { px: number; feeBps: number } | undefined {
   if (amountIn <= 0n) return undefined;
   const result = lunarbaseQuoteDirection(pool, side) === 'quoteXToY'
-    ? quoteXToY(quoteParams(pool.snapshot, amountIn))
-    : quoteYToX(quoteParams(pool.snapshot, amountIn));
-  const amountOut = BigInt(result.amountOut);
+    ? quoteLunarbaseXToY(quoteParams(pool.snapshot), amountIn)
+    : quoteLunarbaseYToX(quoteParams(pool.snapshot), amountIn);
+  const amountOut = result.amountOut;
   if (amountOut <= 0n) return undefined;
   const inputDecimals = side === 'sell' ? pool.baseDec : pool.stableDec;
   const outputDecimals = side === 'sell' ? pool.stableDec : pool.baseDec;
@@ -434,6 +567,16 @@ export function createLunarbaseAdapter(): VenueAdapter {
     ctx.log(message);
   };
   const recovered = (key: string) => noted.delete(key);
+  const quarantine = (ctx: AdapterContext, config: LunarbasePoolConfig, reason: string) => {
+    byAddress.delete(config.pool.toLowerCase());
+    byMarket.delete(config.market);
+    noteOnce(ctx, `quarantine:${config.pool}`, `Lunarbase ${config.market} quarantined: ${reason}`);
+  };
+  const activate = (pool: LunarbaseCachedPool) => {
+    byAddress.set(pool.pool.toLowerCase(), pool);
+    byMarket.set(pool.market, pool);
+    recovered(`quarantine:${pool.pool}`);
+  };
 
   return {
     venues: () => [LUNARBASE_VENUE],
@@ -441,18 +584,16 @@ export function createLunarbaseAdapter(): VenueAdapter {
 
     async discover(ctx: AdapterContext) {
       const blockNumber = await ctx.client.getBlockNumber();
-      const staged = await readPoolsAtBlock(ctx, LUNARBASE_POOLS, blockNumber, true, () => {});
-      // Merge only after every configured production pool passed validation.
-      for (const pool of staged) {
-        byAddress.set(pool.pool.toLowerCase(), pool);
-        byMarket.set(pool.market, pool);
-      }
+      // Validation is intentionally per pool: a proxy upgrade must quarantine
+      // that pool, never block every venue's fill cursor while we review it.
+      const staged = await readPoolsAtBlock(ctx, LUNARBASE_POOLS, blockNumber, (config, reason) => quarantine(ctx, config, reason));
+      for (const pool of staged) activate(pool);
       discovered = true;
-      ctx.log(`Lunarbase: ${staged.length} production pool(s), whitelist fee mode`);
+      ctx.log(`Lunarbase: ${staged.length}/${LUNARBASE_POOLS.length} validated production pool(s), whitelist fee mode`);
     },
 
     async quote(ctx: AdapterContext, sizesUsd: readonly number[]): Promise<QuoteRow[]> {
-      if (!discovered) return [];
+      if (!discovered || !byMarket.size) return [];
       let head: bigint;
       try {
         head = await ctx.client.getBlockNumber();
@@ -463,9 +604,7 @@ export function createLunarbaseAdapter(): VenueAdapter {
 
       let current: LunarbaseCachedPool[];
       try {
-        current = await readPoolsAtBlock(ctx, [...byMarket.values()], head, false, (config, reason) => {
-          noteOnce(ctx, `snapshot:${config.pool}`, `Lunarbase ${config.market} quote unavailable: ${reason}`);
-        });
+        current = await readPoolsAtBlock(ctx, [...byMarket.values()], head, (config, reason) => quarantine(ctx, config, reason));
       } catch (error) {
         noteOnce(ctx, 'snapshot', `Lunarbase quote refresh failed: ${error instanceof Error ? error.message : String(error)}`);
         return [];
@@ -474,8 +613,7 @@ export function createLunarbaseAdapter(): VenueAdapter {
       recovered('snapshot');
       for (const pool of current) {
         recovered(`snapshot:${pool.pool}`);
-        byAddress.set(pool.pool.toLowerCase(), pool);
-        byMarket.set(pool.market, pool);
+        activate(pool);
       }
 
       const rows: QuoteRow[] = [];
@@ -502,11 +640,18 @@ export function createLunarbaseAdapter(): VenueAdapter {
             continue;
           }
           recovered(`math:${pool.pool}`);
-          if (!bid && !ask) continue;
-          const bidPx = bid?.px ?? 0, askPx = ask?.px ?? 0;
-          const bidBps = bid ? (bidPx / mid - 1) * 1e4 : 0;
-          const askBps = ask ? (askPx / mid - 1) * 1e4 : 0;
-          const both = Boolean(bid && ask);
+          const rawBidBps = bid ? (bid.px / mid - 1) * 1e4 : 0;
+          const rawAskBps = ask ? (ask.px / mid - 1) * 1e4 : 0;
+          // A curve can technically price an exact input against a nearly
+          // exhausted reserve. It is not a comparable execution if that leg is
+          // thousands of bps away from the pair reference; retain a valid leg
+          // as one-sided, matching the Clober/Uniswap adapter convention.
+          const bidReal = Boolean(bid) && Number.isFinite(rawBidBps) && Math.abs(rawBidBps) <= PER_SIDE_BAND_BPS;
+          const askReal = Boolean(ask) && Number.isFinite(rawAskBps) && Math.abs(rawAskBps) <= PER_SIDE_BAND_BPS;
+          if (!bidReal && !askReal) continue;
+          const bidPx = bidReal ? bid!.px : 0, askPx = askReal ? ask!.px : 0;
+          const bidBps = bidReal ? rawBidBps : 0, askBps = askReal ? rawAskBps : 0;
+          const both = bidReal && askReal;
           rows.push({
             venueId: LUNARBASE_VENUE.id,
             market: pool.market,
@@ -516,7 +661,9 @@ export function createLunarbaseAdapter(): VenueAdapter {
             bidBps,
             askBps,
             spreadBps: both ? askBps - bidBps : 0,
-            filledFull: both,
+            // PMM quotes are exact-input and either reject the leg or fill its
+            // complete input; `oneSided` describes availability, not partiality.
+            filledFull: true,
             oneSided: !both,
             feeBps: Math.max(bid?.feeBps ?? 0, ask?.feeBps ?? 0),
             ts,
@@ -529,6 +676,7 @@ export function createLunarbaseAdapter(): VenueAdapter {
     logSources() {
       if (!discovered) throw new Error('Lunarbase discovery unavailable');
       const addresses = [...byAddress.values()].map((pool) => pool.pool);
+      if (!addresses.length) return [];
       return [
         { key: 'swap', address: addresses, events: [event('SwapExecuted')], kind: 'fills' as const },
         {
@@ -542,17 +690,15 @@ export function createLunarbaseAdapter(): VenueAdapter {
 
     gasSources() {
       if (!discovered) throw new Error('Lunarbase discovery unavailable');
-      return [
-        { mode: 'logs' as const, address: [...byAddress.values()].map((pool) => pool.pool), topic0: CURRENT_STATE_TOPIC },
-        { mode: 'logs' as const, address: MON_POOL, topic0: LEGACY_MON_STATE_TOPIC },
-      ];
+      const addresses = [...byAddress.values()].map((pool) => pool.pool);
+      return addresses.length ? [{ mode: 'logs' as const, address: addresses, topic0: CURRENT_STATE_TOPIC }] : [];
     },
 
-    decode(_ctx: AdapterContext, logs: LogBundle, tsOf) {
+    decode(ctx: AdapterContext, logs: LogBundle, tsOf) {
       const staged = applyLunarbaseStateLogs(byAddress, logs.state ?? []);
       for (const [address, pool] of staged) {
-        byAddress.set(address, pool);
-        byMarket.set(pool.market, pool);
+        if (pool.needsRediscovery) quarantine(ctx, pool, 'proxy upgrade observed; awaiting implementation validation');
+        else activate(pool);
       }
       const fills: Fill[] = [];
       for (const log of logs.swap ?? []) {
