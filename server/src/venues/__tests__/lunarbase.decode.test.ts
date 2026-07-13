@@ -2,20 +2,20 @@ import { describe, expect, it } from 'vitest';
 import {
   LUNARBASE_POOLS,
   applyLunarbaseStateLogs,
-  createLunarbaseAdapter,
   decodeLunarbaseSwap,
   lunarbaseQuoteDirection,
+  quoteLunarbaseLeg,
   type LunarbaseCachedPool,
 } from '../lunarbase.js';
 
 /**
- * Real Monad SwapExecuted fixtures covering both token orders and directions.
+ * Real Monad SwapExecuted fixtures covering both MON swap directions.
  * Expected amounts are independently scaled from raw event integers; no RPC is
  * used in tests. `recipient` is not the caller and cannot prove attribution.
  */
 
 const TS = 1_783_679_000_000;
-const [MON_POOL, CBBTC_POOL] = LUNARBASE_POOLS;
+const [MON_POOL] = LUNARBASE_POOLS;
 
 const MON_SELL = {
   address: MON_POOL.pool.toLowerCase(),
@@ -45,34 +45,6 @@ const MON_BUY = {
   logIndex: 17,
 };
 
-const CBBTC_BUY = {
-  address: CBBTC_POOL.pool.toLowerCase(),
-  args: {
-    recipient: '0xfb78Fcae443eB423b59B8C186518c5dF94416344',
-    xToY: true,
-    dx: 7_302_194n,
-    dy: 11_618n,
-    fee: 1n,
-  },
-  blockNumber: 86_575_884n,
-  transactionHash: '0x95b53137ded11d931850be0de60fc00d0ed62a760e666f2c35d766bda4d518e8',
-  logIndex: 149,
-};
-
-const CBBTC_SELL = {
-  address: CBBTC_POOL.pool.toLowerCase(),
-  args: {
-    recipient: '0xfb78Fcae443eB423b59B8C186518c5dF94416344',
-    xToY: false,
-    dx: 30_061_294n,
-    dy: 48_000n,
-    fee: 51_879n,
-  },
-  blockNumber: 85_972_529n,
-  transactionHash: '0x6c6bd9ed3e8168a3cb7734a90597ca92127fb8b569ca6020ad1827b820f02044',
-  logIndex: 88,
-};
-
 describe('decodeLunarbaseSwap (real Monad fixtures)', () => {
   it('decodes MON X→Y as a base sell with 18/6 decimals', () => {
     const fill = decodeLunarbaseSwap(MON_SELL, MON_POOL, TS)!;
@@ -91,25 +63,6 @@ describe('decodeLunarbaseSwap (real Monad fixtures)', () => {
     expect(fill.usd).toBeCloseTo(328.86579, 9);
     expect(fill.execPx).toBeCloseTo(0.022535699230644482, 15);
     expect(fill.id).toBe(`lunarbase-${MON_BUY.transactionHash}-17`);
-  });
-
-  it('decodes cbBTC X→Y as a base buy with 6/8 decimals', () => {
-    const fill = decodeLunarbaseSwap(CBBTC_BUY, CBBTC_POOL, TS)!;
-    expect(fill.side).toBe('buy');
-    expect(fill.market).toBe('cbBTC/USDC');
-    expect(fill.baseAmount).toBeCloseTo(0.00011618, 12);
-    expect(fill.usd).toBeCloseTo(7.302194, 9);
-    expect(fill.execPx).toBeCloseTo(62_852.41866069892, 8);
-    expect(fill.id).toBe(`lunarbase-${CBBTC_BUY.transactionHash}-149`);
-  });
-
-  it('decodes cbBTC Y→X as a base sell', () => {
-    const fill = decodeLunarbaseSwap(CBBTC_SELL, CBBTC_POOL, TS)!;
-    expect(fill.side).toBe('sell');
-    expect(fill.baseAmount).toBeCloseTo(0.00048, 12);
-    expect(fill.usd).toBeCloseTo(30.061294, 9);
-    expect(fill.execPx).toBeCloseTo(62_627.69583333333, 8);
-    expect(fill.id).toBe(`lunarbase-${CBBTC_SELL.transactionHash}-88`);
   });
 
   it('does not invent attribution from the recipient field', () => {
@@ -150,8 +103,31 @@ function cachedPool(): LunarbaseCachedPool {
   };
 }
 
+describe('Lunarbase pool quoter', () => {
+  it('pins the call to the snapshot block and the whitelisted aggregator route', async () => {
+    const requests: any[] = [];
+    const leg = await quoteLunarbaseLeg({
+      client: {
+        readContract: async (request: any) => {
+          requests.push(request);
+          return [90n, 0n, 10n];
+        },
+      },
+    } as any, cachedPool(), 'sell', 100n, 123n);
+
+    expect(leg).toEqual({ px: 0.9, feeBps: 1_000 });
+    expect(requests).toHaveLength(1);
+    expect(requests[0]).toMatchObject({
+      functionName: 'quoteXToY',
+      args: [100n],
+      account: '0x0000000000000000000000000000000000000000',
+      blockNumber: 123n,
+    });
+  });
+});
+
 describe('Lunarbase monotonic state cache', () => {
-  it('applies an absolute Sync once, idempotently, without mutating the input', () => {
+  it('applies an absolute Sync once without mutating the input', () => {
     const initial = cachedPool();
     const sync = {
       address: initial.pool,
@@ -206,51 +182,13 @@ describe('Lunarbase monotonic state cache', () => {
   });
 });
 
-describe('Lunarbase per-pool discovery quarantine', () => {
-  it('keeps healthy pools tailing when another pool fails a behavioral check (impl identity is never the gate)', async () => {
-    const [mon, cbbtc] = LUNARBASE_POOLS;
-    const slotFor = (address: string) => `0x${'0'.repeat(24)}${address.slice(2).toLowerCase()}`;
-    const client = {
-      getBlockNumber: async () => 100n,
-      // both pools report arbitrary implementations — tolerated by design
-      getStorageAt: async ({ address }: { address: string }) =>
-        slotFor(address.toLowerCase() === mon.pool.toLowerCase() ? '0x0000000000000000000000000000000000000001' : '0x0000000000000000000000000000000000000002'),
-      multicall: async ({ contracts }: { contracts: Array<{ address: string; functionName: string }> }) => contracts.map((call) => {
-        const pool = LUNARBASE_POOLS.find((candidate) => candidate.pool.toLowerCase() === call.address.toLowerCase());
-        switch (call.functionName) {
-          case 'X': return { status: 'success', result: pool!.expectedX };
-          case 'Y': return { status: 'success', result: pool!.expectedY };
-          case 'state': return { status: 'success', result: [1n << 96n, 100, 100, 100n] };
-          case 'getXReserve': case 'getYReserve': return { status: 'success', result: 1_000_000n };
-          case 'concentrationK': return { status: 'success', result: 4_000 };
-          case 'blockDelay': return { status: 'success', result: 10n };
-          case 'paused': return { status: 'success', result: false };
-          case 'blacklistFeeMultiplier': return { status: 'success', result: 100n };
-          // MON loses the production route — the behavioral quarantine trigger
-          case 'isWhitelisted': return { status: 'success', result: pool!.pool.toLowerCase() !== mon.pool.toLowerCase() };
-          case 'decimals': return { status: 'success', result: call.address.toLowerCase() === cbbtc.expectedY.toLowerCase() ? 8 : 6 };
-          default: throw new Error(`unexpected read ${call.functionName}`);
-        }
-      }),
-    };
-    const notes: string[] = [];
-    const adapter = createLunarbaseAdapter();
-    await adapter.discover({ client, log: (message: string) => notes.push(message) } as any);
-
-    const sources = adapter.logSources();
-    expect(sources).toHaveLength(2);
-    expect(sources[0].address).toEqual([cbbtc.pool]);
-    expect(adapter.gasSources!()[0].address).toEqual([cbbtc.pool]);
-    expect(notes.some((message) => message.includes('MON/USDC quarantined: production execution adapter'))).toBe(true);
+describe('Lunarbase production pool configuration', () => {
+  it('lists only MON/USDC while cbBTC/USDC remains test-only', () => {
+    expect(LUNARBASE_POOLS.map((pool) => pool.market)).toEqual(['MON/USDC']);
   });
-});
 
-describe('Lunarbase local quote mapping', () => {
-  it('maps both token orders to the correct PMM direction', () => {
+  it('maps MON directions to the pool quoter', () => {
     expect(lunarbaseQuoteDirection(MON_POOL, 'sell')).toBe('quoteXToY');
     expect(lunarbaseQuoteDirection(MON_POOL, 'buy')).toBe('quoteYToX');
-    expect(lunarbaseQuoteDirection(CBBTC_POOL, 'sell')).toBe('quoteYToX');
-    expect(lunarbaseQuoteDirection(CBBTC_POOL, 'buy')).toBe('quoteXToY');
   });
-
 });

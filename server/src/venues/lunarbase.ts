@@ -1,19 +1,15 @@
 import { parseAbi } from 'viem';
 import type { Fill, QuoteRow, Side, VenueMeta } from '@shared';
-import { NATIVE_MON, TOKENS, pairFor, pairOf } from '@shared';
+import { NATIVE_MON, TOKENS, pairFor } from '@shared';
 import { fromUnits, shortHex, toUnits } from '../util.js';
 import type { AdapterContext, LogBundle, VenueAdapter } from './adapter.js';
 
 /**
- * Lunarbase adapter — quotes come from the POOL'S OWN quoter views
- * (quoteXToY/quoteYToX), eth_called AS the whitelisted production execution
- * adapter (`account` override) at one pinned block. That makes every displayed
- * quote ground truth for the production aggregator route UNDER ANY DEPLOYED
- * IMPLEMENTATION — no local math to drift and no implementation allowlist to
- * maintain (an upgrade that changed fee semantics stales a local port
- * silently; it cannot stale the contract's own answer). State events keep a
- * monotonic recovery cache for the availability gates (paused / whitelist /
- * staleness) between pinned snapshots.
+ * Lunarbase quotes come from the pool's own quoter views, called as the
+ * whitelisted production execution adapter at one pinned block. This keeps the
+ * displayed aggregator route correct across proxy upgrades: implementation
+ * changes cannot silently stale a local math port. State events still maintain
+ * a monotonic cache for availability gates between pinned snapshots.
  */
 
 const LUNARBASE_VENUE: VenueMeta = {
@@ -26,11 +22,11 @@ const LUNARBASE_VENUE: VenueMeta = {
 };
 
 const MON_POOL = '0x0000a8fd148694aE3E17c079Ce4BBF8187758888' as const;
-const CBBTC_POOL = '0xb1C8eAd40da9b6AfcB6f34B15e10123505c38888' as const;
-const WHITELIST_PROBE = '0x8f10b468b06c6fd214b65f87778827f7d113f996' as const;
 const ERC1967_IMPLEMENTATION_SLOT = '0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc' as const;
 const MAX_LOG_INDEX = Number.MAX_SAFE_INTEGER;
 const ZERO = '0x0000000000000000000000000000000000000000';
+// MON/USDC globally whitelists address(0), which lets eth_call model the
+// production fee tier without coupling that pool to one router deployment.
 
 const CURRENT_STATE_TOPIC = '0x8acb811d2c5106785f847faf03ce160d2eb124b8632eb42d466f46c087033d61' as const;
 const PER_SIDE_BAND_BPS = 2_000;
@@ -64,6 +60,7 @@ const event = (name: string) => poolAbi.find((x: any) => x.type === 'event' && x
 
 export interface LunarbasePoolConfig {
   pool: `0x${string}`;
+  whitelistCaller: `0x${string}`;
   market: string;
   expectedX: `0x${string}`;
   expectedY: `0x${string}`;
@@ -76,10 +73,8 @@ export interface LunarbasePoolConfig {
 
 export interface LunarbaseSnapshot {
   blockNumber: bigint;
-  /** current EIP-1967 implementation — observability only (noted on change),
-   *  never an allowlist: quotes come from the pool's own quoter, so they are
-   *  correct under any implementation, and fills/gas depend only on event
-   *  schemas (validated behaviorally like every other venue). */
+  /** Observability only: quotes are the pool's own view calls, so a proxy
+   * upgrade must not turn an otherwise healthy pool into an adapter outage. */
   implementation: `0x${string}`;
   anchorPrice: bigint;
   feeAskX24: number;
@@ -105,9 +100,12 @@ export interface LunarbaseCachedPool extends LunarbasePoolConfig {
   needsRediscovery: boolean;
 }
 
+/** Production pools only. cbBTC/USDC remains test-only and is intentionally
+ * excluded from quotes, fills, and gas metrics until it leaves test mode. */
 export const LUNARBASE_POOLS: readonly LunarbasePoolConfig[] = [
   {
     pool: MON_POOL,
+    whitelistCaller: ZERO,
     market: 'MON/USDC',
     expectedX: NATIVE_MON,
     expectedY: TOKENS.USDC.address,
@@ -115,17 +113,6 @@ export const LUNARBASE_POOLS: readonly LunarbasePoolConfig[] = [
     baseToken: 'MON',
     stableToken: 'USDC',
     baseDec: TOKENS.MON.decimals,
-    stableDec: TOKENS.USDC.decimals,
-  },
-  {
-    pool: CBBTC_POOL,
-    market: 'cbBTC/USDC',
-    expectedX: TOKENS.USDC.address,
-    expectedY: TOKENS.CBBTC.address,
-    baseIsX: false,
-    baseToken: 'CBBTC',
-    stableToken: 'USDC',
-    baseDec: TOKENS.CBBTC.decimals,
     stableDec: TOKENS.USDC.decimals,
   },
 ];
@@ -145,10 +132,7 @@ type ReadKey =
   | 'yDecimals';
 
 function registeredConfig(config: LunarbasePoolConfig): boolean {
-  if (config.market === 'MON/USDC') return pairFor('MON', 'USDC')?.symbol === config.market;
-  // cbBTC intentionally has its own pair symbol/basis; pairFor(BTC, USDC)
-  // resolves the canonical WBTC market and must not be used here.
-  return pairOf(config.market)?.symbol === config.market;
+  return pairFor('MON', 'USDC')?.symbol === config.market;
 }
 
 function implementationFromSlot(value: string | undefined): `0x${string}` | undefined {
@@ -189,7 +173,7 @@ async function readPoolsAtBlock(
     add(config, 'blockDelay', poolAbi, 'blockDelay');
     add(config, 'paused', poolAbi, 'paused');
     add(config, 'blacklistFeeMultiplier', poolAbi, 'blacklistFeeMultiplier');
-    add(config, 'whitelistProbe', poolAbi, 'isWhitelisted', [WHITELIST_PROBE]);
+    add(config, 'whitelistProbe', poolAbi, 'isWhitelisted', [config.whitelistCaller]);
     if (config.expectedX.toLowerCase() !== ZERO) add(config, 'xDecimals', erc20Abi, 'decimals', undefined, config.expectedX);
     if (config.expectedY.toLowerCase() !== ZERO) add(config, 'yDecimals', erc20Abi, 'decimals', undefined, config.expectedY);
   }
@@ -231,7 +215,7 @@ async function readPoolsAtBlock(
       }
       const [anchorPrice, feeAskX24, feeBidX24, latestUpdateBlock] = state;
       if (anchorPrice <= 0n) throw new Error('anchorPrice unset');
-      if (!whitelistProbe) throw new Error(`production execution adapter ${WHITELIST_PROBE} is not whitelisted`);
+      if (!whitelistProbe) throw new Error(`whitelist caller ${config.whitelistCaller} is unavailable`);
       found.push({
         ...config,
         snapshot: {
@@ -322,7 +306,7 @@ export function applyLunarbaseStateLogs(pools: ReadonlyMap<string, LunarbaseCach
           pool.snapshot.blacklistFeeMultiplier = BigInt(args.multiplier);
           break;
         case 'WhitelistSet':
-          if (String(args.account).toLowerCase() === WHITELIST_PROBE) pool.snapshot.whitelistProbe = Boolean(args.whitelisted);
+          if (String(args.account).toLowerCase() === pool.whitelistCaller) pool.snapshot.whitelistProbe = Boolean(args.whitelisted);
           break;
         case 'Upgraded':
           pool.needsRediscovery = true;
@@ -345,25 +329,26 @@ export function lunarbaseQuoteDirection(pool: LunarbasePoolConfig, side: Side): 
   return xToY ? 'quoteXToY' : 'quoteYToX';
 }
 
-/** One quote leg from the POOL'S OWN quoter, eth_called as the whitelisted
- *  production execution adapter at the pinned block — the same code path the
- *  aggregator route executes, so it stays correct across implementation
- *  upgrades by construction. A revert / zero output = the leg is unavailable
- *  at this size (reserve-bound), mirroring the contract's own rejection. */
+/** The `account` override is essential: regular users get the punitive
+ * non-whitelist fee, while each pool's configured caller models its route. */
 export async function quoteLunarbaseLeg(
   ctx: AdapterContext, pool: LunarbaseCachedPool, side: Side, amountIn: bigint, blockNumber: bigint,
 ): Promise<{ px: number; feeBps: number } | undefined> {
   if (amountIn <= 0n) return undefined;
   let amountOut: bigint, fee: bigint;
   try {
-    const res = await ctx.client.readContract({
-      address: pool.pool, abi: poolAbi,
+    const result = await ctx.client.readContract({
+      address: pool.pool,
+      abi: poolAbi,
       functionName: lunarbaseQuoteDirection(pool, side),
-      args: [amountIn], account: WHITELIST_PROBE, blockNumber,
+      args: [amountIn],
+      account: pool.whitelistCaller,
+      blockNumber,
     }) as readonly [bigint, bigint, bigint];
-    amountOut = res[0]; fee = res[2];
+    amountOut = result[0];
+    fee = result[2];
   } catch {
-    return undefined; // quoter rejected the leg — not executable at this size
+    return undefined;
   }
   if (amountOut <= 0n) return undefined;
   const inputDecimals = side === 'sell' ? pool.baseDec : pool.stableDec;
@@ -433,9 +418,6 @@ export function createLunarbaseAdapter(): VenueAdapter {
   const activate = (ctx: AdapterContext, pool: LunarbaseCachedPool) => {
     const prior = byAddress.get(pool.pool.toLowerCase());
     if (prior && prior.snapshot.implementation !== pool.snapshot.implementation) {
-      // observability, not a gate: quotes are the pool's own quoter (correct
-      // under any implementation); fills/gas ride event schemas. Say it loudly
-      // so a schema-breaking upgrade has an anchor in the notes.
       ctx.log(`Lunarbase ${pool.market} implementation changed ${prior.snapshot.implementation.slice(0, 10)}… → ${pool.snapshot.implementation.slice(0, 10)}…`);
     }
     byAddress.set(pool.pool.toLowerCase(), pool);
@@ -449,8 +431,8 @@ export function createLunarbaseAdapter(): VenueAdapter {
 
     async discover(ctx: AdapterContext) {
       const blockNumber = await ctx.client.getBlockNumber();
-      // Validation is intentionally per pool: a proxy upgrade must quarantine
-      // that pool, never block every venue's fill cursor while we review it.
+      // Validation is intentionally per pool: a failed behavioral gate must
+      // never block every venue's fill cursor.
       const staged = await readPoolsAtBlock(ctx, LUNARBASE_POOLS, blockNumber, (config, reason) => quarantine(ctx, config, reason));
       for (const pool of staged) activate(ctx, pool);
       discovered = true;
@@ -493,19 +475,16 @@ export function createLunarbaseAdapter(): VenueAdapter {
         recovered(`inactive:${pool.pool}`);
         const mid = ctx.pricer.pairMid(pool.market);
         if (!(mid > 0)) continue;
-        // both legs of every size, in parallel, PINNED to the same block the
-        // gate snapshot used — the transport batches these into one request.
-        const legs = await Promise.all(sizesUsd.flatMap((sizeUsd) => {
+        const legs = await Promise.all(sizesUsd.flatMap(async (sizeUsd) => {
           const sellIn = toUnits(ctx.pricer.tokenForUsd(pool.baseToken, sizeUsd), pool.baseDec);
           const buyIn = toUnits(sizeUsd, pool.stableDec);
-          return [
-            quoteLunarbaseLeg(ctx, pool, 'sell', sellIn, head).then((leg) => ({ sizeUsd, side: 'sell' as Side, leg })),
-            quoteLunarbaseLeg(ctx, pool, 'buy', buyIn, head).then((leg) => ({ sizeUsd, side: 'buy' as Side, leg })),
-          ];
+          const [bid, ask] = await Promise.all([
+            quoteLunarbaseLeg(ctx, pool, 'sell', sellIn, head),
+            quoteLunarbaseLeg(ctx, pool, 'buy', buyIn, head),
+          ]);
+          return { sizeUsd, bid, ask };
         }));
-        for (const sizeUsd of sizesUsd) {
-          const bid = legs.find((l) => l.sizeUsd === sizeUsd && l.side === 'sell')?.leg;
-          const ask = legs.find((l) => l.sizeUsd === sizeUsd && l.side === 'buy')?.leg;
+        for (const { sizeUsd, bid, ask } of legs) {
           const rawBidBps = bid ? (bid.px / mid - 1) * 1e4 : 0;
           const rawAskBps = ask ? (ask.px / mid - 1) * 1e4 : 0;
           // A curve can technically price an exact input against a nearly
@@ -527,8 +506,8 @@ export function createLunarbaseAdapter(): VenueAdapter {
             bidBps,
             askBps,
             spreadBps: both ? askBps - bidBps : 0,
-            // PMM quotes are exact-input and either reject the leg or fill its
-            // complete input; `oneSided` describes availability, not partiality.
+            // The pool quoter is exact-input: `oneSided` describes availability,
+            // not a partial fill.
             filledFull: true,
             oneSided: !both,
             feeBps: Math.max(bid?.feeBps ?? 0, ask?.feeBps ?? 0),
@@ -563,9 +542,6 @@ export function createLunarbaseAdapter(): VenueAdapter {
     decode(ctx: AdapterContext, logs: LogBundle, tsOf) {
       const staged = applyLunarbaseStateLogs(byAddress, logs.state ?? []);
       for (const [address, pool] of staged) {
-        // an upgrade only pauses the pool until the NEXT pinned snapshot
-        // re-passes the behavioral checks (tokens/decimals/whitelist) — no
-        // allowlist to bump, so it self-heals within a quote tick.
         if (pool.needsRediscovery) quarantine(ctx, pool, 'proxy upgrade observed — revalidating');
         else activate(ctx, pool);
       }
